@@ -117,8 +117,48 @@ export default function ClassDetail() {
               </tbody>
             </table>
           </div>
+          <div className="card">
+            <h2>{t('tg.group')}</h2>
+            <TelegramClassSettings classId={id} />
+          </div>
         </>
       )}
     </div>
+  );
+}
+
+function TelegramClassSettings({ classId }: { classId: string }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const info = useQuery({
+    queryKey: ['tgclass', classId],
+    queryFn: () => api<{ chats: string[]; channel: 'private' | 'group' | 'both' }>(`/api/classes/${classId}/telegram`),
+  });
+  const code = useMutation({
+    mutationFn: () => api<{ code: string }>(`/api/classes/${classId}/link-token`, { method: 'POST' }),
+  });
+  const setChannel = useMutation({
+    mutationFn: (ch: string) => api(`/api/classes/${classId}/notify-channel`, { method: 'PUT', body: JSON.stringify({ channel: ch }) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['tgclass'] }),
+  });
+  return (
+    <>
+      <div className="row">
+        <span className="muted">{t('tg.channel')}</span>
+        <select style={{ width: 'auto', marginTop: 0 }} value={info.data?.channel ?? 'private'} onChange={(e) => setChannel.mutate(e.target.value)}>
+          <option value="private">{t('tg.channelPrivate')}</option>
+          <option value="group">{t('tg.channelGroup')}</option>
+          <option value="both">{t('tg.channelBoth')}</option>
+        </select>
+        <div className="spacer" />
+        <button className="secondary" style={{ marginTop: 0 }} onClick={() => code.mutate()}>{t('tg.makeCode')}</button>
+      </div>
+      {code.data && <p className="code-box" style={{ fontSize: '1.2rem' }}>{code.data.code}</p>}
+      <p className="muted">{t('tg.howto')}</p>
+      {(info.data?.chats ?? []).map((c) => (
+        <span key={c} className="badge" style={{ marginRight: 6 }}>chat {c}</span>
+      ))}
+      {(info.data?.chats ?? []).length === 0 && <span className="muted">{t('tg.noGroup')}</span>}
+    </>
   );
 }

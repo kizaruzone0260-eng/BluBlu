@@ -10,6 +10,8 @@ import {
 } from '../services/posts.js';
 import { getStorage } from '../storage/provider.js';
 import { isInlineSafe } from '../lib/magic.js';
+import { enqueueNotification } from '../services/notify.js';
+import { classTitle } from '../services/notifyQueue.js';
 
 const postPatchSchema = z.object({
   title: z.string().trim().max(200).optional(),
@@ -66,6 +68,13 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!title || uploaded.length === 0) return reply.code(400).send({ error: 'invalidInput' });
     try {
       const post = await createMaterial(db, req.user!.id, cls.id, { title, description, topic }, uploaded);
+      void (async () => {
+        const name = await classTitle(db, cls.id);
+        await enqueueNotification(db, {
+          kind: 'materialNew', classId: cls.id, when: new Date(),
+          params: { title, class: name }, dedupeBase: `post:${post.id}`, excludeUserId: req.user!.id,
+        });
+      })().catch(() => undefined);
       return reply.code(201).send(post);
     } catch (e) {
       if (e instanceof UploadRejected) {
@@ -83,6 +92,13 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     const p = z.object({ title: z.string().trim().max(200), body: z.string().max(4000) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const post = await createAnnouncement(db, req.user!.id, cls.id, p.data.title, p.data.body);
+    void (async () => {
+      const name = await classTitle(db, cls.id);
+      await enqueueNotification(db, {
+        kind: 'announcementNew', classId: cls.id, when: new Date(),
+        params: { title: p.data.title, class: name }, dedupeBase: `post:${post.id}`, excludeUserId: req.user!.id,
+      });
+    })().catch(() => undefined);
     return reply.code(201).send(post);
   });
 

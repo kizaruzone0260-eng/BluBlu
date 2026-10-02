@@ -5,6 +5,8 @@ import { resolveClass } from '../services/classes.js';
 import { createEvent, listEventsInRange, editEvent, deleteEventOccurrence, rotateIcsToken, userByIcsToken, buildIcs } from '../services/events.js';
 import { events } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { enqueueNotification } from '../services/notify.js';
+import { classTitle } from '../services/notifyQueue.js';
 
 const eventInputSchema = z.object({
   kind: z.enum(['lesson', 'deadline', 'other']),
@@ -34,6 +36,14 @@ export async function eventRoutes(app: FastifyInstance, opts: { db: DB }) {
     const p = eventInputSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const e = await createEvent(db, cls.id, p.data);
+    void (async () => {
+      const name = await classTitle(db, cls.id);
+      await enqueueNotification(db, {
+        kind: 'eventNew', classId: cls.id, when: e.startsAt,
+        params: { title: e.title, class: name, when: e.startsAt.toISOString() },
+        dedupeBase: `evt:${e.id}:new`, excludeUserId: req.user!.id,
+      });
+    })().catch(() => undefined);
     return reply.code(201).send(e);
   });
 
@@ -56,6 +66,14 @@ export async function eventRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!sc.success || !ch.success) return reply.code(400).send({ error: 'invalidInput' });
     const r = await editEvent(db, id, sc.data, ch.data);
     if (!r.ok) return reply.code(404).send({ error: 'notFound' });
+    void (async () => {
+      const name = await classTitle(db, e.classId);
+      await enqueueNotification(db, {
+        kind: 'eventChanged', classId: e.classId, when: new Date(),
+        params: { title: ch.data.title, class: name, when: ch.data.startLocal },
+        dedupeBase: `evt:${id}:ch:${new Date().toISOString()}`, excludeUserId: req.user!.id,
+      });
+    })().catch(() => undefined);
     return { ok: true };
   });
 
@@ -69,6 +87,16 @@ export async function eventRoutes(app: FastifyInstance, opts: { db: DB }) {
     const scope = (q.scope === 'this' || q.scope === 'following' ? q.scope : 'all') as 'all' | 'this' | 'following';
     const r = await deleteEventOccurrence(db, id, { scope, occurrenceStart: q.occurrenceStart });
     if (!r.ok) return reply.code(404).send({ error: 'notFound' });
+    if (scope === 'all') {
+      void (async () => {
+        const name = await classTitle(db, e.classId);
+        await enqueueNotification(db, {
+          kind: 'eventCancelled', classId: e.classId, when: new Date(),
+          params: { title: e.title, class: name, when: '' },
+          dedupeBase: `evt:${id}:cancelled`, excludeUserId: req.user!.id,
+        });
+      })().catch(() => undefined);
+    }
     return { ok: true };
   });
 

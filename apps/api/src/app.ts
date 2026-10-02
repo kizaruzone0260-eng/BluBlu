@@ -20,6 +20,7 @@ import { eventRoutes } from './routes/events.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { boardRoutes } from './routes/board.js';
 import { studentNoteRoutes } from './routes/studentNotes.js';
+import { telegramRoutes } from './routes/telegram.js';
 
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
@@ -88,6 +89,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(lessonRoutes, { db });
   await app.register(boardRoutes, { db });
   await app.register(studentNoteRoutes, { db });
+  await app.register(telegramRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

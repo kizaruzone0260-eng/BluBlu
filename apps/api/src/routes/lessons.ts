@@ -11,6 +11,8 @@ import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env } from '../env.js';
 import { eq } from 'drizzle-orm';
 import { users } from '../db/schema.js';
+import { enqueueNotification, siteUrl } from '../services/notify.js';
+import { classTitle } from '../services/notifyQueue.js';
 import type { WebSocket as WsSocket } from 'ws';
 
 const withRoom = (s: LessonSession) => ({
@@ -47,7 +49,15 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     const s = await startLesson(db, req.user!.id, cls.id, p.data.eventId);
     wsBroadcast(s.id, { type: 'started', session: withRoom(s) });
-    // stage 6: Telegram “урок начался” goes through the notification queue here
+    // §3.9 «урок начался» со ссылкой — через очередь уведомлений
+    void (async () => {
+      const name = await classTitle(db, cls.id);
+      await enqueueNotification(db, {
+        kind: 'lessonStarted', classId: cls.id, when: new Date(),
+        params: { title: name, class: name, lessonUrl: `${siteUrl()}/lesson?classId=${cls.id}` },
+        dedupeBase: `lesson:${s.id}`,
+      });
+    })().catch(() => undefined);
     return reply.code(201).send(withRoom(s));
   });
 

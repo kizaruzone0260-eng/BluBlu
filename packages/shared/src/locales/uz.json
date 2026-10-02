@@ -137,6 +137,21 @@
     "page": "bet",
     "readonly": "faqat ko'rish"
   },
+  "tg": {
+    "title": "Telegram bildirishnomalari",
+    "connect": "Telegramni ulash",
+    "disable": "O'chirish",
+    "linked": "Ulangan",
+    "blocked": "Siz botni bloklagansiz — qayta ulang",
+    "group": "Sinf guruhi",
+    "channel": "Qayerga yuborilsin:",
+    "channelPrivate": "shaxsiy chatga",
+    "channelGroup": "guruhga",
+    "channelBoth": "ikkalasiga",
+    "makeCode": "Bog'lash kodi",
+    "howto": "Botni guruhga qo'shing, uni administrator qiling va /link <kod> buyrug'ini yuboring (faqat guruh administratori).",
+    "noGroup": "Guruh bog'lanmagan"
+  },
   "sheets": {
     "title": "Mening qaydlarim",
     "new": "varaq",

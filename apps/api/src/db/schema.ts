@@ -168,3 +168,70 @@ export const studentNotes = pgTable('student_notes', {
   body: text('body').notNull().default(''),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('studentnotes_user_idx').on(t.userId, t.classId)]);
+
+// ─── §3.9 Telegram ────────────────────────────────────────────────────────────
+
+export const notifyChannelEnum = pgEnum('notify_channel', ['private', 'group', 'both']);
+
+/** user ↔ chat_id binding; bot never writes first (§3.9 acceptance). */
+export const telegramLinks = pgTable('telegram_links', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  chatId: text('chat_id').notNull().unique(),
+  linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+  blockedAt: timestamp('blocked_at', { withTimezone: true }),
+});
+
+/** one-time /start tokens, TTL 15 min, hash-only. */
+export const telegramTokens = pgTable('telegram_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/** class group chat bound via /link + bind code. */
+export const classTelegramChats = pgTable('class_telegram_chats', {
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  chatId: text('chat_id').notNull(),
+  linkedBy: uuid('linked_by').notNull().references(() => users.id),
+  linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.classId, t.chatId] })]);
+
+/** short-lived bind codes created in the class UI for /link. */
+export const classLinkTokens = pgTable('class_link_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+export const notificationPrefs = pgTable('notification_prefs', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  kinds: jsonb('kinds').$type<Record<string, boolean>>().notNull().default({}),
+  quietFrom: integer('quiet_from').notNull().default(22), // local hour
+  quietTo: integer('quiet_to').notNull().default(8),
+  channel: notifyChannelEnum('channel').notNull().default('private'),
+});
+
+/** per-class channel override (group / private / both) */
+export const classNotifyPrefs = pgTable('class_notify_prefs', {
+  classId: uuid('class_id').primaryKey().references(() => classes.id, { onDelete: 'cascade' }),
+  channel: notifyChannelEnum('channel').notNull().default('private'),
+});
+
+export const notificationStatusEnum = pgEnum('notification_status',
+  ['pending', 'sent', 'failed', 'blocked', 'skipped']);
+
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: text('kind').notNull(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  chatId: text('chat_id'),
+  classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+  dedupeKey: text('dedupe_key').notNull().unique(),
+  sendAt: timestamp('send_at', { withTimezone: true }).notNull().defaultNow(),
+  status: notificationStatusEnum('status').notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('notifications_status_idx').on(t.status, t.sendAt)]);

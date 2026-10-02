@@ -26,6 +26,10 @@ const envSchema = z
   PUBLIC_WEB_ORIGIN: z.string().default('http://localhost:5173'),
   DOMAIN: z.string().optional(),
   WEB_DIST: z.string().optional(),
+  TELEGRAM_BOT_TOKEN: z.string().default(''),
+  TELEGRAM_BOT_NAME: z.string().default('klass_bot'),
+  TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
+  TELEGRAM_TRANSPORT: z.enum(['log', 'telegram']).default('log'),
 })
   .superRefine((v, ctx) => {
     if (v.NODE_ENV === 'production' && v.JWT_SECRET === DEV_SECRET) {
