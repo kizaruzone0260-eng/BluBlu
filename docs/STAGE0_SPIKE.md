@@ -27,6 +27,30 @@ sudo ufw enable
 
 В панели Oracle: VCN → Security List → Ingress rules для тех же шести портов.
 
+## TURN/TLS: сертификат для порта 5349
+
+Встроенный TURN LiveKit отдаёт turns:// только с PEM-сертификатом домена.
+Caddy держит 443, поэтому сертификат получаем certbot'ом в паузе на Caddy (или
+берём из резервной копии ACME Caddy):
+
+```bash
+sudo apt install -y certbot
+cd deploy
+docker compose stop caddy
+sudo certbot certonly --standalone -d "$DOMAIN"
+docker compose start caddy
+sudo cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem ./turn-certs/livekit.pem
+sudo cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem ./turn-certs/livekit-key.pem
+docker compose restart livekit
+```
+
+Автообновление: cron `certbot renew --deploy-hook 'cp ... && docker compose -f deploy/docker-compose.yml restart livekit'`.
+Без TURN/TLS LiveKit рекламирует обычный turn: (UDP 3478) — для спайка достаточно,
+для мобильных сетей TLS-версия надёжнее.
+
+Ключи API задаются через env (LIVEKIT_KEYS="key: secret"), домен TURN —
+LIVEKIT_RTC_TURN_DOMAIN (см. docker-compose.yml).
+
 ## Запуск
 
 ```bash

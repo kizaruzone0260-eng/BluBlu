@@ -31,11 +31,14 @@ services:
     restart: unless-stopped
     command: --config /etc/livekit/livekit.yaml
     environment:
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
-      DOMAIN: ${DOMAIN}
+      # LiveKit env-override convention: LIVEKIT_<YAML PATH> (dots→underscores)
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+      LIVEKIT_RTC_TURN_DOMAIN: ${DOMAIN}
+      LIVEKIT_RTC_TURN_CERT_FILE: /etc/turn-certs/livekit.pem
+      LIVEKIT_RTC_TURN_KEY_FILE: /etc/turn-certs/livekit-key.pem
     volumes:
       - ./livekit.yaml:/etc/livekit/livekit.yaml:ro
+      - ./turn-certs:/etc/turn-certs:ro   # place certbot PEMs here (see docs/STAGE0_SPIKE.md)
     ports:
       - "7882:7882/udp"   # single RTC UDP port (mux)
       - "7881:7881"       # RTC TCP fallback

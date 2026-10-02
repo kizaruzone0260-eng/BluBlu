@@ -11,3 +11,4 @@ files-store/
 .pgdata/
 *.log
 .DS_Store
+deploy/turn-certs/*.pem
