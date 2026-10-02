@@ -1,0 +1,22 @@
+{
+  "name": "klass",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted online lesson platform (working title: Klass)",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @klass/api dev",
+    "dev:web": "pnpm --filter @klass/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm -r test:unit",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @klass/api db:generate",
+    "db:migrate": "pnpm --filter @klass/api db:migrate",
+    "seed:teacher": "pnpm --filter @klass/api seed:teacher",
+    "audit": "pnpm audit --prod"
+  }
+}

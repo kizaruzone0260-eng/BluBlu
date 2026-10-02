@@ -1,0 +1,44 @@
+:root {
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #1c1e26;
+  --muted: #6b7080;
+  --accent: #4f46e5;
+  --danger: #d33d51;
+  --ok: #1f9d55;
+  --border: #e3e6ee;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+.container { max-width: 960px; margin: 0 auto; padding: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+h1 { font-size: 1.4rem; } h2 { font-size: 1.1rem; }
+label { display: block; font-size: .85rem; color: var(--muted); margin: 8px 0 2px; }
+input, select, textarea {
+  width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; background: #fff;
+}
+input[type=color] { width: 48px; height: 36px; padding: 2px; }
+button {
+  padding: 10px 16px; border: none; border-radius: 8px; background: var(--accent); color: #fff;
+  font-size: .95rem; cursor: pointer; margin-top: 10px;
+}
+button.secondary { background: #e9eaf3; color: var(--text); }
+button.danger { background: var(--danger); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); font-size: .85rem; }
+.error { color: var(--danger); font-size: .9rem; }
+.ok { color: var(--ok); }
+.code-box { font-family: ui-monospace, monospace; font-size: 1.6rem; letter-spacing: 3px; padding: 12px; background: #eef0fb; border-radius: 8px; text-align: center; }
+.badge { font-size: .72rem; padding: 2px 8px; border-radius: 99px; background: #e9eaf3; }
+.badge.active { background: #d8f3e4; color: var(--ok); }
+.badge.used { background: #fdeaea; color: var(--danger); }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.videos video { width: 100%; background: #000; border-radius: 8px; aspect-ratio: 16/9; }
+.topbar { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+@media (max-width: 640px) { .container { padding: 10px; } }

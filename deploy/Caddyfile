@@ -1,0 +1,41 @@
+{$DOMAIN} {
+	email {$CADDY_EMAIL}
+
+	encode zstd gzip
+
+	# Security headers (CSP tightened in stage 7)
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# Telegram bot webhook (stage 6)
+	handle /webhook/telegram {
+		reverse_proxy api:3000
+	}
+
+	# API + WebSockets (board, lesson status)
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# LiveKit signaling (websocket) proxied under same domain
+	handle /rtc {
+		reverse_proxy livekit:7880 {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle /rtc/* {
+		reverse_proxy livekit:7880 {
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	# Everything else: SPA served by the api container static handler
+	handle {
+		reverse_proxy api:3000
+	}
+}

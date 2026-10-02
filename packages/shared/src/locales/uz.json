@@ -1,0 +1,67 @@
+{
+  "app": {
+    "name": "Klass",
+    "tagline": "Onlayn darslar platformasi"
+  },
+  "common": {
+    "login": "Kirish",
+    "logout": "Chiqish",
+    "register": "Hisob yaratish",
+    "email": "Elektron pochta",
+    "password": "Parol",
+    "name": "Ism",
+    "language": "Interfeys tili",
+    "timezone": "Vaqt mintaqasi",
+    "save": "Saqlash",
+    "cancel": "Bekor qilish",
+    "delete": "O'chirish",
+    "create": "Yaratish",
+    "errorGeneric": "Biror narsa noto'g'ri bo'ldi. Qayta urinib ko'ring.",
+    "loading": "Yuklanmoqda…"
+  },
+  "auth": {
+    "registerByCode": "Sinf kodi orqali ro'yxatdan o'tish",
+    "classCode": "Sinf kodi",
+    "haveCode": "O'qituvchidan taklif kodingiz bormi?",
+    "joinExisting": "Kodni shaxsiy kabinetingizda kiriting",
+    "invalidCredentials": "Email yoki parol noto'g'ri",
+    "invalidCode": "Kod mos kelmadi. Tekshiring yoki o'qituvchidan yangi kod so'rang.",
+    "codeRateLimited": "Juda ko'p urinish. 15 daqiqa kuting.",
+    "emailTaken": "Ushbu email allaqachon ro'yxatdan o'tgan",
+    "passwordTooShort": "Kamida 8 ta belgi",
+    "profile": "Profil",
+    "tempPasswordSet": "Vaqtinchalik parol o'rnatildi"
+  },
+  "classes": {
+    "title": "Mening sinflarim",
+    "newClass": "Yangi sinf",
+    "className": "Sinf nomi",
+    "description": "Tavsif",
+    "color": "Rang",
+    "archive": "Arxivga",
+    "archived": "Arxiv",
+    "members": "O'quvchilar",
+    "noMembers": "Hozircha hech kim yo'q. Taklif kodini yarating.",
+    "invite": {
+      "title": "Taklif kodlari",
+      "create": "Kod yaratish",
+      "showOnce": "Kodni o'quvchiga bir marta ko'rsating — u qayta saqlanmaydi.",
+      "active": "Faol",
+      "used": "Ishlatilgan",
+      "expired": "Muddati tugagan",
+      "revoke": "Bekor qilish",
+      "expires": "Amal muddati",
+      "usedBy": "Kim ishlatgan",
+      "ttlDays": "Amal muddati (kun)"
+    },
+    "joinByCode": "Kod orqali qo'shilish",
+    "removeMember": "Sinfdan o'chirish",
+    "moveMember": "Boshqa sinfga ko'chirish"
+  },
+  "validate": {
+    "passwordTooShort": "Kamida 8 ta belgi",
+    "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",
+    "invalidColor": "Rang #rrggbb formatida",
+    "email": "Email noto'g'ri"
+  }
+}
