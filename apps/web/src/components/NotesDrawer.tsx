@@ -87,6 +87,7 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
   return (
     <>
       <button
+        data-testid="sheet-fab"
         className="sheet-fab"
         onClick={onToggle}
         aria-label={t('sheets.title')}
@@ -110,6 +111,7 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
           {activeId && (
             <>
               <textarea
+                data-testid="sheet-body"
                 value={text}
                 onChange={(e) => onEdit(e.target.value)}
                 placeholder={t('sheets.placeholder')}

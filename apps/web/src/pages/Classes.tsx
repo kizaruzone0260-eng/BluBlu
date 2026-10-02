@@ -36,7 +36,7 @@ export default function Classes() {
       <h1>{t('classes.title')}</h1>
       {classes.isLoading && <p className="muted">{t('common.loading')}</p>}
       {(classes.data ?? []).map((c) => (
-        <div key={c.id} className="card" style={{ borderLeft: `6px solid ${c.color}` }}>
+        <div key={c.id} data-testid="class-card" className="card" style={{ borderLeft: `6px solid ${c.color}` }}>
           <div className="row">
             <Link to={`/classes/${c.id}`} style={{ fontWeight: 600 }}>{c.name}</Link>
             <div className="spacer" />
@@ -50,8 +50,8 @@ export default function Classes() {
         <div className="card">
           <h2>{t('classes.newClass')}</h2>
           <label>{t('classes.className')}</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} minLength={2} />
-          <button onClick={() => createClass.mutate()} disabled={name.trim().length < 2 || createClass.isPending}>
+          <input data-testid="new-class-name" value={name} onChange={(e) => setName(e.target.value)} minLength={2} />
+          <button data-testid="create-class" onClick={() => createClass.mutate()} disabled={name.trim().length < 2 || createClass.isPending}>
             {t('common.create')}
           </button>
         </div>

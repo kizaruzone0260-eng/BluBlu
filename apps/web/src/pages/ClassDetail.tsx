@@ -45,6 +45,9 @@ export default function ClassDetail() {
     mutationFn: (userId: string) => api(`/api/classes/${id}/members/${userId}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['members', id] }),
   });
+  const resetPw = useMutation({
+    mutationFn: (userId: string) => api<{ tempPassword: string }>(`/api/classes/${id}/members/${userId}/reset-password`, { method: 'POST' }),
+  });
 
   return (
     <div>
@@ -61,13 +64,13 @@ export default function ClassDetail() {
               <label style={{ margin: 0 }}>{t('classes.invite.ttlDays')}</label>
               <input type="number" min={1} max={30} value={ttlDays} style={{ width: 80 }}
                 onChange={(e) => setTtlDays(Number(e.target.value))} />
-              <button style={{ marginTop: 0 }} onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
+              <button data-testid="create-invite" style={{ marginTop: 0 }} onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
                 {t('classes.invite.create')}
               </button>
             </div>
             {newCode && (
               <div style={{ marginTop: 12 }}>
-                <div className="code-box">{newCode}</div>
+                <div data-testid="invite-code" className="code-box">{newCode}</div>
                 <p className="muted">{t('classes.invite.showOnce')}</p>
               </div>
             )}
@@ -108,9 +111,16 @@ export default function ClassDetail() {
                     <td className="muted">{m.email}</td>
                     <td className="muted">{new Date(m.joinedAt).toLocaleDateString()}</td>
                     <td>
+                      <button className="secondary" style={{ marginTop: 0, marginRight: 6 }}
+                        onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending}>
+                        {t('classes.resetPw')}
+                      </button>
                       <button className="danger" style={{ marginTop: 0 }} onClick={() => removeMember.mutate(m.userId)}>
                         {t('classes.removeMember')}
                       </button>
+                      {resetPw.data && resetPw.variables === m.userId && (
+                        <span className="ok" style={{ marginLeft: 8 }}>{resetPw.data.tempPassword}</span>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -18,6 +18,7 @@ export function registerInviteRoutes(db: DB): (app: FastifyInstance) => Promise<
       const cls = await resolveClass(db, req.user!.id, 'teacher', p.data.id);
       if (!cls) return reply.code(404).send({ error: 'notFound' });
       const { id, code, expiresAt } = await createInviteCode(db, cls.id, req.user!.id, parsed.data.ttlDays);
+      (await import('../services/audit.js')).audit(db, req.user!.id, 'invite_create', { classId: cls.id, inviteId: id });
       // The plain code is returned exactly once and never stored.
       return reply.code(201).send({ id, code, expiresAt });
     });

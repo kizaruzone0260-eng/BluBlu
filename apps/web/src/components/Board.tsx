@@ -122,7 +122,7 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
   }
 
   return (
-    <div className="card">
+    <div className="card" data-testid="board">
       <div className="row">
         <h2 style={{ margin: 0 }}>{t('lesson.board')}</h2>
         {canEdit ? (

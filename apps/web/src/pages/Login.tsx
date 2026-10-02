@@ -25,15 +25,16 @@ export default function Login({ onDone }: { onDone: () => void }) {
       <h1>{t('common.login')}</h1>
       <form onSubmit={submit}>
         <label>{t('common.email')}</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+        <input data-testid="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         <label>{t('common.password')}</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
+        <input data-testid="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
         {err && <p className="error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
-        <button type="submit">{t('common.login')}</button>
+        <button data-testid="login-submit" type="submit">{t('common.login')}</button>
       </form>
       <p className="muted">
         {t('auth.haveCode')} <Link to="/register">{t('common.register')}</Link>
       </p>
+      <p className="muted"><Link to="/privacy">{t('privacy.title')}</Link></p>
     </div>
   );
 }

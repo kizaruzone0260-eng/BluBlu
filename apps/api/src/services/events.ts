@@ -1,4 +1,6 @@
-import { rrulestr } from 'rrule';
+// rrule ships CJS; named imports break under plain node ESM — take the namespace.
+import rrulePkg from 'rrule';
+const { rrulestr } = rrulePkg as unknown as { rrulestr: (s: string, opts?: { dtstart?: Date }) => { between: (a: Date, b: Date, incl: boolean) => Date[] } };
 import { and, eq, inArray, isNull, lte } from 'drizzle-orm';
 import { randomBytes, createHash } from 'node:crypto';
 import { events, classes, classMembers, icsTokens } from '../db/schema.js';

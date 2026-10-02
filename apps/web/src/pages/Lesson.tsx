@@ -205,7 +205,7 @@ export default function Lesson() {
         <div className="card">
           <p className="muted">{t('cal.notStarted')}</p>
           {isTeacher && (
-            <button onClick={() => startLesson.mutate()} disabled={startLesson.isPending}>{t('lesson.start')}</button>
+            <button data-testid="start-lesson" onClick={() => startLesson.mutate()} disabled={startLesson.isPending}>{t('lesson.start')}</button>
           )}
         </div>
       )}
@@ -216,7 +216,7 @@ export default function Lesson() {
               <div className="row">
                 <button onClick={loadPreview} disabled={previewReady && !error}>{previewReady ? '🎤 ✔' : t('lesson.checkDevices')}</button>
                 <div className="spacer" />
-                <button onClick={joinRoom} disabled={!previewReady}>{t('cal.joinLesson')}</button>
+                <button data-testid="join-lesson" onClick={joinRoom} disabled={!previewReady}>{t('cal.joinLesson')}</button>
               </div>
               {previewReady && (
                 <p className="muted">
@@ -295,11 +295,12 @@ export default function Lesson() {
               </div>
               {error && <p className="error">{error}</p>}
               <div ref={gridRef} className={gridClass} />
-              {session && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
-              {!isTeacher && session && (
-                <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
-              )}
             </>
+          )}
+          {/* board is WS-based: visible while a session exists, even before/without RTC */}
+          {session && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
+          {!isTeacher && session && (
+            <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
           )}
         </>
       )}

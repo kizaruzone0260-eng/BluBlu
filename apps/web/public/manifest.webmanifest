@@ -1,0 +1,14 @@
+{
+  "name": "Klass",
+  "short_name": "Klass",
+  "description": "Платформа онлайн-уроков",
+  "start_url": "/classes",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#4f46e5",
+  "lang": "ru",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -27,16 +27,16 @@ export default function Register({ onDone }: { onDone: () => void }) {
       <h1>{t('auth.registerByCode')}</h1>
       <form onSubmit={submit}>
         <label>{t('common.name')}</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} autoComplete="name" />
+        <input data-testid="reg-name" value={name} onChange={(e) => setName(e.target.value)} required minLength={2} autoComplete="name" />
         <label>{t('common.email')}</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+        <input type="email" data-testid="reg-email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         <label>{t('common.password')}</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+        <input data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
         <label>{t('auth.classCode')}</label>
-        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required maxLength={9}
+        <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required maxLength={9} data-testid="reg-code"
           style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 2 }} />
         {err && <p className="error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
-        <button type="submit">{t('common.register')}</button>
+        <button data-testid="register-submit" type="submit">{t('common.register')}</button>
       </form>
       <p className="muted"><Link to="/login">{t('common.login')}</Link></p>
     </div>

@@ -56,7 +56,8 @@
     },
     "joinByCode": "Kod orqali qo'shilish",
     "removeMember": "Sinfdan o'chirish",
-    "moveMember": "Boshqa sinfga ko'chirish"
+    "moveMember": "Boshqa sinfga ko'chirish",
+    "resetPw": "Parolni tiklash"
   },
   "feed": {
     "title": "Materiallar va e'lonlar",
@@ -104,7 +105,13 @@
     "scopeThis": "Faqat shu",
     "scopeFollowing": "Shu va keyinilari",
     "scopeAll": "Barchasi",
-    "wd1": "Du", "wd2": "Se", "wd3": "Ch", "wd4": "Pa", "wd5": "Ju", "wd6": "Sh", "wd7": "Ya",
+    "wd1": "Du",
+    "wd2": "Se",
+    "wd3": "Ch",
+    "wd4": "Pa",
+    "wd5": "Ju",
+    "wd6": "Sh",
+    "wd7": "Ya",
     "joinLesson": "Darsga kirish",
     "joinTooEarly": "Dars keyinroq boshlanadi — tugma 10 daqiqa oldin faollashadi",
     "notStarted": "Dars hali boshlanmadi",
@@ -162,6 +169,13 @@
     "saving": "Saqlanmoqda…",
     "saved": "Saqlandi",
     "pick": "«+» tugmasi bilan varaq yarating"
+  },
+  "privacy": {
+    "title": "Maxfiylik siyosati",
+    "p1": "Platforma o‘z serverida (self-hosted) ishlaydi. Shaxsiy ma'lumotlar minimal: ism, elektron pochta, til, vaqt mintaqasi va — xohishga ko‘ra — Telegram chat identifikatori.",
+    "p2": "O'quvchilarning ma'lumotlari uchinchi shaxslarga berilmaydi va tahlilda qayta ishlanmaydi. Treker va reklama skriptlari yo'q. Yagona tashqi xizmat — Telegram Bot API: unga chat identifikatori va bildirishnoma matni uzatiladi.",
+    "p3": "Video darslar shu serverdagi media server orqali o'tadi — uchinchi tomon video bulutlaridan foydalanilmaydi. Darslar yozib olinmaydi.",
+    "p4": "Hisobni butunlay o'chirish qaydlar, varaqalar va sinf a'zoliklarini ham o'chiradi; so'rov — «Profil» bo'limida."
   },
   "validate": {
     "passwordTooShort": "Kamida 8 ta belgi",

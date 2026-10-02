@@ -129,6 +129,8 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       await db.update(users).set({ deletedAt: new Date(), email: `deleted-${req.user!.id}@invalid.local` })
         .where(eq(users.id, req.user!.id));
       await db.delete(refreshTokens).where(eq(refreshTokens.userId, req.user!.id));
+      const { audit } = await import('../services/audit.js');
+      audit(db, req.user!.id, 'account_deleted', { userId: req.user!.id });
       reply.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
       return { ok: true };
     });

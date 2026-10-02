@@ -12,6 +12,7 @@ import Notes from './pages/Notes';
 import Calendar from './pages/Calendar';
 import Lesson from './pages/Lesson';
 import Sheets from './pages/Sheets';
+import Privacy from './pages/Privacy';
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
@@ -64,6 +65,7 @@ export default function App() {
           <Route path="/calendar" element={me ? <Calendar /> : <Navigate to="/login" />} />
           <Route path="/lesson" element={me ? <Lesson /> : <Navigate to="/login" />} />
           <Route path="/sheets" element={me?.role === 'student' ? <Sheets /> : <Navigate to="/classes" />} />
+          <Route path="/privacy" element={<Privacy />} />
           <Route path="*" element={<Navigate to={me ? '/classes' : '/login'} />} />
         </Routes>
       </div>

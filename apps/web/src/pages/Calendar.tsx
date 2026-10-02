@@ -112,7 +112,7 @@ export default function Calendar() {
           {(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         {me?.role === 'teacher' && (
-          <button style={{ marginTop: 0 }} onClick={() => setForm({
+          <button style={{ marginTop: 0 }} data-testid="new-event" onClick={() => setForm({
             kind: 'lesson', title: '', description: '', startLocal: '', durationMin: 50,
             tz: me.tz, repeatWeekdays: [], repeatUntil: '',
           })}>{t('cal.newEvent')}</button>
@@ -128,7 +128,7 @@ export default function Calendar() {
               <option value="deadline">{t('cal.deadline')}</option>
               <option value="other">{t('cal.other')}</option>
             </select>
-            <input placeholder={t('common.name')} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ flex: 1, minWidth: 180 }} />
+            <input data-testid="event-title" placeholder={t('common.name')} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ flex: 1, minWidth: 180 }} />
           </div>
           <textarea placeholder={t('classes.description')} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           <div className="row" style={{ marginTop: 8 }}>

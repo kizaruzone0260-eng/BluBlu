@@ -37,8 +37,25 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
 
   await app.register(helmet, {
     global: true,
-    contentSecurityPolicy: false, // tightened in stage 7 checklist
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"], // Excalidraw injects inline styles
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        mediaSrc: ["'self'", 'blob:', 'data:'],
+        fontSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'ws:', 'wss:', 'blob:'],
+        workerSrc: ["'self'", 'blob:'],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
     crossOriginResourcePolicy: { policy: 'same-origin' },
+    referrerPolicy: { policy: 'same-origin' },
   });
 
   const corsOrigins = env.NODE_ENV === 'production'
