@@ -12,7 +12,8 @@
     "seed:teacher": "tsx --env-file=../../.env src/scripts/seed-teacher.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run test/unit"
+    "test:unit": "vitest run test/unit",
+    "test:integration": "node scripts/with-postgres.mjs pnpm exec vitest run",
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -33,6 +34,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "drizzle-kit": "^0.28.1",
+    "embedded-postgres": "18.4.0-beta.17",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"

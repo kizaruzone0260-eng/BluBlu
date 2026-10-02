@@ -8,5 +8,6 @@ coverage/
 !.env.example
 data/
 files-store/
+.pgdata/
 *.log
 .DS_Store

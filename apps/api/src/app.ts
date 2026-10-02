@@ -50,23 +50,24 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     timeWindow: '1 minute',
   });
 
-  await app.register(authPlugin, { db });
-
-  await app.register(healthRoutes, { db });
-  await app.register(authRoutes(db));
-  await app.register(classRoutes, { db });
-  await app.register(rtcRoutes, { db });
-
-  // Stricter limits: login (brute force), register (code attempts handled in-route too)
+  // Stricter limits: login (brute force), register/join (code attempts).
+  // NOTE: onRoute hook must be added BEFORE routes are registered.
   app.addHook('onRoute', (routeOptions) => {
     const url = routeOptions.url;
     if (url === '/api/auth/login') {
       routeOptions.config = { rateLimit: { max: 10, timeWindow: '1 minute' } };
     }
     if (url === '/api/auth/register' || url === '/api/join-by-code') {
-      routeOptions.config = { rateLimit: { max: 6, timeWindow: '1 minute' } };
+      routeOptions.config = { rateLimit: { max: 8, timeWindow: '1 minute' } };
     }
   });
+
+  await app.register(authPlugin, { db });
+
+  await app.register(healthRoutes, { db });
+  await app.register(authRoutes(db));
+  await app.register(classRoutes, { db });
+  await app.register(rtcRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

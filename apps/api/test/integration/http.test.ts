@@ -119,20 +119,21 @@ suite('stage 1: accounts, classes, codes, members', () => {
 
   it('code entry throttle: >5 attempts in a minute → 429, uniform message', async () => {
     const app = await freshApp();
-    const codes = [400, 400, 400, 400, 400];
+    const codes: number[] = [];
     for (let i = 0; i < 5; i++) {
       const r = await app.inject({
         method: 'POST', url: '/api/auth/register',
-        payload: { name: 'X', email: `x${i}${Date.now()}@x.io`, password: 'Secret1234', code: 'ABCDEFGH' },
+        payload: { name: 'Test Pupil', email: `x${i}${Date.now()}@x.io`, password: 'Secret1234', code: 'ABCDEFGH' },
       });
       codes.push(r.statusCode);
     }
     const limited = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'Y', email: 'y@x.io', password: 'Secret1234', code: 'ABCDEFGH' },
+      payload: { name: 'Test Pupil', email: 'y@x.io', password: 'Secret1234', code: 'ABCDEFGH' },
     });
     expect(limited.statusCode).toBe(429);
-    expect(codes.slice(0, 5).every((c) => c === 400)).toBe(true);
+    expect(limited.json().error).toBe('codeRateLimited');
+    expect(codes.every((c) => c === 400)).toBe(true);
     await app.close();
   });
 
