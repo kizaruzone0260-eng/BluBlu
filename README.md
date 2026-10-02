@@ -1,61 +1,66 @@
 # Klass — платформа онлайн-уроков (self-hosted)
 
-ТЗ: `docs/` + исходный документ заказчика. Стек: React/Vite + Fastify/Drizzle/Postgres + LiveKit + Caddy,
-один Docker Compose на ARM64 VM. Только MIT/Apache-2.0/BSD/ISC зависимости.
+Аналог Google Classroom со встроенными видеоуроками (свой LiveKit SFU), доской
+учителя (Excalidraw), личными листками учеников и Telegram-уведомлениями.
+Один Docker Compose на ARM64 VM. Только свободные лицензии (MIT/Apache-2.0/BSD/ISC),
+единственная внешняя зависимость — Telegram Bot API. Интерфейс: русский и узбекский.
 
 ## Структура
 
 ```
-apps/web      React SPA (ru/uz i18n с первого дня)
-apps/api      Fastify: auth, классы, одноразовые коды, LiveKit токены
-packages/shared  Zod-схемы, константы, локали ru/uz
-deploy/       docker-compose.yml, Caddyfile, livekit.yaml, тестовый compose для Postgres
-docs/         STAGE0_SPIKE.md — проверка звонка на сервере (этап 0)
+apps/web       React SPA (Vite, FullCalendar, Tiptap, Excalidraw, livekit-client, PWA)
+apps/api       Fastify: auth (argon2id + JWT/refresh-ротация), классы, коды, материалы,
+               календарь+ICS, уроки+LiveKit-токены+RoomService-модерация, доска-WS,
+               листки, Telegram-бот (grammY) + очередь pg-boss, pino, healthcheck
+apps/e2e       Playwright e2e (свой стек: embedded Postgres + api + собранный web)
+packages/shared Zod-схемы, константы, локали ru/uz
+deploy/        docker-compose.yml, Caddyfile, livekit.yaml, scripts/backup|restore.sh
+docs/          DEPLOY.md · STAGE0_SPIKE.md · MIGRATION.md · SECURITY_CHECKLIST.md
+               PROGRESS.md · DECISIONS.md · BLOCKERS.md · MORNING_REPORT.md
 ```
 
-## Локальная разработка (Windows/Linux)
+## Быстрый старт (dev, без Docker)
 
 ```bash
-corepack enable || npm i -g pnpm
-cp .env.example .env      # в .env поменяйте JWT_SECRET и пароли
-pnpm install
-pnpm --filter @klass/shared build
-pnpm db:generate          # миграции уже сгенерированы (0000_…)
-# нужен Postgres (Docker Desktop/WSL):
-docker compose -f deploy/docker-compose.test.yml up -d
-pnpm --filter @klass/api db:migrate
-pnpm seed:teacher         # создаёт учителя-владельца из .env
-pnpm dev:api & pnpm dev:web
+npm i -g pnpm
+cp .env.example .env      # как минимум поменяйте JWT_SECRET/пароли
+pnpm install && pnpm -r build
+
+# 1) поднять локальный Postgres (без Docker, порт 5433) и оставить его висеть:
+node apps/api/scripts/with-postgres.mjs
+# 2) в другом терминале — миграции и seed-учитель:
+DATABASE_URL=postgres://klass:klass@127.0.0.1:5433/klass pnpm --filter @klass/api db:migrate
+DATABASE_URL=postgres://klass:klass@127.0.0.1:5433/klass pnpm seed:teacher
+# 3) запуск:
+DATABASE_URL=postgres://klass:klass@127.0.0.1:5433/klass pnpm dev:api   # + pnpm dev:web
 ```
 
-Без Docker на машине прогоняются только юнит-тесты:
+## Тесты
 
 ```bash
-pnpm --filter @klass/api test        # 14 unit + 7 integration (skipped без DATABASE_URL_TEST)
+pnpm --filter @klass/api test:unit          # юниты (без БД)
+pnpm --filter @klass/api test:integration   # + реальный Postgres (embedded, порт 5433)
+pnpm --filter @klass/e2e test               # Playwright (нужен `pnpm -r build`)
+pnpm audit --prod                            # лицензионно-безопасностный минимум
 ```
 
-Интеграционные испытания (атомарность кода — гонка 20 параллельных, права доступа,
-ротация refresh):
+Сейчас: **71 unit+integration, 4 e2e — все зелёные; audit: 0 уязвимостей.**
 
-```bash
-DATABASE_URL_TEST=postgres://klass:klass@localhost:5433/klass pnpm --filter @klass/api test
-```
+## Продакшен-деплой
 
-## Деплой (Oracle Cloud Free ARM64)
+См. `docs/DEPLOY.md` (порты Oracle Security List + ufw, TURN-сертификат, seed,
+webhook бота, cron бэкапов, мониторинг) и `docs/STAGE0_SPIKE.md` (приёмка звонка
+между двумя сетями — обязательный первый шаг на сервере).
 
-1. Ubuntu 24.04 aarch64, домен → IP сервера; заполнить `.env`.
-2. Открыть порты в Security List **и** в ufw: 80/TCP, 443/TCP, 7881/TCP, 7882/UDP, 3478/UDP, 5349/TCP.
-3. `cd deploy && docker compose up -d --build`
-4. Пройти чеклист `docs/STAGE0_SPIKE.md` (звонок из двух сетей) — без этого дальше не идти.
+## Модель доступа (кратко)
 
-## Статус этапов
+- Учителей создаёт владелец инстанса (seed); публичной регистрации учителей нет.
+- Ученики входят в класс только по одноразовому 8-символьному коду (в БД — SHA-256,
+  показ один раз, срок 1–30 дней, атомарный redeem, блок перебора).
+- Чужой класс/объект отвечает 404 (не 403), чтобы не раскрывать существование.
 
-| Этап | Что | Код | Проверка |
-| --- | --- | --- | --- |
-| 0 | каркас, compose, Caddy, LiveKit+TURN, spike-страница `/spike` | ✅ | ждёт сервера с доменом |
-| 1 | аккаунты, классы, одноразовые коды, участники | ✅ | unit ✅ 14/14; race/права — нужен Postgres |
-| 2–7 | материалы, календарь, урок, доска, листки, Telegram, укрепление | в работе | — |
+## Что не проверено локально (утренний чеклист)
 
-Роли: учителя публичной регистрации нет — только seed или приглашение владельцем инстанса;
-ученики — только по одноразовому коду. Коды: 8 символов без 0/O/1/I/L, в БД только SHA-256,
-показ один раз, 5 попыток/мин → блок 15 мин, одинаковая ошибка для неверного/использованного/истёкшего.
+Живой звонок/TURN/нагрузка (нет Docker+домена), фактический Bot API (нет токена),
+открытие ICS в Google/Apple, шрифты Excalidraw для oʻ/gʻ, иконки PWA — плейсхолдеры.
+Полный список: `docs/MORNING_REPORT.md`.

@@ -184,3 +184,43 @@ Test Files  13 passed (13)
 Не проверено: живой Bot API (нет токена по требованию «без внешних аккаунтов») —
 транспорт логируется на dev, реальная доставка — утром с токеном заказчика; setWebhook
 вызывается при старте при наличии токена.
+
+## Этап 7 — укрепление и запуск (ГОТОВ в объёме dev-машины)
+
+Сделано:
+- аудит-трейл привилегированных действий (class_create/archive, invite_create,
+  member_remove, reset_password, account_deleted, telegram_group_link);
+- сброс пароля ученика учителем (временный пароль, отзыв всех сессий) + кнопка в UI;
+- CSP-helmet (default-src 'self', frame-ancestors 'none' и пр.) — тест заголовков;
+- CSRF-тест (Origin на refresh), тест удаления аккаунта;
+- PWA: манифест + service worker (свой origin, без трекеров), иконки-заглушки
+  (scripts/gen-icons.mjs);
+- страница /privacy (ru/uz) + ссылка со входа;
+- deploy/scripts/backup.sh + restore.sh: pg_dump-путь (compose), fallback логический
+  дамп, openssl-шифрование, ротация; прогнано локально: seed → backup → restore в чистую
+  БД → сверка счётчиков (7 таблиц MATCH) + дешифрование файлов архива;
+- мониторинг: curl-пример к /api/health (DEPLOY.md §7), health/live эндпоинты;
+- docs: DEPLOY.md (полный путь Oracle + приёмочный чеклист), MIGRATION.md (перенос
+  на любой VPS ≤ часа), SECURITY_CHECKLIST.md (по строчкам §4);
+- узбекский: все UI-строки и ответы бота локализованы (locales uz.json полный);
+- Playwright e2e (apps/e2e): свой стек (embedded PG + собранный web+api на :3123,
+  браузер — системный Edge канал, fake-media флаги). Тесты: регистрация по коду,
+  вход в класс, создание события (календарь), старт урока + доска видена ученику +
+  листок переживает перезагрузку страницы (сохранён на сервер) + выдача токена.
+- Безопасность зависимостей: обновления drizzle-orm 0.45 / @fastify/static 10 /
+  react-router 7 / vite 7 / vitest 4 + overrides (lodash-es 4.18, nanoid 3.3.19/5,
+  esbuild 0.28). После каждого шага — полный прогон.
+
+Проверено (финальный чистый прогон на стёртых БД, `pnpm install --frozen-lockfile`):
+
+```
+pnpm -r typecheck            — 0 ошибок
+pnpm -r build                — api ✓, web ✓
+vitest (with-postgres)       — Test Files 14 passed (14); Tests 71 passed (71)
+playwright                   — 4 passed
+pnpm audit --prod / audit    — No known vulnerabilities found
+CJK-скан исходников          — чисто (иероглифы только в бандле dist из i18n-chunks библиотек)
+```
+
+Не проверено (см. BLOCKERS): docker compose up на этой машине, живой RTC/TURN/нагрузка,
+живой Bot API, ICS в чужих календарях, Virgil-шрифт для oʻ/gʻ.

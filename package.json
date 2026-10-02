@@ -18,5 +18,13 @@
     "db:migrate": "pnpm --filter @klass/api db:migrate",
     "seed:teacher": "pnpm --filter @klass/api seed:teacher",
     "audit": "pnpm audit --prod"
+  },
+  "pnpm": {
+    "overrides": {
+      "lodash-es@^4": "^4.18.1",
+      "nanoid@^3": "3.3.19",
+      "nanoid@^4": "^5.1.16",
+      "esbuild": "^0.28.2"
+    }
   }
 }
