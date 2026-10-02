@@ -40,6 +40,12 @@ export function detectFileType(head: Buffer, filename: string): Detected {
     return { group: 'audio', mime: 'audio/mpeg', ext: 'mp3' };
   }
 
+  // SVG raster-adjacent: allowed as *download-only* asset (board export §3.7).
+  // isInlineSafe() keeps it away from inline preview because SVG can carry scripts.
+  if (ascii(head, '<svg') || (ascii(head, '<?xml') && head.subarray(0, 2000).toString('latin1').includes('<svg'))) {
+    return { group: 'image', mime: 'image/svg+xml', ext: 'svg' };
+  }
+
   // OOXML documents are ZIP containers: PK\x03\x04 + required extension whitelist
   if (start(head, [0x50, 0x4b, 0x03, 0x04])) {
     if (ext === 'docx') return { group: 'office', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: 'docx' };

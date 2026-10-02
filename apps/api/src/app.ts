@@ -18,6 +18,8 @@ import { postRoutes } from './routes/posts.js';
 import { noteRoutes } from './routes/notes.js';
 import { eventRoutes } from './routes/events.js';
 import { lessonRoutes } from './routes/lessons.js';
+import { boardRoutes } from './routes/board.js';
+import { studentNoteRoutes } from './routes/studentNotes.js';
 
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
@@ -84,6 +86,8 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(noteRoutes, { db });
   await app.register(eventRoutes, { db });
   await app.register(lessonRoutes, { db });
+  await app.register(boardRoutes, { db });
+  await app.register(studentNoteRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

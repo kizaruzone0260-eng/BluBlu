@@ -133,7 +133,20 @@
     "mediaServerUnavailable": "Media server mavjud emas — keyinroq urinib ko'ring",
     "notesPanel": "Mening qaydlarim",
     "notesNew": "Yangi varaq",
-    "board": "Doska"
+    "board": "Doska",
+    "page": "bet",
+    "readonly": "faqat ko'rish"
+  },
+  "sheets": {
+    "title": "Mening qaydlarim",
+    "new": "varaq",
+    "sheet": "Varaq",
+    "untitled": "Nomsiz",
+    "search": "Matn bo'yicha qidirish…",
+    "placeholder": "Bu yerga yozing — avtomatik saqlanadi…",
+    "saving": "Saqlanmoqda…",
+    "saved": "Saqlandi",
+    "pick": "«+» tugmasi bilan varaq yarating"
   },
   "validate": {
     "passwordTooShort": "Kamida 8 ta belgi",

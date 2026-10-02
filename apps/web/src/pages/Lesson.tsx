@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { Room, RoomEvent, Track } from 'livekit-client';
 import { api, getToken } from '../lib/api';
 import { useAuth } from '../App';
+import Board from '../components/Board';
+import NotesDrawer from '../components/NotesDrawer';
 
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
@@ -33,6 +35,7 @@ export default function Lesson() {
   const [previewDevices, setPreviewDevices] = useState<{ cams: MediaDeviceInfo[]; mics: MediaDeviceInfo[] }>({ cams: [], mics: [] });
   const [previewReady, setPreviewReady] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
+  const [sheetsOpen, setSheetsOpen] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const elsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -292,6 +295,10 @@ export default function Lesson() {
               </div>
               {error && <p className="error">{error}</p>}
               <div ref={gridRef} className={gridClass} />
+              {session && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
+              {!isTeacher && session && (
+                <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
+              )}
             </>
           )}
         </>

@@ -1,5 +1,5 @@
 import {
-  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb, boolean, bigint,
+  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb, boolean, bigint, integer,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -149,3 +149,22 @@ export const lessonSessions = pgTable('lesson_sessions', {
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;
+
+/** §3.7 whiteboard: merged Excalidraw snapshot per (session, page). */
+export const whiteboards = pgTable('whiteboards', {
+  sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  pageNo: integer('page_no').notNull(),
+  snapshot: jsonb('snapshot').$type<{ elements: unknown[]; appState: Record<string, unknown> }>().notNull().default({ elements: [], appState: {} }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.sessionId, t.pageNo] })]);
+
+/** §3.8 personal student sheets — visible only to their owner. */
+export const studentNotes = pgTable('student_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').references(() => lessonSessions.id, { onDelete: 'set null' }),
+  title: text('title').notNull().default(''),
+  body: text('body').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('studentnotes_user_idx').on(t.userId, t.classId)]);

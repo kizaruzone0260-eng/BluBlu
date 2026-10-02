@@ -46,6 +46,18 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord
 .videos.layout-teacher { grid-template-columns: 1fr; }
 .videos.layout-teacher > div:first-child { grid-column: 1 / -1; }
 
+/* student sheets drawer (§3.8): bottom sheet on phones, side panel on desktop */
+.sheet-fab { position: fixed; right: 14px; bottom: 14px; z-index: 40; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.sheet-panel {
+  position: fixed; right: 0; bottom: 0; left: 0; z-index: 45;
+  background: var(--card); border-top: 1px solid var(--border);
+  padding: 12px; display: flex; flex-direction: column;
+  max-height: 70vh; box-shadow: 0 -6px 20px rgba(0,0,0,.15);
+}
+@media (min-width: 720px) {
+  .sheet-panel { left: auto; top: 60px; width: 380px; max-height: calc(100vh - 80px); border: 1px solid var(--border); border-radius: 12px 0 0 12px; }
+}
+
 @media (max-width: 640px) { .container { padding: 10px; } }
 
 /* Tiptap editor (teacher notes) */
