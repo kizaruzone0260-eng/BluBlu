@@ -15,6 +15,7 @@ import { rtcRoutes } from './routes/rtc.js';
 import { healthRoutes } from './routes/health.js';
 import { postRoutes } from './routes/posts.js';
 import { noteRoutes } from './routes/notes.js';
+import { eventRoutes } from './routes/events.js';
 
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
@@ -78,6 +79,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(rtcRoutes, { db });
   await app.register(postRoutes, { db });
   await app.register(noteRoutes, { db });
+  await app.register(eventRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

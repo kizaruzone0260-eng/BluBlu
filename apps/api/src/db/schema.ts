@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm';
 export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
 export const localeEnum = pgEnum('app_locale', ['ru', 'uz']);
 export const postKindEnum = pgEnum('post_kind', ['material', 'announcement']);
+export const eventKindEnum = pgEnum('event_kind', ['lesson', 'deadline', 'other']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -102,6 +103,33 @@ export const teacherNotes = pgTable('teacher_notes', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('notes_teacher_idx').on(t.teacherId, t.classId)]);
+
+/**
+ * §3.5 — times stored in UTC plus the event's IANA zone. `rrule` is an RRULE
+ * string iterated in wall-clock time of `tz`; `exdates` are UTC instants of
+ * individual occurrences removed via “only this”.
+ */
+export const events = pgTable('events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  kind: eventKindEnum('kind').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+  endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+  tz: text('tz').notNull().default('Asia/Tashkent'),
+  rrule: text('rrule'),
+  exdates: jsonb('exdates').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('events_class_start_idx').on(t.classId, t.startsAt)]);
+
+/** §3.5 ICS subscription: personal read-only secret token, hash-only storage. */
+export const icsTokens = pgTable('ics_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }).unique(),
+  tokenHash: text('token_hash').notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;

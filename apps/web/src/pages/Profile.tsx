@@ -11,6 +11,12 @@ export default function Profile() {
   const [tz, setTz] = useState(me?.tz ?? 'Asia/Tashkent');
   const [saved, setSaved] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [icsUrl, setIcsUrl] = useState('');
+
+  async function getIcs() {
+    const { token } = await api<{ token: string }>('/api/me/ical-token', { method: 'POST' });
+    setIcsUrl(`${window.location.origin}/api/ical/${token}`);
+  }
 
   if (!me) return null;
 
@@ -45,6 +51,15 @@ export default function Profile() {
       <input value={tz} onChange={(e) => setTz(e.target.value)} placeholder="Asia/Tashkent" />
       <button onClick={save}>{t('common.save')}</button>
       {saved && <span className="ok"> ✓</span>}
+      <hr />
+      <h2>{t('cal.ical')}</h2>
+      <button className="secondary" onClick={getIcs}>{t('cal.icalGet')}</button>
+      {icsUrl && (
+        <>
+          <input readOnly value={icsUrl} onFocus={(e) => e.target.select()} style={{ marginTop: 8, fontFamily: 'ui-monospace, monospace', fontSize: '.8rem' }} />
+          <p className="muted">{t('cal.icalHint')}</p>
+        </>
+      )}
       <hr />
       <button className="danger" onClick={deleteAccount} disabled={deleting}>
         {t('common.delete')} ({t('auth.profile')})

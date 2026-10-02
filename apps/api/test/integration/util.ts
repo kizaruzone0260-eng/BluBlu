@@ -15,7 +15,7 @@ export function makeDb(url: string) {
 export async function preparedDb(url: string) {
   const t = makeDb(url);
   await migrate(t.db, { migrationsFolder: path.resolve('src/db/migrations') });
-  await t.sql`truncate users, classes, class_members, invite_codes, refresh_tokens, audit_log, posts, files, teacher_notes restart identity cascade`;
+  await t.sql`truncate users, classes, class_members, invite_codes, refresh_tokens, audit_log, posts, files, teacher_notes, events, ics_tokens restart identity cascade`;
   return t;
 }
 
