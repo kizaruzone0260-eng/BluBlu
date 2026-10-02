@@ -131,6 +131,21 @@ export const icsTokens = pgTable('ics_tokens', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** §3.6 lesson session: created when the teacher presses “Start lesson”. */
+export const lessonSessions = pgTable('lesson_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
+  roomName: text('room_name').notNull().unique(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  endedAt: timestamp('ended_at', { withTimezone: true }),
+  /** «режим лекции»: students cannot unmute/publish until granted */
+  lectureMode: boolean('lecture_mode').notNull().default(false),
+  /** layout for everyone: {layout: 'gallery'|'stage'|'teacher'} */
+  layoutState: jsonb('layout_state').$type<{ layout: 'gallery' | 'stage' | 'teacher' }>().notNull().default({ layout: 'gallery' }),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+}, (t) => [index('lessons_class_idx').on(t.classId, t.startedAt)]);
+
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;

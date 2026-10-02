@@ -49,6 +49,9 @@ export default function ClassDetail() {
   return (
     <div>
       <p><Link to="/classes">← {t('classes.title')}</Link></p>
+      {me?.role === 'teacher' && (
+        <p><a href={`/lesson?classId=${id}`}><button style={{ marginTop: 0 }} className="secondary">{t('lesson.title')}</button></a></p>
+      )}
       <Feed classId={id} />
       {me?.role === 'teacher' && (
         <>

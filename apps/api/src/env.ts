@@ -19,6 +19,7 @@ const envSchema = z
   LIVEKIT_API_KEY: z.string().default('devkey'),
   LIVEKIT_API_SECRET: z.string().default('devsecretdevsecretdevsecret123456'),
   LIVEKIT_WS_URL: z.string().default('ws://localhost:7880'),
+  LIVEKIT_INTERNAL_URL: z.string().default('http://localhost:7880'),
   STORAGE_DIR: z.string().default('./files-store'),
   MAX_FILE_MB: z.coerce.number().default(100),
   TEACHER_QUOTA_GB: z.coerce.number().default(5),

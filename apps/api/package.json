@@ -22,6 +22,7 @@
     "@fastify/multipart": "^10.1.2",
     "@fastify/rate-limit": "^10.2.1",
     "@fastify/static": "^8.0.4",
+    "@fastify/websocket": "^11.3.1",
     "@klass/shared": "workspace:*",
     "@node-rs/argon2": "^2.0.2",
     "drizzle-orm": "^0.36.4",
@@ -31,10 +32,12 @@
     "livekit-server-sdk": "^2.7.3",
     "postgres": "^3.4.5",
     "rrule": "^2.8.1",
+    "ws": "^8.22.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.28.1",
     "embedded-postgres": "18.4.0-beta.17",
     "tsx": "^4.19.2",

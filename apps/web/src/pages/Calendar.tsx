@@ -158,6 +158,9 @@ export default function Calendar() {
           <div className="row">
             <button disabled={!form.title || !form.startLocal || save.isPending} onClick={() => save.mutate(form)}>{t('common.save')}</button>
             <button className="secondary" onClick={() => { setForm(null); setScopeChoice('all'); }}>{t('common.cancel')}</button>
+            {form.kind === 'lesson' && form.id && (
+              <a href={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></a>
+            )}
           </div>
         </div>
       )}
@@ -181,6 +184,12 @@ export default function Calendar() {
           eventClick={(info) => {
             const o = openOcc(info.event.id);
             if (!o) return;
+            if (o.kind === 'lesson' && me?.role !== 'teacher') {
+              const openAt = +new Date(o.startsAt) - 10 * 60_000; // §3.6: активна за 10 минут
+              if (Date.now() >= openAt) window.location.href = `/lesson?eventId=${o.eventId}`;
+              else window.alert(t('cal.joinTooEarly'));
+              return;
+            }
             if (me?.role === 'teacher') {
               setForm({
                 id: o.eventId, kind: o.kind, title: o.title, description: o.description,

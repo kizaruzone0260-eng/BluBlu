@@ -41,6 +41,11 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--bord
 .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
 .videos video { width: 100%; background: #000; border-radius: 8px; aspect-ratio: 16/9; }
 .topbar { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+/* lesson layouts */
+.videos.layout-stage { grid-template-columns: 2fr 1fr; }
+.videos.layout-teacher { grid-template-columns: 1fr; }
+.videos.layout-teacher > div:first-child { grid-column: 1 / -1; }
+
 @media (max-width: 640px) { .container { padding: 10px; } }
 
 /* Tiptap editor (teacher notes) */

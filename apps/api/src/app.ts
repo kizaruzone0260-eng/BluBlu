@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
+import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import type { DB } from './db/index.js';
@@ -16,6 +17,7 @@ import { healthRoutes } from './routes/health.js';
 import { postRoutes } from './routes/posts.js';
 import { noteRoutes } from './routes/notes.js';
 import { eventRoutes } from './routes/events.js';
+import { lessonRoutes } from './routes/lessons.js';
 
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
@@ -46,6 +48,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
+  await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
 
   // File uploads (§3.3): 100 MB per file, ≤4 files per request
   await app.register(multipart, {
@@ -80,6 +83,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(postRoutes, { db });
   await app.register(noteRoutes, { db });
   await app.register(eventRoutes, { db });
+  await app.register(lessonRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

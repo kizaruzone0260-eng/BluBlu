@@ -10,6 +10,7 @@ import Spike from './pages/Spike';
 import Profile from './pages/Profile';
 import Notes from './pages/Notes';
 import Calendar from './pages/Calendar';
+import Lesson from './pages/Lesson';
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/classes" element={me ? <Classes /> : <Navigate to="/login" />} />
           <Route path="/classes/:id" element={me ? <ClassDetail /> : <Navigate to="/login" />} />
           <Route path="/calendar" element={me ? <Calendar /> : <Navigate to="/login" />} />
+          <Route path="/lesson" element={me ? <Lesson /> : <Navigate to="/login" />} />
           <Route path="*" element={<Navigate to={me ? '/classes' : '/login'} />} />
         </Routes>
       </div>
