@@ -58,6 +58,35 @@
     "removeMember": "Sinfdan o'chirish",
     "moveMember": "Boshqa sinfga ko'chirish"
   },
+  "feed": {
+    "title": "Materiallar va e'lonlar",
+    "material": "material",
+    "announcement": "e'lon",
+    "newMaterial": "+ Material",
+    "newAnnouncement": "+ E'lon",
+    "description": "Tavsif",
+    "topic": "Mavzu",
+    "files": "Fayllar",
+    "text": "Matn",
+    "pin": "Mahkamlash",
+    "unpin": "Olib tashlash",
+    "preview": "Ochish",
+    "empty": "Hozircha bo'sh.",
+    "needFile": "Kamida bitta fayl tanlang",
+    "fileTypeRejected": "Fayl turi aniqlanmadi yoki ruxsat etilmagan",
+    "tooLarge": "Fayl 100 MB dan katta",
+    "quotaExceeded": "O'qituvchi saqlash hajmi to'lgan"
+  },
+  "notes": {
+    "title": "Mening qaydlarim",
+    "new": "Yangi qayd",
+    "pickClass": "Sinfn tanlang",
+    "pickNote": "Qaydni tanlang yoki yarating",
+    "untitled": "Nomsiz",
+    "publish": "Sinfga e'lon qilish",
+    "saved": "Saqlangan vaqt:",
+    "editing": "Tahrirlanmoqda…"
+  },
   "validate": {
     "passwordTooShort": "Kamida 8 ta belgi",
     "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",

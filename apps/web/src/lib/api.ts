@@ -6,6 +6,10 @@ export function setAccessToken(t: string | null) {
   listeners.forEach((l) => l(t != null));
 }
 
+export function getToken(): string | null {
+  return accessToken;
+}
+
 export function onAuthChange(cb: (loggedIn: boolean) => void) {
   listeners.add(cb);
   return () => { listeners.delete(cb); };

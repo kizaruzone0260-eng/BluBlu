@@ -13,12 +13,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
-    "test:integration": "node scripts/with-postgres.mjs pnpm exec vitest run",
+    "test:integration": "node scripts/with-postgres.mjs pnpm exec vitest run"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.1",
     "@fastify/helmet": "^13.0.0",
+    "@fastify/multipart": "^10.1.2",
     "@fastify/rate-limit": "^10.2.1",
     "@fastify/static": "^8.0.4",
     "@klass/shared": "workspace:*",

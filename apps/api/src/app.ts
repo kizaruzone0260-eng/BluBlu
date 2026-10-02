@@ -3,6 +3,7 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import type { DB } from './db/index.js';
@@ -12,6 +13,8 @@ import { authRoutes } from './routes/auth.js';
 import { classRoutes } from './routes/classes.js';
 import { rtcRoutes } from './routes/rtc.js';
 import { healthRoutes } from './routes/health.js';
+import { postRoutes } from './routes/posts.js';
+import { noteRoutes } from './routes/notes.js';
 
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
@@ -43,6 +46,11 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
 
   await app.register(cookie);
 
+  // File uploads (§3.3): 100 MB per file, ≤4 files per request
+  await app.register(multipart, {
+    limits: { fileSize: env.MAX_FILE_MB * 1024 * 1024, files: 4 },
+  });
+
   // Global safety net; stricter limits per route below (§4).
   await app.register(rateLimit, {
     global: true,
@@ -68,6 +76,8 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(authRoutes(db));
   await app.register(classRoutes, { db });
   await app.register(rtcRoutes, { db });
+  await app.register(postRoutes, { db });
+  await app.register(noteRoutes, { db });
 
   // SPA static serving in production (web bundle baked into the image)
   if (env.WEB_DIST) {

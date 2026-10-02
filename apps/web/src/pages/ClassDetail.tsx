@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useAuth } from '../App';
+import Feed from '../components/Feed';
 
 interface InviteRow {
   id: string; status: 'active' | 'used' | 'expired' | 'revoked';
@@ -48,7 +49,7 @@ export default function ClassDetail() {
   return (
     <div>
       <p><Link to="/classes">← {t('classes.title')}</Link></p>
-
+      <Feed classId={id} />
       {me?.role === 'teacher' && (
         <>
           <div className="card">

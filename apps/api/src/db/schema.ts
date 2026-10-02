@@ -1,10 +1,11 @@
 import {
-  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb,
+  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb, boolean, bigint,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
 export const localeEnum = pgEnum('app_locale', ['ru', 'uz']);
+export const postKindEnum = pgEnum('post_kind', ['material', 'announcement']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -65,6 +66,42 @@ export const auditLog = pgTable('audit_log', {
   target: jsonb('target').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const posts = pgTable('posts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id),
+  kind: postKindEnum('kind').notNull(),
+  title: text('title').notNull().default(''),
+  body: text('body').notNull().default(''),
+  pinned: boolean('pinned').notNull().default(false),
+  topic: text('topic'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('posts_class_idx').on(t.classId, t.createdAt)]);
+
+/** Files: storage_key is an opaque UUID; original name never touches the disk path. */
+export const files = pgTable('files', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  storageKey: text('storage_key').notNull().unique(),
+  originalName: text('original_name').notNull(),
+  mime: text('mime').notNull(),
+  size: bigint('size', { mode: 'number' }).notNull(),
+  uploadedBy: uuid('uploaded_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('files_post_idx').on(t.postId)]);
+
+export const teacherNotes = pgTable('teacher_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  teacherId: uuid('teacher_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  title: text('title').notNull().default(''),
+  body: text('body').notNull().default(''),
+  sharedPostId: uuid('shared_post_id').references(() => posts.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('notes_teacher_idx').on(t.teacherId, t.classId)]);
 
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;

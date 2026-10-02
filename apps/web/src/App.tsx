@@ -8,6 +8,7 @@ import Classes from './pages/Classes';
 import ClassDetail from './pages/ClassDetail';
 import Spike from './pages/Spike';
 import Profile from './pages/Profile';
+import Notes from './pages/Notes';
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/register" element={me ? <Navigate to="/classes" /> : <Register onDone={refresh} />} />
           <Route path="/spike" element={<Spike />} />
           <Route path="/profile" element={me ? <Profile /> : <Navigate to="/login" />} />
+          <Route path="/notes" element={me?.role === 'teacher' ? <Notes /> : <Navigate to="/classes" />} />
           <Route path="/classes" element={me ? <Classes /> : <Navigate to="/login" />} />
           <Route path="/classes/:id" element={me ? <ClassDetail /> : <Navigate to="/login" />} />
           <Route path="*" element={<Navigate to={me ? '/classes' : '/login'} />} />
@@ -76,6 +78,8 @@ function Topbar({ me, onLoggedOut }: { me: Me | null; onLoggedOut: () => void })
       </button>
       {me ? (
         <>
+          <a href="/classes">{t('classes.title')}</a>
+          {me.role === 'teacher' && <a href="/notes">{t('notes.title')}</a>}
           <a href="/profile">{me.name}</a>
           <LogoutBtn onLoggedOut={onLoggedOut} />
         </>
