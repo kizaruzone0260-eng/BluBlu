@@ -6,13 +6,13 @@ import {
   startLesson, endLesson, getActiveSessionForClass, getActiveSessionForEvent,
   getSession, buildJoinToken, getRoomService, studentPermission, type LessonSession,
 } from '../services/lessons.js';
-import { verifyAccessToken } from '../lib/tokens.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env } from '../env.js';
 import { eq } from 'drizzle-orm';
 import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { classTitle } from '../services/notifyQueue.js';
+import { createWsTicket, consumeWsTicket } from '../services/wsTicket.js';
 import type { WebSocket as WsSocket } from 'ws';
 
 const withRoom = (s: LessonSession) => ({
@@ -215,18 +215,30 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true };
   });
 
+  // One-time 30 s WS ticket (replaces access token in WS query strings, §logs audit).
+  app.post('/api/ws/ticket', { preHandler: app.authenticate }, async (req, reply) => {
+    const p = z.object({ sessionId: z.string().uuid() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    const s = await getSession(db, p.data.sessionId);
+    if (!s || s.endedAt) return reply.code(404).send({ error: 'notFound' });
+    const cls = await resolveClass(db, req.user!.id, req.user!.role, s.classId);
+    if (!cls) return reply.code(404).send({ error: 'notFound' });
+    const ticket = await createWsTicket(db, req.user!.id, s.id);
+    return { ticket, ttlMs: 30_000 };
+  });
+
   // ── lesson status WebSocket (§3.6 “статус по WebSocket”) ──
-  // Browser WS can't set Authorization headers → token goes in query, verified here.
+  // Browser WS can't set Authorization headers → ONE-TIME ticket in query, consumed here.
   app.get('/api/ws/lesson/:id', { websocket: true }, (socket: WsSocket, req) => {
     void (async () => {
       const url = new URL(req.url, 'http://local');
-      const token = url.searchParams.get('token') ?? '';
+      const ticket = url.searchParams.get('ticket') ?? '';
       const q = url.searchParams.get('sessionId') ?? (url.pathname.split('/').pop() ?? '');
-      const claims = await verifyAccessToken(token.replace(/^Bearer /, ''));
-      if (!claims) { socket.close(4401); return; }
       const s = await getSession(db, q);
       if (!s) { socket.close(4404); return; }
-      const cls = await resolveClass(db, claims.sub, claims.role, s.classId);
+      const consumed = await consumeWsTicket(db, ticket, s.id);
+      if (!consumed) { socket.close(4401); return; }
+      const cls = await resolveClass(db, consumed.userId, consumed.role, s.classId);
       if (!cls) { socket.close(4404); return; }
       wsJoin(q, socket);
       socket.send(JSON.stringify({

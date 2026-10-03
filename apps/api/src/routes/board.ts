@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
 import type { DB } from '../db/index.js';
-import { verifyAccessToken } from '../lib/tokens.js';
+import { consumeWsTicket } from '../services/wsTicket.js';
 import { resolveClass } from '../services/classes.js';
 import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
@@ -161,21 +161,21 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     return reply.code(201).send({ postId: post.id });
   });
 
-  // ── board WebSocket ──
+  // ── board WebSocket (one-time ticket auth, §audit) ──
   app.get('/api/ws/board/:id', { websocket: true }, (socket: WebSocket, req) => {
     void (async () => {
       const url = new URL(req.url, 'http://local');
-      const token = url.searchParams.get('token') ?? '';
+      const ticket = url.searchParams.get('ticket') ?? '';
       const sessionId = url.pathname.split('/').pop() ?? '';
-      const claims = await verifyAccessToken(token);
-      if (!claims) { socket.close(4401); return; }
       const s = await getSession(db, sessionId);
       if (!s) { socket.close(4404); return; }
-      const cls = await resolveClass(db, claims.sub, claims.role, s.classId);
+      const consumed = await consumeWsTicket(db, ticket, sessionId);
+      if (!consumed) { socket.close(4401); return; }
+      const cls = await resolveClass(db, consumed.userId, consumed.role, s.classId);
       if (!cls) { socket.close(4404); return; }
-      const role = claims.role === 'teacher' ? 'teacher' : 'student';
+      const role = consumed.role === 'teacher' ? 'teacher' : 'student';
       const r = await getBoardRoom(db, sessionId);
-      if (role === 'teacher') r.teacherId = claims.sub;
+      if (role === 'teacher') r.teacherId = consumed.userId;
       r.sockets.set(socket, { role });
       socket.on('close', () => {
         r.sockets.delete(socket);
@@ -204,7 +204,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
           try { msg = JSON.parse(raw.toString()); } catch { return; }
           // SERVER-SIDE PERMISSION GATE: only the owning teacher may write (§3.7/§7)
           const who = r.sockets.get(socket);
-          if (!who || who.role !== 'teacher' || claims.sub !== r.teacherId) return;
+          if (!who || who.role !== 'teacher' || consumed.userId !== r.teacherId) return;
           if (msg.type === 'edits' && Array.isArray(msg.elements)) {
             const { changed } = mergeElements(r.elements, msg.elements.filter((e) => e && typeof e.id === 'string'));
             if (changed.length) queueBroadcast(db, r, changed, socket);

@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { signAccessToken, verifyAccessToken, generateRefreshToken, hashRefreshToken } from '../../src/lib/tokens';
+import { sanitizeRequestUrl } from '../../src/app';
+
+describe('request-log sanitizer (audit: no secrets in logs)', () => {
+  it('strips query strings', () => {
+    expect(sanitizeRequestUrl('/api/ws/board/abc?ticket=SECRET')).toBe('/api/ws/board/abc');
+    expect(sanitizeRequestUrl('/api/health/live')).toBe('/api/health/live');
+    expect(sanitizeRequestUrl(undefined)).toBe('');
+  });
+});
 
 describe('tokens (§3.1)', () => {
   it('access JWT round-trip with claims', async () => {

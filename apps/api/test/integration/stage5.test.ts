@@ -54,9 +54,11 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
   });
   afterAll(async () => { await app?.close(); await t?.sql.end(); });
 
-  function wsConnect(token: string): Promise<{ ws: WebSocket; next: (ms?: number) => Promise<unknown> }> {
+  async function wsConnect(token: string): Promise<{ ws: WebSocket; next: (ms?: number) => Promise<unknown> }> {
+    const tr = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: { authorization: `Bearer ${token}` }, payload: { sessionId } });
+    const ticket = (tr.json() as { ticket?: string }).ticket ?? 'invalid';
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/board/${sessionId}?token=${encodeURIComponent(token)}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/board/${sessionId}?ticket=${encodeURIComponent(ticket)}`);
       const queue: unknown[] = [];
       let wake: ((v: unknown) => void) | null = null;
       ws.onmessage = (ev) => {

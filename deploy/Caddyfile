@@ -3,6 +3,14 @@
 
 	encode zstd gzip
 
+	# Access log: never persist query strings (one-time WS tickets, ICS URLs)
+	log {
+		format filter {
+			request>uri_query delete
+			request>uri>query delete
+		}
+	}
+
 	# Security headers (CSP tightened in stage 7)
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

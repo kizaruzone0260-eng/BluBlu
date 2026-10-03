@@ -132,7 +132,8 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
     const st = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: auth(teacher.token), payload: { classId } });
     const sessionId = st.json().id as string;
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionId}?token=${encodeURIComponent(studentToken)}`);
+    const tr = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: auth(studentToken), payload: { sessionId } });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionId}?ticket=${encodeURIComponent(tr.json().ticket as string)}`);
     const msgs: Record<string, unknown>[] = [];
     ws.addEventListener('message', (ev) => msgs.push(JSON.parse(String(ev.data))));
     await new Promise<void>((res, rej) => { ws.onopen = () => res(); ws.onerror = (e) => rej(e); });
@@ -144,8 +145,8 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
     expect(msgs.some((m) => m.type === 'ended')).toBe(true);
     ws.close();
 
-    // unauthorized socket gets closed with 4401
-    const bad = new WebSocket(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionId}?token=nope`);
+    // invalid ticket socket gets closed with 4401
+    const bad = new WebSocket(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionId}?ticket=nope`);
     const code = await new Promise<number>((res) => {
       bad.onclose = (e) => res(e.code);
       bad.onerror = () => res(-1);

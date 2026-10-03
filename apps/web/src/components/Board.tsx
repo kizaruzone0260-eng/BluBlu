@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import { useTranslation } from 'react-i18next';
-import { api, getToken } from '../lib/api';
+import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
 
 type Api = NonNullable<Parameters<NonNullable<React.ComponentProps<typeof Excalidraw>['excalidrawAPI']>>[0]>;
@@ -29,30 +29,38 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
   useEffect(() => {
     const token = getToken();
     if (!token || !me) return;
-    const ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/board/${sessionId}?token=${encodeURIComponent(token)}`);
-    wsRef.current = ws;
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data as string) as {
-        type: string; canEdit?: boolean; page?: number; pages?: number[]; elements?: RawEl[];
-      };
-      if (msg.type === 'init') {
-        setCanEdit(!!msg.canEdit);
-        setPages(msg.pages ?? [1]);
-        setCurrentPage(msg.page ?? 1);
-        sentRef.current.clear();
-        replaceScene(msg.elements ?? []);
-      } else if (msg.type === 'edits') {
-        mergeIncoming(msg.elements ?? []);
-      } else if (msg.type === 'current') {
-        setCurrentPage(msg.page ?? 1);
-        sentRef.current.clear();
-        replaceScene(msg.elements ?? []);
-      } else if (msg.type === 'pages') {
-        setPages(msg.pages ?? [1]);
-        setCurrentPage(msg.page ?? msg.pages?.[0] ?? 1);
-      }
-    };
-    return () => ws.close();
+    let ws: WebSocket | null = null;
+    let disposed = false;
+    void (async () => {
+      try {
+        const ticket = await wsTicket(sessionId);
+        if (disposed) return;
+        ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/board/${sessionId}?ticket=${encodeURIComponent(ticket)}`);
+        wsRef.current = ws;
+        ws.onmessage = (ev) => {
+          const msg = JSON.parse(ev.data as string) as {
+            type: string; canEdit?: boolean; page?: number; pages?: number[]; elements?: RawEl[];
+          };
+          if (msg.type === 'init') {
+            setCanEdit(!!msg.canEdit);
+            setPages(msg.pages ?? [1]);
+            setCurrentPage(msg.page ?? 1);
+            sentRef.current.clear();
+            replaceScene(msg.elements ?? []);
+          } else if (msg.type === 'edits') {
+            mergeIncoming(msg.elements ?? []);
+          } else if (msg.type === 'current') {
+            setCurrentPage(msg.page ?? 1);
+            sentRef.current.clear();
+            replaceScene(msg.elements ?? []);
+          } else if (msg.type === 'pages') {
+            setPages(msg.pages ?? [1]);
+            setCurrentPage(msg.page ?? msg.pages?.[0] ?? 1);
+          }
+        };
+      } catch { /* board just stays empty until lesson status refreshes */ }
+    })();
+    return () => { disposed = true; ws?.close(); };
   }, [sessionId, me]);
 
   function replaceScene(elements: RawEl[]) {

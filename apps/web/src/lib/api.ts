@@ -73,6 +73,17 @@ export interface Me {
   tz: string;
 }
 
+/**
+ * One-time 30 s ticket for our WebSockets (§audit: no long-lived token in URLs).
+ * Fetch immediately before each connect; on reconnect fetch a fresh one.
+ */
+export async function wsTicket(sessionId: string): Promise<string> {
+  const r = await api<{ ticket: string }>('/api/ws/ticket', {
+    method: 'POST', body: JSON.stringify({ sessionId }),
+  });
+  return r.ticket;
+}
+
 export async function fetchMe(): Promise<Me | null> {
   try {
     return await api<Me>('/api/me');

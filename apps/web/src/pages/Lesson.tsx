@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Room, RoomEvent, Track } from 'livekit-client';
-import { api, getToken } from '../lib/api';
+import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
 import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
@@ -60,17 +60,24 @@ export default function Lesson() {
   useEffect(() => {
     const s = session;
     if (!s) return;
-    const token = getToken();
-    if (!token) return;
-    const ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/lesson/${s.id}?token=${encodeURIComponent(token)}`);
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data as string) as { type: string; session?: Session; layout?: Session['layout']; on?: boolean };
-      if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
-      if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
-      if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
-      if (msg.type === 'started' && msg.session) setSession(msg.session);
-    };
-    return () => ws.close();
+    let ws: WebSocket | null = null;
+    let disposed = false;
+    void (async () => {
+      if (!getToken()) return;
+      try {
+        const ticket = await wsTicket(s.id);
+        if (disposed) return;
+        ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/lesson/${s.id}?ticket=${encodeURIComponent(ticket)}`);
+        ws.onmessage = (ev) => {
+          const msg = JSON.parse(ev.data as string) as { type: string; session?: Session; layout?: Session['layout']; on?: boolean };
+          if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
+          if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
+          if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
+          if (msg.type === 'started' && msg.session) setSession(msg.session);
+        };
+      } catch { /* status refetch query covers outages */ }
+    })();
+    return () => { disposed = true; ws?.close(); };
   }, [session?.id]);
 
   useEffect(() => () => { void roomRef.current?.disconnect(); }, []);

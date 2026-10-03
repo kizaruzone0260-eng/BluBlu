@@ -221,6 +221,20 @@ export const classNotifyPrefs = pgTable('class_notify_prefs', {
 export const notificationStatusEnum = pgEnum('notification_status',
   ['pending', 'sent', 'failed', 'blocked', 'skipped']);
 
+/**
+ * One-time WebSocket tickets (30 s TTL, bound to user + lesson session).
+ * Replaces access tokens in WS query strings so no long-lived secret ever
+ * appears in a URL (Caddy access log, proxies, browser history).
+ */
+export const wsTickets = pgTable('ws_tickets', {
+  tokenHash: text('token_hash').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('ws_tickets_session_idx').on(t.sessionId)]);
+
 export const notifications = pgTable('notifications', {
   id: uuid('id').primaryKey().defaultRandom(),
   kind: text('kind').notNull(),

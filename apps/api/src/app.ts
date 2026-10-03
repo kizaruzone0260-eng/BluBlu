@@ -22,15 +22,29 @@ import { boardRoutes } from './routes/board.js';
 import { studentNoteRoutes } from './routes/studentNotes.js';
 import { telegramRoutes } from './routes/telegram.js';
 
+/** Strip query strings from request logs — tickets/tokens must never hit logs. */
+export function sanitizeRequestUrl(url: string | undefined): string {
+  return (url ?? '').split('?')[0] ?? '';
+}
+
 export async function buildApp(db: DB): Promise<FastifyInstance> {
   const app = Fastify({
     logger: env.NODE_ENV === 'test'
       ? false
       : {
           level: 'info',
-          transport: env.NODE_ENV === 'development'
-            ? { target: 'pino/file', options: { destination: 1 } } // pretty-less stdout
-            : undefined,
+          // access-token/bearer заголовки в логи не пишутся
+          redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
+          serializers: {
+            request: (req) => ({
+              type: 'request',
+              method: req.method,
+              url: sanitizeRequestUrl(req.url),
+              hostname: req.hostname,
+              remoteAddress: req.ip,
+              remotePort: req.socket?.remotePort,
+            }),
+          },
         },
     trustProxy: true, // behind Caddy
   });

@@ -269,12 +269,12 @@ suite('§7 rights audit', () => {
     await app.inject({ method: 'POST', url: `/api/lessons/${start.json().id}/end`, headers: a('teacherB') });
   });
 
-  it('WS gates: no data on unauthorized sockets; closed with 4401/4404; A student accepted', async () => {
+  it('WS tickets: one-time, session-bound, member gets snapshot; anon gets 4401 with zero data', async () => {
     await app.listen({ port: 0, host: '127.0.0.1' });
     const addr = app.server.address();
     const port = typeof addr === 'object' && addr ? addr.port : 0;
     interface Outcome { opened: boolean; code: number | null; messages: string[] }
-    function probe(url: string, ms = 1500): Promise<Outcome> {
+    function probe(url: string, ms = 1200): Promise<Outcome> {
       return new Promise((res) => {
         const out: Outcome = { opened: false, code: null, messages: [] };
         const ws = new WebSocket(url);
@@ -284,22 +284,49 @@ suite('§7 rights audit', () => {
         setTimeout(() => { try { ws.close(); } catch { /* noop */ } res(out); }, ms);
       });
     }
-    const anon = await probe(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionA}?token=xx`);
-    expect(anon.messages, 'anonymous must receive no data').toEqual([]);
-    expect(anon.code).toBe(4401);
-    const foreign = await probe(`ws://127.0.0.1:${port}/api/ws/lesson/${sessionA}?token=${encodeURIComponent(tok.studentB)}`);
-    expect(foreign.messages).toEqual([]);
-    expect(foreign.code).toBe(4404);
-    const anonBoard = await probe(`ws://127.0.0.1:${port}/api/ws/board/${sessionA}?token=xx`);
-    expect(anonBoard.messages).toEqual([]);
-    expect(anonBoard.code).toBe(4401);
-    const foreignBoard = await probe(`ws://127.0.0.1:${port}/api/ws/board/${sessionA}?token=${encodeURIComponent(tok.studentB)}`);
-    expect(foreignBoard.messages).toEqual([]);
-    expect(foreignBoard.code).toBe(4404);
-    const ok = await probe(`ws://127.0.0.1:${port}/api/ws/board/${sessionA}?token=${encodeURIComponent(tok.studentA)}`, 800);
+    // fresh live sessions for both tenants
+    const stA = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: a('teacherA'), payload: { classId: classA } });
+    const liveA = stA.json().id as string;
+    const stB = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: a('teacherB'), payload: { classId: classB } });
+    const liveB = stB.json().id as string;
+
+    const bad = await probe(`ws://127.0.0.1:${port}/api/ws/lesson/${liveA}?ticket=xx`);
+    expect(bad.messages, 'no bytes to an invalid ticket').toEqual([]);
+    expect(bad.code).toBe(4401);
+
+    const tr = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: a('studentA'), payload: { sessionId: liveA } });
+    expect(tr.statusCode).toBe(200);
+    const ticket = tr.json().ticket as string;
+    const ok = await probe(`ws://127.0.0.1:${port}/api/ws/board/${liveA}?ticket=${encodeURIComponent(ticket)}`, 900);
     expect(ok.opened).toBe(true);
-    expect(ok.messages.length, 'member receives init snapshot').toBeGreaterThan(0);
+    expect(ok.messages.length, 'member receives init').toBeGreaterThan(0);
     expect(ok.code, 'member socket stays open').toBeNull();
+
+    // ONE-TIME: the consumed ticket is dead
+    const reuse = await probe(`ws://127.0.0.1:${port}/api/ws/board/${liveA}?ticket=${encodeURIComponent(ticket)}`);
+    expect(reuse.code).toBe(4401);
+
+    // SESSION-BOUND: valid ticket for B's session cannot open A's board
+    const trB = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: a('studentB'), payload: { sessionId: liveB } });
+    const cross = await probe(`ws://127.0.0.1:${port}/api/ws/board/${liveA}?ticket=${trB.json().ticket as string}`);
+    expect(cross.code).toBe(4401);
+
+    // membership enforced AT ISSUANCE: B cannot get a ticket for A's session
+    const denied = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: a('studentB'), payload: { sessionId: liveA } });
+    expect(denied.statusCode).toBe(404);
+    // ended session → no tickets
+    const ended = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: a('studentA'), payload: { sessionId: sessionA } });
+    expect(ended.statusCode).toBe(404);
+
+    // EXPIRED ticket (rows aged manually) → 4401
+    const t2 = await app.inject({ method: 'POST', url: '/api/ws/ticket', headers: a('studentA'), payload: { sessionId: liveA } });
+    const plain = t2.json().ticket as string;
+    await t.sql`update ws_tickets set expires_at = now() - interval '1 minute'`;
+    const expired = await probe(`ws://127.0.0.1:${port}/api/ws/board/${liveA}?ticket=${encodeURIComponent(plain)}`);
+    expect(expired.code).toBe(4401);
+
+    await app.inject({ method: 'POST', url: `/api/lessons/${liveA}/end`, headers: a('teacherA') });
+    await app.inject({ method: 'POST', url: `/api/lessons/${liveB}/end`, headers: a('teacherB') });
   });
 
   // ── board & student sheets ──────────────────────────────────────────────────

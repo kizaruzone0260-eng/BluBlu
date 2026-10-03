@@ -30,16 +30,29 @@ RoomService (502) и широковещать WS-события «ended»-ком
 
 ## Принятые решения (не дыры, но зафиксировано)
 
-### AUDIT-H2 · WS-авторизация после handshake
-Браузерный WebSocket не умеет заголовок Authorization → access-token передаётся в
-query и проверяется в обработчике; сокет неавторизованного клиента закрыывается
-кодом 4401/4404, но формально секунда «открыт». До проверки сервер **не отправляет
-ни байта** и `message`-хендлер не навешан (данные клиента просто буферизуются и
-исчезают с закрытием). Усиленный тест требует теперь явно: 0 сообщений + корректный
-код закрытия для anon/чужого, и «живой сокет члена класса получает снимок».
-Синхронный `verifyClient` с БД-запросом до upgrade невозможен с токеном в query без
-изменения протокола — оставляем как есть, риск минимальный (исчерпывается rate-limit
-300/мин).
+### AUDIT-H2 · токен в query WebSocket → заменён одноразовыми билетами (исправлено)
+Раньше WS-URLы содержали access-JWT (`?token=…`): он переживает 15 минут, попадает в
+access-лог Caddy (`request.uri_query`), в любые логи обратного прокси и в историю URL
+браузера не бывает, но в логи Fastify (pino сериализует url с query) — да.
+Реализовано: `POST /api/ws/ticket {sessionId}` (обычный Bearer-auth) выдаёт
+**одноразовый билет TTL 30 с**, привязанный к (user, session); хранится только
+SHA-256(hash(JWT_SECRET.билет)); consume — атомарный
+`UPDATE … WHERE used_at IS NULL AND expires_at > now() RETURNING` (тот же паттерн,
+что и коды приглашений). Выдача билета требует членства и активной сессии.
+Оба WS-обработчика принимают **только** `?ticket=` (поддержка `?token=` удалена).
+Дополнительно: pino-сериализатор Fastify обрезает query у url и redact-ит
+authorization/cookie-заголовки (`sanitizeRequestUrl`, юнит-тест); Caddyfile —
+фильтр доступа-лога `request>uri_query delete` (+ `request>uri>query delete` для
+новых Caddy) — синтаксис по официальной документации, проверить `caddy validate`
+при первом деплое. Тесты: one-time (повтор → 4401), expired → 4401, чужой
+session-scoped билет → 4401, выдача чужому классу → 404, «нет ни байта до auth»
+сообщений сохранён.
+
+### ICS-токен в URL (принято осознанно)
+Длинные подписные ссылки Google/Apple Calendar требуют секрет в URL — так устроено
+повсеместно. Токен попадает в path-часть и останется в access-логе сервера (видно
+только владельцу сервера). Ротация — кнопка «Получить личную ссылку» (старая
+ссылка инвалидируется: в БД один аккаунт = один хэш).
 
 ### Прочее
 - **Чужой класс/ресурс = 404, не 403** — выдержано на всех маршрутах с :id; единое
@@ -83,7 +96,8 @@ query и проверяется в обработчике; сокет неавт
 | /api/events, /classes/:id/events (POST/PATCH/DELETE) | владение классом | rights + stage3 |
 | /api/me/ical-token, /api/ical/:token | секрет-токен; изоляция tenant | rights ICS |
 | /api/lessons/* (start/end/join/layout/lecture/mute/kick/grant) | членство+активность+роль; H1/H3 фиксы | rights + stage4 |
-| /api/ws/lesson/:id, /api/ws/board/:id | query-token+членство; 4401/4404; 0 данных чужаку | rights WS |
+| /api/ws/lesson/:id, /api/ws/board/:id | одноразовый 30-с билет (user+session-bound) вместо токена; 4401/4404; 0 данных чужаку | rights WS tickets |
+| /api/ws/ticket | Bearer-auth + членство + активная сессия; 404 чужому | rights WS tickets |
 | /api/lessons/:id/board GET/PUT/publish | член/владелец+активность не требуется (off-lesson правка) | rights board |
 | /api/student-notes CRUD | owner-only | rights sheets + stage5 |
 | /api/me/telegram-link, notify-prefs, /api/classes/:id/telegram, link-token, notify-channel | свои/владелец | rights + stage6 |
@@ -92,6 +106,15 @@ query и проверяется в обработчике; сокет неавт
 | /api/auth/* | публичные+CSRF | stage1 + stage7 CSRF |
 | /api/health[/live] | публичные без данных | — |
 
-Итог: две реальные проблемы (H1, H3) исправлены, поведенческая тонкость WS
-задокументирована и усилена тестами; тесты на чужие данные — постоянные
-(регрессия не пройдёт).
+Итог: три реальные проблемы (H1, H2 токены в логах, H3) исправлены; тесты на чужие
+данные — постоянные (регрессия не пройдёт).
+
+## CI / проверка на коммитах
+
+- **pre-commit хук** (`.githooks/pre-commit`, включён локально
+  `git config core.hooksPath .githooks` — на новом клоне выполнить один раз):
+  `pnpm -r typecheck` + юнит-тесты api; падение = коммит не проходит.
+- **GitHub Actions** (`.github/workflows/ci.yml`): push/PR →
+  typecheck, build, vitest unit+integration (реальный Postgres 16 как service-контейнер,
+  DATABASE_URL_TEST), затем job e2e (Playwright chromium, свой embedded-PG стек).
+  Пакеты в CI: node 22, pnpm из packageManager-поля, `--frozen-lockfile`.

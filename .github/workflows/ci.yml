@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: klass
+          POSTGRES_PASSWORD: klass
+          POSTGRES_DB: klass
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U klass" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL_TEST: postgres://klass:klass@localhost:5433/klass
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4          # packageManager pinned in root package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r build
+      - run: pnpm --filter @klass/api test          # unit + integration (real Postgres 16)
+      - run: pnpm audit --prod --audit-level=high
+        continue-on-error: true
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @klass/e2e test

@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Pre-commit gate: typecheck + unit tests (fast, no DB). Full matrix runs in CI
+# (.github/workflows/ci.yml). Enable once per clone:  git config core.hooksPath .githooks
+set -e
+cd "$(git rev-parse --show-toplevel)"
+echo "[pre-commit] pnpm -r typecheck"
+pnpm -r typecheck >/dev/null
+echo "[pre-commit] unit tests"
+pnpm --filter @klass/api test:unit >/dev/null
+echo "[pre-commit] OK"

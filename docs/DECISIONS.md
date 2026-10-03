@@ -74,3 +74,16 @@
 - **rrule-импорт:** rrule — CJS, в node-ESM именованный импорт падает → namespace-import.
 - **PWA-иконки** — сгенерированные заглушки (scripts/gen-icons.mjs); дизайнерские —
   на усмотрение заказчика.
+
+## 2026-10-03 (после аудита прав)
+
+- **H2 закрыт билетам:** POST /api/ws/ticket → одноразовый SHA-256-хранимый билет
+  (user+session, 30 c, атомарный consume UPDATE…RETURNING); WS принимают только
+  ?ticket=; ?token= удалён из кода и тестов. Логи: pino-сериализатор режет query и
+  redact-ит authorization/cookie; Caddyfile — фильтр log format (request>uri_query
+  delete + request>uri>query delete; синтаксис из офиц. доков, проверить
+  'caddy validate' при первом деплое).
+- **CI:** .githooks/pre-commit (typecheck+unit, core.hooksPath включён локально) и
+  .github/workflows/ci.yml (build+typecheck+unit+integration на postgres:16 service,
+  отдельный job e2e с playwright chromium). Локальные интеграционные тесты в CI идут
+  против service-PG через DATABASE_URL_TEST — тот же контракт, что with-postgres.mjs.

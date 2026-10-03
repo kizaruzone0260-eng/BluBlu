@@ -46,6 +46,16 @@ pnpm audit --prod                            # лицензионно-безоп
 
 Сейчас: **71 unit+integration, 4 e2e — все зелёные; audit: 0 уязвимостей.**
 
+## CI
+
+- pre-commit хук: typecheck + unit (один раз на клон: `git config core.hooksPath .githooks`);
+- GitHub Actions (`.github/workflows/ci.yml`): typecheck+build+все тесты на реальном
+  Postgres 16 (service) и e2e Playwright — на каждый push/PR.
+
+WebSocket-доступ к уроку/доске — по одноразовым 30-секундным билетам (`POST
+/api/ws/ticket`), токены в URL больше не используются; query вырезан из логов
+Fastify и Caddy (см. docs/AUDIT.md).
+
 ## Продакшен-деплой
 
 См. `docs/DEPLOY.md` (порты Oracle Security List + ufw, TURN-сертификат, seed,

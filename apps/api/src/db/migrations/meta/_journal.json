@@ -43,6 +43,13 @@
       "when": 1790975635992,
       "tag": "0005_tense_stature",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790998101806,
+      "tag": "0006_empty_jubilee",
+      "breakpoints": true
     }
   ]
 }

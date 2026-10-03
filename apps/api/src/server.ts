@@ -27,6 +27,10 @@ async function main() {
     ? new TelegramTransport(bot)
     : new LogTransport();
   await initNotifyWorker(db, transport);
+  // housekeeping: expired/used one-time WS tickets
+  setInterval(() => {
+    import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
+  }, 10 * 60_000).unref?.();
   if (bot && env.DOMAIN && env.TELEGRAM_WEBHOOK_SECRET) {
     try {
       await bot.api.setWebhook(`https://${env.DOMAIN}/webhook/telegram`, {
