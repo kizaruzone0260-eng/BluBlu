@@ -21,8 +21,9 @@ export async function preparedDb(url: string) {
 
 export async function makeTeacher(sql: postgres.Sql, email = 't@x.io', name = 'T') {
   const id = crypto.randomUUID();
-  const hash = await (await import('../../src/lib/password')).hashPassword('Passw0rd123');
+  const lower = email.toLowerCase(); // register/login normalize to lowercase — helpers must too
+  const hash = await (await import('../../src/lib/password.js')).hashPassword('Passw0rd123');
   await sql`insert into users (id, role, name, email, password_hash, locale, tz, created_at)
-            values (${id}, 'teacher', ${name}, ${email}, ${hash}, 'ru', 'Asia/Tashkent', now())`;
-  return { id, email, password: 'Passw0rd123' };
+            values (${id}, 'teacher', ${name}, ${lower}, ${hash}, 'ru', 'Asia/Tashkent', now())`;
+  return { id, email: lower, password: 'Passw0rd123' };
 }

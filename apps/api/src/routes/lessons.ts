@@ -10,7 +10,7 @@ import { verifyAccessToken } from '../lib/tokens.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env } from '../env.js';
 import { eq } from 'drizzle-orm';
-import { users } from '../db/schema.js';
+import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { classTitle } from '../services/notifyQueue.js';
 import type { WebSocket as WsSocket } from 'ws';
@@ -33,11 +33,13 @@ async function media<T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | 
 export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
   const { db } = opts;
 
-  async function teacherSession(req: { user: { id: string } | null }, reply: import('fastify').FastifyReply, sessionId: string) {
+  async function teacherSession(req: { user: { id: string } | null }, reply: import('fastify').FastifyReply, sessionId: string, { allowEnded = false } = {}) {
     const s = await getSession(db, sessionId);
     if (!s) { await reply.code(404).send({ error: 'notFound' }); return null; }
     const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
     if (!cls) { await reply.code(404).send({ error: 'notFound' }); return null; }
+    // AUDIT-H3: moderation of an ENDED session is meaningless — reject like missing
+    if (s.endedAt && !allowEnded) { await reply.code(404).send({ error: 'notFound' }); return null; }
     return s;
   }
 
@@ -47,6 +49,11 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const cls = await resolveClass(db, req.user!.id, 'teacher', p.data.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
+    // AUDIT-H1: an event may only be bound to a session of its OWN class
+    if (p.data.eventId) {
+      const [ev] = await db.select({ classId: events.classId }).from(events).where(eq(events.id, p.data.eventId)).limit(1);
+      if (!ev || ev.classId !== cls.id) return reply.code(400).send({ error: 'invalidInput' });
+    }
     const s = await startLesson(db, req.user!.id, cls.id, p.data.eventId);
     wsBroadcast(s.id, { type: 'started', session: withRoom(s) });
     // §3.9 «урок начался» со ссылкой — через очередь уведомлений
