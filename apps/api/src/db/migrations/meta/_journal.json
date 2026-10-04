@@ -64,6 +64,13 @@
       "when": 1791089590732,
       "tag": "0008_crazy_tempest",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791139718010,
+      "tag": "0009_early_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

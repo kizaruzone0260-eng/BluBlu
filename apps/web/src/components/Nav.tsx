@@ -3,6 +3,7 @@ import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, type Me } from '../lib/api';
 import { APP_NAME } from '../lib/brand';
+import { useChatUnread } from '../lib/chat';
 import { getThemeChoice, setTheme, type ThemeChoice } from '../lib/theme';
 
 /** Minimal inline icon set (stroke-based, inherits currentColor). */
@@ -18,6 +19,7 @@ export const icons = {
   calendar: 'M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 9h16M8 3v4M16 3v4',
   notes: 'M6 3h12a1 1 0 0 1 1 1v14a2 2 0 0 1-2 2H6a2 2 0 0 0 2-2V3zM9 8h7M9 12h5',
   live: 'M12 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6.3 17.7a8 8 0 0 1 0-11.4M17.7 6.3a8 8 0 0 1 0 11.4M3.5 20.5a13 13 0 0 1 0-17M20.5 3.5a13 13 0 0 1 0 17',
+  chat: 'M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z',
   profile: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0',
   collapse: 'M15 6l-6 6 6 6',
   logout: 'M9 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9',
@@ -104,6 +106,8 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('klass_sidebar') === '1');
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggedOut, setLoggedOut] = useState(false);
+  const unreadQ = useChatUnread();
+  const unread = (unreadQ.data ?? []).reduce((n, s) => n + s.unread, 0);
   const initials = (me?.name ?? '?').trim().split(/\s+/).map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('') || '?';
   const notesTo = me?.role === 'student' ? '/sheets' : '/notes';
   const items = [
@@ -111,6 +115,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
     { to: '/classes', icon: icons.classes, label: t('nav.classes') },
     { to: '/calendar', icon: icons.calendar, label: t('nav.calendar') },
     { to: notesTo, icon: icons.notes, label: t('nav.notes') },
+    { to: '/chat', icon: icons.chat, label: t('nav.chat'), badge: unread }, // item 8
     ...(live.liveClassId ? [{ to: `/lesson?classId=${live.liveClassId}`, icon: icons.live, label: t('nav.lessons') }] : []),
   ];
 
@@ -129,6 +134,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
                 className={({ isActive }) => (isActive ? 'side-item active' : 'side-item')}>
                 <span className="ico"><Icon d={it.icon} /></span>
                 <span className="lbl">{it.label}</span>
+                {'badge' in it && it.badge ? <span className="nav-badge" data-testid="nav-chat-badge">{(it.badge as number) > 99 ? '99+' : it.badge}</span> : null}
               </NavLink>
             ))}
           </nav>
@@ -178,10 +184,10 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
 
       {me && !loggedOut && (
         <nav className="tabbar">
-          {items.slice(0, 4).map((it) => (
+          {items.slice(0, 5).map((it) => (
             <NavLink key={it.to} to={it.to} end={it.end}
               className={({ isActive }) => (isActive ? 'active' : undefined)}>
-              <span className="ico">{it.icon === icons.live ? <Icon d={it.icon} size={20} /> : <Icon d={it.icon} size={20} />}</span>
+              <span className="ico"><Icon d={it.icon} size={20} />{'badge' in it && it.badge ? <span className="nav-badge dot" aria-hidden>•</span> : null}</span>
               {it.label}
             </NavLink>
           ))}

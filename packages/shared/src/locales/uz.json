@@ -235,7 +235,8 @@
     "lessons": "Darslar",
     "profile": "Profil",
     "menu": "Menyu",
-    "collapse": "Yig'ish"
+    "collapse": "Yig'ish",
+    "chat": "Chat"
   },
   "fc": {
     "today": "Bugun",
@@ -259,5 +260,38 @@
     "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",
     "invalidColor": "Rang #rrggbb formatida",
     "email": "Email noto'g'ri"
+  },
+  "chat": {
+    "title": "Chat",
+    "noChats": "Chatli sinf yoʻq",
+    "empty": "Hozir boʻsh",
+    "back": "Chatlarga",
+    "online": "onlayn",
+    "reconnecting": "qayta ulanmoqda…",
+    "loadEarlier": "Avvalagilarni yuklash",
+    "you": "Siz",
+    "deleteConfirm": "Xabar oʻchirilsinmi?",
+    "mute": "Vaqinchaga oʻchirish",
+    "muteAsk": "N daqiqaga tiqilsin (0 — abadiy)",
+    "muteForever": "abadiy",
+    "unmute": "Bekor qilish",
+    "placeholder": "Xabar…",
+    "send": "Yuborish",
+    "disabled": "Ustoz chatni oʻchirgan.",
+    "announceNote": "Eʼlon rejimi: faqat ustoz yozadi.",
+    "errorEmpty": "Boʻsh xabar yuborilmaydi.",
+    "errorDisabled": "Chat oʻchirilgan.",
+    "errorAnnounce": "Eʼlon rejimida faqat ustoz yozadi.",
+    "errorMuted": "Siz bu chatda vaqtincha oʻchirildingiz.",
+    "errorRate": "Juda tez — biroz kuting.",
+    "errorTooLong": "Xabar 2000 belgidan uzun.",
+    "settingsTitle": "Sinf chati",
+    "mutedTitle": "Tiqilgan:",
+    "mode": {
+      "label": "Chat holati",
+      "on": "Yoniq",
+      "off": "Oʻchiq",
+      "announce": "Faqat ustoz yozadi"
+    }
   }
 }

@@ -235,7 +235,8 @@
     "lessons": "Lessons",
     "profile": "Profile",
     "menu": "Menu",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "chat": "Chat"
   },
   "fc": {
     "today": "Today",
@@ -259,5 +260,38 @@
     "passwordTooSimple": "Letters required, no spaces",
     "invalidColor": "Color in #rrggbb format",
     "email": "Invalid email"
+  },
+  "chat": {
+    "title": "Chat",
+    "noChats": "No classes with chat",
+    "empty": "Nothing here yet",
+    "back": "To chats",
+    "online": "online",
+    "reconnecting": "reconnecting…",
+    "loadEarlier": "Load earlier",
+    "you": "You",
+    "deleteConfirm": "Delete message?",
+    "mute": "Mute",
+    "muteAsk": "Mute for N minutes (0 = forever)",
+    "muteForever": "forever",
+    "unmute": "Unmute",
+    "placeholder": "Message…",
+    "send": "Send",
+    "disabled": "The teacher turned chat off.",
+    "announceNote": "Announcements only: just the teacher can write.",
+    "errorEmpty": "An empty message cannot be sent.",
+    "errorDisabled": "Chat is off.",
+    "errorAnnounce": "Only the teacher can write in announcements mode.",
+    "errorMuted": "You are muted in this chat.",
+    "errorRate": "Too fast — please wait a moment.",
+    "errorTooLong": "Message is longer than 2000 characters.",
+    "settingsTitle": "Class chat",
+    "mutedTitle": "Muted:",
+    "mode": {
+      "label": "Chat state",
+      "on": "On",
+      "off": "Off",
+      "announce": "Teacher only"
+    }
   }
 }

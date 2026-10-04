@@ -14,7 +14,7 @@ import Lesson from './pages/Lesson';
 import Profile from './pages/Profile';
 import Notes from './pages/Notes';
 import Sheets from './pages/Sheets';
-import Spike from './pages/Spike';
+import ChatRoom, { ChatList } from './pages/Chat';import Spike from './pages/Spike';
 import Privacy from './pages/Privacy';
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
@@ -80,6 +80,8 @@ export default function App() {
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/lesson" element={<Lesson />} />
             <Route path="/sheets" element={me.role === 'student' ? <Sheets /> : <Navigate to="/" />} />
+            <Route path="/chat" element={<ChatList />} />
+            <Route path="/chat/:id" element={<ChatRoom />} />
             <Route path="/spike" element={<Spike />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="*" element={<Navigate to="/" />} />

@@ -32,9 +32,10 @@ async function main() {
     ? new TelegramTransport(bot)
     : new LogTransport();
   await initNotifyWorker(db, transport);
-  // housekeeping: expired/used one-time WS tickets
+  // housekeeping: expired/used one-time WS tickets (lesson + chat)
   setInterval(() => {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
+    import('./services/chat.js').then((m) => m.sweepChatTickets(db)).catch(() => undefined);
   }, 10 * 60_000).unref?.();
   // Telegram webhook registration (best-effort; server admin does it too).
   // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.

@@ -10,6 +10,7 @@ export interface ClassView {
   teacherId: string;
   teacherName: string;
   archived: boolean;
+  chatMode: 'on' | 'off' | 'announce'; // item 8
   memberCount: number;
   role: 'teacher' | 'student';
 }
@@ -48,6 +49,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
         teacherId: classes.teacherId,
         teacherName: users.name,
         archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
+        chatMode: classes.chatMode,
         memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
         role: sql<'teacher'>`'teacher'`,
       })
@@ -68,6 +70,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
       teacherId: classes.teacherId,
       teacherName: users.name,
       archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
+      chatMode: classes.chatMode,
       memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
       role: sql<'student'>`'student'`,
     })

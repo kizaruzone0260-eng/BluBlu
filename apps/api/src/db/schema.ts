@@ -7,6 +7,8 @@ export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
 export const localeEnum = pgEnum('app_locale', ['ru', 'uz', 'en']);
 export const postKindEnum = pgEnum('post_kind', ['material', 'announcement']);
 export const eventKindEnum = pgEnum('event_kind', ['lesson', 'deadline', 'other']);
+/** item 8 — per-class chat state: open / closed / announcements only. */
+export const chatModeEnum = pgEnum('chat_mode', ['on', 'off', 'announce']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -28,6 +30,7 @@ export const classes = pgTable('classes', {
   color: text('color').notNull().default('#4f46e5'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
+  chatMode: chatModeEnum('chat_mode').notNull().default('on'), // item 8
 }, (t) => [index('classes_teacher_idx').on(t.teacherId)]);
 
 export const classMembers = pgTable('class_members', {
@@ -253,3 +256,42 @@ export const notifications = pgTable('notifications', {
   lastError: text('last_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('notifications_status_idx').on(t.status, t.sendAt)]);
+
+/**
+ * Item 8 — class chat: one shared thread per class, members only.
+ * Every FK is ON DELETE CASCADE: removing the class or an account removes
+ * its messages/mutes/reads with it.
+ */
+export const chatMessages = pgTable('chat_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('chat_messages_class_time_idx').on(t.classId, t.createdAt)]);
+
+export const chatMutes = pgTable('chat_mutes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  mutedBy: uuid('muted_by').notNull().references(() => users.id),
+  /** NULL = forever; otherwise mutes stop at this instant. */
+  until: timestamp('until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('chat_mutes_class_user_idx').on(t.classId, t.userId)]);
+
+export const chatReads = pgTable('chat_reads', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  lastReadAt: timestamp('last_read_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.userId, t.classId] })]);
+
+/** Chat WS tickets — same one-time 30 s semantics as lesson tickets, bound to a class. */
+export const chatWsTickets = pgTable('chat_ws_tickets', {
+  tokenHash: text('token_hash').primaryKey(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('chat_ws_tickets_class_idx').on(t.classId)]);
