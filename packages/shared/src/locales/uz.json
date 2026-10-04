@@ -61,7 +61,8 @@
       "revoke": "Bekor qilish",
       "expires": "Amal muddati",
       "usedBy": "Kim ishlatgan",
-      "ttlDays": "Amal muddati (kun)"
+      "ttlDays": "Amal muddati (kun)",
+      "created": "Yaratilgan"
     },
     "joinByCode": "Kod orqali qo'shilish",
     "removeMember": "Sinfdan o'chirish",
@@ -151,7 +152,8 @@
     "icsAdd": "Mening kalendaryimga qo‘shish",
     "icsExplain": "Obuna havolasi: Google/Apple kalendari darslarni avtomatik yangilaydi.",
     "icsCopied": "Havola nusxalandi",
-    "icsHint": "Maxfiy havola — bilanmang."
+    "icsHint": "Maxfiy havola — bilanmang.",
+    "dtFormatHint": "Maydon formati brauzerga mos; pastdagi matn sizning tilingizda ko‘rsatiladi"
   },
   "lesson": {
     "title": "Video-dars",

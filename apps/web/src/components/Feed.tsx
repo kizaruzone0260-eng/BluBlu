@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { blobUrlFor, downloadFile } from '../lib/preview';
+import { fmtDateTime } from '../lib/format';
 import { NoteBodyView } from './NoteInk';
 import { useAuth } from '../App';
 
@@ -19,7 +20,7 @@ function canPreview(mime: string) {
 }
 
 export default function Feed({ classId }: { classId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const qc = useQueryClient();
   const feed = useQuery({ queryKey: ['feed', classId], queryFn: () => api<FeedPost[]>(`/api/classes/${classId}/feed`) });
@@ -160,7 +161,7 @@ export default function Feed({ classId }: { classId: string }) {
               )}
             </span>
           ))}
-          <div className="muted">{p.authorName} · {new Date(p.createdAt).toLocaleString()}</div>
+          <div className="muted">{p.authorName} · {fmtDateTime(p.createdAt, i18n.language)}</div>
         </div>
       ))}
       {feed.data?.length === 0 && <p className="muted">{t('feed.empty')}</p>}

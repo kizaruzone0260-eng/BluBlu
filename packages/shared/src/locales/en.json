@@ -61,7 +61,8 @@
       "revoke": "Revoke",
       "expires": "Valid until",
       "usedBy": "Used by",
-      "ttlDays": "Validity (days)"
+      "ttlDays": "Validity (days)",
+      "created": "Created"
     },
     "joinByCode": "Join with a code",
     "removeMember": "Remove from class",
@@ -151,7 +152,8 @@
     "icsAdd": "Add to my calendar",
     "icsExplain": "Subscription link: Google/Apple Calendar refreshes lessons automatically.",
     "icsCopied": "Link copied",
-    "icsHint": "Secret link — do not share it."
+    "icsHint": "Secret link — do not share it.",
+    "dtFormatHint": "The field format follows your browser; the line below shows it in your language"
   },
   "lesson": {
     "title": "Video lesson",

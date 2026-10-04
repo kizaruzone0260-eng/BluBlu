@@ -139,6 +139,10 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
+/* item 6: the global cell border used to double up with FullCalendar's own
+   borders and drew a stray line under the weekday header (visible in both
+   themes, more obvious at 390 px). fc draws every grid border itself. */
+.fc th, .fc td { border-bottom: 0; }
 
 /* ── lesson video grid ──────────────────────────────────────────────────── */
 .videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-2); }

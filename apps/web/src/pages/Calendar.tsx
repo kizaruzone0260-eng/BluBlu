@@ -207,12 +207,34 @@ export default function Calendar() {
             <input data-testid="event-title" placeholder={t('common.name')} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ flex: 1, minWidth: 180 }} />
           </div>
           <textarea placeholder={t('classes.description')} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <div className="row" style={{ marginTop: 8 }}>
-            <label style={{ margin: 0 }}>{t('cal.start')} ({form.tz})</label>
-            <input type="datetime-local" value={form.startLocal} onChange={(e) => setForm({ ...form, startLocal: e.target.value })} style={{ width: 'auto' }} required />
-            <input type="number" min={1} max={480} value={form.durationMin} title={t('cal.duration')}
-              onChange={(e) => setForm({ ...form, durationMin: Number(e.target.value) })} style={{ width: 80 }} />
+          {/* item 6: time is the device timezone (auto-detected) — no tz in the label */}
+          <div className="row" style={{ marginTop: 8, alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ margin: 0 }} htmlFor="event-start">{t('cal.start')}</label>
+              <input id="event-start" type="datetime-local" value={form.startLocal} data-testid="event-start"
+                onChange={(e) => setForm({ ...form, startLocal: e.target.value })} style={{ width: 'auto' }} required />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label style={{ margin: 0 }} htmlFor="event-duration">{t('cal.duration')}</label>
+              <input id="event-duration" type="number" min={1} max={480} value={form.durationMin} data-testid="event-duration"
+                onChange={(e) => setForm({ ...form, durationMin: Number(e.target.value) })} style={{ width: 80 }} />
+            </div>
+            {/* quick durations (item 6) */}
+            <div className="row" style={{ gap: 6 }} role="group" aria-label={t('cal.duration')}>
+              {[30, 45, 60, 90].map((m) => (
+                <button key={m} type="button" className={form.durationMin === m ? undefined : 'secondary'} data-testid={`dur-${m}`}
+                  style={{ marginTop: 0, minWidth: 44, minHeight: 44 }} onClick={() => setForm({ ...form, durationMin: m })}>{m}</button>
+              ))}
+            </div>
           </div>
+          {/* item 6: native pickers follow the BROWSER locale — show a localized
+              reading + format hint so the app language always wins */}
+          {form.startLocal && (
+            <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }} data-testid="event-start-hint">
+              {t('cal.start')}: {new Intl.DateTimeFormat(i18n.language, { dateStyle: 'full', timeStyle: 'short' }).format(new Date(form.startLocal))}
+            </p>
+          )}
+          <p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>{t('cal.dtFormatHint')}</p>
           <div className="row" style={{ marginTop: 8 }}>
             <span className="muted">{t('cal.repeatWeekly')}</span>
             {[1, 2, 3, 4, 5, 6, 7].map((d) => (

@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { fmtDate, fmtDateTime } from '../lib/format';
 import { useAuth } from '../App';
 import Feed from '../components/Feed';
 
@@ -15,7 +16,7 @@ interface ClassView { id: string; name: string; description: string; color: stri
 
 export default function ClassDetail() {
   const { id = '' } = useParams();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const qc = useQueryClient();
   const [newCode, setNewCode] = useState<string | null>(null);
@@ -106,7 +107,8 @@ export default function ClassDetail() {
             <table style={{ marginTop: 12 }}>
               <thead>
                 <tr>
-                  <th>{t('classes.invite.title')}</th><th>{t('classes.invite.expires')}</th>
+                  <th>{t('classes.invite.title')}</th><th>{t('classes.invite.created')}</th>
+                  <th>{t('classes.invite.expires')}</th>
                   <th>{t('classes.invite.usedBy')}</th><th />
                 </tr>
               </thead>
@@ -114,8 +116,12 @@ export default function ClassDetail() {
                 {(invites.data ?? []).map((i) => (
                   <tr key={i.id}>
                     <td><span className={`badge ${i.status}`}>{t(`classes.invite.${i.status}`)}</span></td>
-                    <td>{new Date(i.expiresAt).toLocaleString()}</td>
-                    <td>{i.usedByName ?? '—'}{i.usedAt ? ` · ${new Date(i.usedAt).toLocaleString()}` : ''}</td>
+                    {/* item 7: journal rows must show WHEN the action happened — the
+                        old table only printed expiresAt (today+7d), which read like a
+                        wrong date (04.10 → «11.10»). Locale comes from the app. */}
+                    <td data-testid="invite-created">{fmtDate(i.createdAt, i18n.language)}</td>
+                    <td>{fmtDateTime(i.expiresAt, i18n.language)}</td>
+                    <td>{i.usedByName ?? '—'}{i.usedAt ? ` · ${fmtDateTime(i.usedAt, i18n.language)}` : ''}</td>
                     <td>
                       {i.status === 'active' && (
                         <button className="danger" style={{ marginTop: 0 }} onClick={() => revoke.mutate(i.id)}>
@@ -138,7 +144,7 @@ export default function ClassDetail() {
                   <tr key={m.userId}>
                     <td>{m.name}</td>
                     <td className="muted">{m.email}</td>
-                    <td className="muted">{new Date(m.joinedAt).toLocaleDateString()}</td>
+                    <td className="muted">{fmtDate(m.joinedAt, i18n.language)}</td>
                     <td>
                       <button className="secondary" style={{ marginTop: 0, marginRight: 6 }}
                         onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending}>
