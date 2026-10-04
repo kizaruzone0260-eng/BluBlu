@@ -14,6 +14,10 @@ Windows, без админ-прав и без аккаунта Cloudflare:
 winget install --id Cloudflare.cloudflared -e
 ```
 
+(проверено на этой машине: MSI кладёт бинарник в
+`C:\Program Files (x86)\cloudflared` — после установки откройте новое окно
+терминала, чтобы PATH обновился)
+
 Если winget недоступен — скачайте `cloudflared-windows-amd64.exe` со
 страницы релизов https://github.com/cloudflare/cloudflared/releases,
 переименуйте в `cloudflared.exe` и положите каталог с ним в `PATH`
