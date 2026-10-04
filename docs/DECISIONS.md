@@ -87,3 +87,22 @@
   .github/workflows/ci.yml (build+typecheck+unit+integration на postgres:16 service,
   отдельный job e2e с playwright chromium). Локальные интеграционные тесты в CI идут
   против service-PG через DATABASE_URL_TEST — тот же контракт, что with-postgres.mjs.
+
+## 2026-10-04 (редизайн UI + три языка)
+
+- **Шрифт Inter — self-hosted (SIL Open Font License 1.1).** OFL не входит в базовый
+  whitelist TZ (MIT/Apache/BSD/ISC), поэтому фиксируется здесь: шрифт распространяется
+  как данные (woff2 подмножества latin/latin-ext/cyrillic/cyrillic-ext в
+  `apps/web/public/fonts/`, лицензия — `LICENSE.txt` рядом), модификаций нет,
+  имя сохранено. Альтернатив под тем же требованием «кириллица + oʻ/gʻ (U+02BB),
+  без Google CDN на рантайме» среди MIT/Apache-шрифтов немного (Noto Sans тоже OFL).
+- **Третьий язык (en):** `app_locale` расширяется `ALTER TYPE ... ADD VALUE 'en'`
+  (миграция 0007) — PG12+ разрешит это в транзакции мигратора.
+- **FullCalendar локаль:** у @fullcalendar нет узбекского бандла — объект локали
+  строится из Intl.DateTimeFormat (браузерный ICU: ru/uz/en) + i18n-ключи fc.* для
+  кнопок; неделя с понедельника, 24-часовой формат.
+- **Переключатель языка:** теперь дропдаун с ТЕКУЩИМ языком; смена сразу пишет
+  и в localStorage, и в профиль (PATCH /api/me/profile) — прежняя подпись кнопки
+  («следующий язык») и откат к профильному языку после refresh больше не конфликтуют.
+- **Seed демо** ужат до одного учителя + пустой базы; demo-check строит все
+  фикстуры сам через API (seed и тесты независимы).

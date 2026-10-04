@@ -3,16 +3,12 @@
  *
  *   pnpm demo:check -- --base https://xxxx.trycloudflare.com [--livekit wss://…livekit.cloud]
  *
- * Verifies end-to-end through the public tunnel:
- *   1. teacher login → demo class → start lesson → join (LiveKit token + wsUrl);
- *   2. wsUrl equals LIVEKIT_URL from .env (client learns the LiveKit address from the API);
- *   3. JWT claims (identity/room/grants) for teacher and student;
- *   4. lesson-status WebSocket works THROUGH the tunnel (ticket auth, 'started' event);
- *   5. board WebSocket works THROUGH the tunnel ('init' snapshot);
- *   6. one-time tickets are really one-time (reuse → close 4401);
- *   7. lesson is ended again afterwards (the manual two-person call is done by a human).
+ * C.3 — the check builds ALL of its own fixtures through the public API
+ * (class → invite code → student → lesson → notes) and cleans up after
+ * itself (end lesson, archive class, delete the test note). It does NOT
+ * depend on seeded demo data beyond the single teacher login.
  *
- * Prints PASS/FAIL per check and exits non-zero on any failure. No secrets printed.
+ * Prints PASS/FAIL per check, exits non-zero on any failure. No secrets printed.
  */
 import WebSocket from 'ws';
 
@@ -25,9 +21,8 @@ const base = (arg('base') ?? 'http://127.0.0.1:3000').replace(/\/+$/, '');
 const wantLivekit = arg('livekit') ?? '';
 const wsBase = base.replace(/^http/, 'ws');
 
+// single seeded teacher — credentials are documented in docs/DEMO.md (not a secret: demo instance)
 const TEACHER = { email: 'teacher@demo.klass.local', password: 'DemoTeacher123' };
-const STUDENT = { email: 'student@demo.klass.local', password: 'DemoStudent123' };
-const CLASS_NAME = 'Демо-класс 7B';
 
 let failures = 0;
 const ok = (name, pass, extra = '') => {
@@ -35,26 +30,22 @@ const ok = (name, pass, extra = '') => {
   if (!pass) failures++;
 };
 
-async function apiAuth(email, password) {
+async function login(email, password) {
   const r = await fetch(`${base}/api/auth/login`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
   if (!r.ok) throw new Error(`login ${email} → ${r.status}`);
-  const j = await r.json();
-  return j.accessToken;
+  return (await r.json()).accessToken;
 }
-const authJson = (token, method, path, body) =>
+const req = (token, method, path, body) =>
   fetch(`${base}${path}`, {
     method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    // fastify rejects an empty body when content-type is json → POST/PATCH send {}
     body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
   });
+const json = async (r) => { try { return await r.json(); } catch { return null; } };
 
-function decodeJwt(t) {
-  const p = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(Buffer.from(p, 'base64').toString('utf8'));
-}
+const decodeJwt = (t) => JSON.parse(Buffer.from(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
 
 function wsCollect(url, ms = 8000) {
   return new Promise((res) => {
@@ -68,65 +59,80 @@ function wsCollect(url, ms = 8000) {
   });
 }
 
+const stamp = Date.now();
+
 async function main() {
   console.log(`demo-check against ${base}`);
 
   const health = await fetch(`${base}/api/health/live`).catch(() => null);
-  ok('HTTP through tunnel (GET /api/health/live)', Boolean(health?.ok), `status ${health?.status}`);
-  if (!health?.ok) { console.log('target is not reachable — abort'); process.exit(1); }
+  ok('HTTP reachable', Boolean(health?.ok), `status ${health?.status}`);
+  if (!health?.ok) process.exit(1);
 
-  const teacher = await apiAuth(TEACHER.email, TEACHER.password);
-  ok('teacher login (via tunnel)', Boolean(teacher));
+  // ── own fixtures ───────────────────────────────────────────────────────────
+  const teacher = await login(TEACHER.email, TEACHER.password);
+  ok('teacher login', Boolean(teacher));
 
-  const classes = await (await authJson(teacher, 'GET', '/api/classes')).json();
-  const cls = (classes.classes ?? classes).find?.((c) => c.name === CLASS_NAME);
-  ok(`demo class «${CLASS_NAME}» visible`, Boolean(cls), cls ? `id ${cls.id.slice(0, 8)}…` : 'not found');
-  if (!cls) process.exit(1);
+  const cls = await json(await req(teacher, 'POST', '/api/classes', { name: `Проверка demo ${stamp}`, description: '', color: '#4f46e5' }));
+  ok('create class (fixture)', Boolean(cls?.id), cls?.id?.slice(0, 8));
+  if (!cls?.id) process.exit(1);
 
-  const startRes = await authJson(teacher, 'POST', '/api/lessons/start', { classId: cls.id });
-  const session = await startRes.json();
-  ok('start lesson (201)', startRes.status === 201, `room ${session.roomName}`);
+  // D — notes API: class-less note, pin, delete
+  const noteRes = await req(teacher, 'POST', '/api/notes', { title: 'проверка', body: '<p>x</p>' });
+  const note = await json(noteRes);
+  ok('create note without class (D.1)', noteRes.status === 201 && note?.classId === null, note?.id?.slice(0, 8));
+  const pinned = await req(teacher, 'PATCH', `/api/notes/${note.id}`, { pinned: true });
+  ok('pin note', pinned.status === 200 && (await json(pinned)).pinned === true);
+  const noteDel = await req(teacher, 'DELETE', `/api/notes/${note.id}`);
+  ok('delete note', noteDel.status === 200);
 
-  const joinRes = await authJson(teacher, 'POST', `/api/lessons/${session.id}/join`);
-  const join = await joinRes.json();
-  ok('teacher join (token+wsUrl)', joinRes.status === 200 && Boolean(join.token), `wsUrl ${join.wsUrl}`);
-  if (wantLivekit) ok('wsUrl == LIVEKIT_URL from .env', join.wsUrl === wantLivekit, `${join.wsUrl} vs ${wantLivekit}`);
-  const claims = decodeJwt(join.token);
-  const gT = claims.video ?? claims; // livekit-server-sdk nests grants under `video`
-  ok('token: teacher roomAdmin + room bound',
-    gT.room === session.roomName && gT.roomAdmin === true,
-    `room=${gT.room}`);
-  ok('token: identity == user id', claims.sub === undefined || typeof (claims.sub ?? claims.identity) === 'string');
+  // student via fresh one-time invite code
+  const invite = await json(await req(teacher, 'POST', `/api/classes/${cls.id}/invites`, { ttlDays: 1 }));
+  ok('create invite code', Boolean(invite?.code), invite?.code);
+  const stuEmail = `check${stamp}@demo.invalid`;
+  const reg = await fetch(`${base}/api/auth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Проверочный', email: stuEmail, password: 'Check12345', code: invite.code }),
+  });
+  ok('student registers with the code', reg.status === 200 || reg.status === 201, `status ${reg.status}`);
+  const student = (await json(reg))?.accessToken;
 
-  const student = await apiAuth(STUDENT.email, STUDENT.password);
-  const sJoin = await (await authJson(student, 'POST', `/api/lessons/${session.id}/join`)).json();
-  const sClaims = decodeJwt(sJoin.token);
-  const grants = sClaims.video ?? sClaims;
-  ok('student join: can publish camera+mic only',
-    grants.canPublish === true && String(grants.canPublishSources ?? '').includes('camera'),
-    `sources=${grants.canPublishSources}`);
+  // ── lesson ─────────────────────────────────────────────────────────────────
+  const startRes = await req(teacher, 'POST', '/api/lessons/start', { classId: cls.id });
+  const session = await json(startRes);
+  ok('start lesson (201)', startRes.status === 201, `room ${session?.roomName}`);
 
-  // ── WebSockets through the tunnel ──
-  const t1 = await (await authJson(teacher, 'POST', '/api/ws/ticket', { sessionId: session.id })).json();
+  const join = await json(await req(teacher, 'POST', `/api/lessons/${session.id}/join`));
+  ok('teacher join (token+wsUrl)', Boolean(join?.token), `wsUrl ${join?.wsUrl}`);
+  if (wantLivekit) ok('wsUrl == LIVEKIT_URL from .env', join.wsUrl === wantLivekit, `${join.wsUrl}`);
+  const gT = decodeJwt(join.token).video ?? decodeJwt(join.token);
+  ok('token: teacher roomAdmin + room bound', gT.room === session.roomName && gT.roomAdmin === true, `room=${gT.room}`);
+
+  const sJoin = await json(await req(student, 'POST', `/api/lessons/${session.id}/join`));
+  const gS = decodeJwt(sJoin.token).video ?? decodeJwt(sJoin.token);
+  ok('student join: camera+mic only', gS.canPublish === true && String(gS.canPublishSources).includes('camera'), `sources=${gS.canPublishSources}`);
+
+  // ── WebSockets through the tunnel ─────────────────────────────────────────
+  const t1 = await json(await req(teacher, 'POST', '/api/ws/ticket', { sessionId: session.id }));
   const lessonWs = await wsCollect(`${wsBase}/api/ws/lesson/${session.id}?ticket=${encodeURIComponent(t1.ticket)}`);
   const started = lessonWs.messages.map((m) => { try { return JSON.parse(m); } catch { return null; } })
     .find((m) => m?.type === 'started');
-  ok('lesson status WS through tunnel', lessonWs.opened && Boolean(started),
-    `code ${lessonWs.code}, ${lessonWs.messages.length} msg(s)`);
-  ok('WS payload carries server-provided wsUrl', started?.session?.wsUrl === join.wsUrl, started?.session?.wsUrl);
+  ok('lesson status WS', lessonWs.opened && Boolean(started), `code ${lessonWs.code}, ${lessonWs.messages.length} msg(s)`);
+  ok('WS payload carries server-provided wsUrl', started?.session?.wsUrl === join.wsUrl);
 
-  const t2 = await (await authJson(student, 'POST', '/api/ws/ticket', { sessionId: session.id })).json();
+  const t2 = await json(await req(student, 'POST', '/api/ws/ticket', { sessionId: session.id }));
   const boardWs = await wsCollect(`${wsBase}/api/ws/board/${session.id}?ticket=${encodeURIComponent(t2.ticket)}`);
   const init = boardWs.messages.map((m) => { try { return JSON.parse(m); } catch { return null; } })
     .find((m) => m?.type === 'init');
-  ok('board WS through tunnel (student sees read-only init)',
-    boardWs.opened && init?.canEdit === false, `elements ${init?.elements?.length ?? '-'}`);
+  ok('board WS (student read-only init)', boardWs.opened && init?.canEdit === false);
 
   const reuse = await wsCollect(`${wsBase}/api/ws/lesson/${session.id}?ticket=${encodeURIComponent(t1.ticket)}`);
   ok('ticket is one-time (reuse → 4401)', reuse.code === 4401 && reuse.messages.length === 0, `code ${reuse.code}`);
 
-  const endRes = await authJson(teacher, 'POST', `/api/lessons/${session.id}/end`);
+  // ── cleanup own fixtures ───────────────────────────────────────────────────
+  const endRes = await req(teacher, 'POST', `/api/lessons/${session.id}/end`);
   ok('end lesson (cleanup)', endRes.status === 200);
+  const arch = await req(teacher, 'POST', `/api/classes/${cls.id}/archive`, {});
+  ok('archive fixture class (cleanup)', arch.status === 200);
 
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

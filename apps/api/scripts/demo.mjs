@@ -233,12 +233,10 @@ console.log(`
 │  Адрес: ${publicUrl.padEnd(55)}│
 ╰${line}╯
 
-  Учитель:   ${demo.teacherEmail}  /  ${demo.teacherPassword}
-  Ученик:    ${demo.studentEmail}  /  ${demo.studentPassword}  (уже в классе)
-  Новый код приглашения (одноразовый, до ${demo.inviteExpires.slice(0, 16)}):
-             ${demo.inviteCode}
+  Учитель:   ${demo.teacherEmail}  /  ${demo.teacherPassword}   (база пустая — всё создаёте вживую)
 
-  Вход ученика с другого устройства: открыть адрес выше → «Присоединиться» → код.
+  Сценарий показа: «Создать класс» → «+ Событие» → «Начать урок» → «Создать код» →
+  ученик на другом устройстве: адрес выше → «Присоединиться» → код.
   Ctrl+C — остановить демо.
 `);
 
