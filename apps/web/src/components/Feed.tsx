@@ -141,7 +141,7 @@ export default function Feed({ classId }: { classId: string }) {
                   onClick={() => patchPost.mutate({ id: p.id, patch: { pinned: !p.pinned } })}>
                   {p.pinned ? t('feed.unpin') : t('feed.pin')}
                 </button>
-                <button className="danger" style={{ marginTop: 0 }} onClick={() => delPost.mutate(p.id)}>✕</button>
+                <button className="danger" style={{ marginTop: 0 }} onClick={() => { if (window.confirm(t('feed.deleteConfirm'))) delPost.mutate(p.id); }}>✕</button>
               </>
             )}
           </div>

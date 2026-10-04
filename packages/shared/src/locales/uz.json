@@ -17,7 +17,15 @@
     "delete": "O'chirish",
     "create": "Yaratish",
     "errorGeneric": "Biror narsa noto'g'ri bo'ldi. Qayta urinib ko'ring.",
-    "loading": "Yuklanmoqda…"
+    "loading": "Yuklanmoqda…",
+    "roleTeacher": "O'qituvchi",
+    "roleStudent": "O'quvchi",
+    "theme": "Rejim",
+    "themeLight": "Yorug'",
+    "themeDark": "Qorong'u",
+    "themeSystem": "Tizimdagidek",
+    "deleteAccount": "Hisobni o'chirish",
+    "deleteAccountConfirm": "Hisob butunlay o'chirilsinmi? Barcha qaydlar, varaqalar va sinf a'zoliklari o'chiriladi."
   },
   "auth": {
     "registerByCode": "Sinf kodi orqali ro'yxatdan o'tish",
@@ -56,6 +64,7 @@
     },
     "joinByCode": "Kod orqali qo'shilish",
     "removeMember": "Sinfdan o'chirish",
+    "removeMemberConfirm": "O'quvchi sinfdan o'chirilsinmi? Uning varaqalari saqlanadi.",
     "moveMember": "Boshqa sinfga ko'chirish",
     "resetPw": "Parolni tiklash"
   },
@@ -76,7 +85,8 @@
     "needFile": "Kamida bitta fayl tanlang",
     "fileTypeRejected": "Fayl turi aniqlanmadi yoki ruxsat etilmagan",
     "tooLarge": "Fayl 100 MB dan katta",
-    "quotaExceeded": "O'qituvchi saqlash hajmi to'lgan"
+    "quotaExceeded": "O'qituvchi saqlash hajmi to'lgan",
+    "deleteConfirm": "Post fayllari bilan o'chirilsinmi? Tiklab bo'lmaydi."
   },
   "notes": {
     "title": "Mening qaydlarim",
@@ -86,7 +96,16 @@
     "untitled": "Nomsiz",
     "publish": "Sinfga e'lon qilish",
     "saved": "Saqlangan vaqt:",
-    "editing": "Tahrirlanmoqda…"
+    "editing": "Tahrirlanmoqda…",
+    "add": "Qayd qo'shish",
+    "pinNote": "Mahkamlash",
+    "unpinNote": "Ochish",
+    "deleteConfirm": "Qayd o'chirilsinmi? Tiklab bo'lmaydi.",
+    "filterAll": "Barchasi",
+    "filterByClass": "Sinf bo'yicha",
+    "filterNoLesson": "Darsdan tashqari",
+    "linkedLesson": "Dars",
+    "noClass": "Sinf yo'q"
   },
   "cal": {
     "title": "Taqvim",
@@ -101,6 +120,7 @@
     "repeatWeekly": "Har hafta takror:",
     "until": "Takrorlash muddati",
     "delete": "O'chirish",
+    "deleteConfirm": "Tadbir o'chirilsinmi? Bu amalni qaytarib bo'lmaydi.",
     "scopeQuestion": "Faqat shuni, barchasini yoki shu va keyinilarini o'zgartirilsinmi?",
     "scopeThis": "Faqat shu",
     "scopeFollowing": "Shu va keyinilari",
@@ -169,6 +189,46 @@
     "saving": "Saqlanmoqda…",
     "saved": "Saqlandi",
     "pick": "«+» tugmasi bilan varaq yarating"
+  },
+  "home": {
+    "title": "Bosh sahifa",
+    "liveNow": "Dars ketmoqda",
+    "enterLesson": "Kirish",
+    "upcoming": "Keyingi 7 kun",
+    "myClasses": "Mening sinflarim",
+    "recent": "So'nggi material va e'lonlar",
+    "quick": "Tezkor amallar",
+    "newClass": "Sinf yaratish",
+    "newEvent": "Tadbir qo'shish",
+    "startLesson": "Darsni boshlash",
+    "newNote": "Yangi qayd",
+    "joinByCode": "Kod orqali qo'shilish",
+    "noEvents": "Keyingi 7 kunda tadbirlar yo'q.",
+    "noClasses": "Sizda hozircha sinf yo'q.",
+    "noClassesHint": "Birinchi sinfni yarating — hammasi shundan boshlanadi.",
+    "noClassesStudent": "O'qituvchidan taklif kodini so'rang va sinfga qo'shiling.",
+    "noPosts": "Hali material yoki e'lon yo'q.",
+    "nothingLive": "Hozirda darslar ketmayapti."
+  },
+  "nav": {
+    "home": "Bosh sahifa",
+    "classes": "Sinflar",
+    "calendar": "Taqvim",
+    "notes": "Qaydlar",
+    "lessons": "Darslar",
+    "profile": "Profil",
+    "menu": "Menyu",
+    "collapse": "Yig'ish"
+  },
+  "fc": {
+    "today": "Bugun",
+    "month": "Oy",
+    "week": "Hafta",
+    "list": "Roʻyxat",
+    "prev": "‹",
+    "next": "›",
+    "allDay": "butun kun",
+    "noEvents": "Tadbirlar yoʻq"
   },
   "privacy": {
     "title": "Maxfiylik siyosati",

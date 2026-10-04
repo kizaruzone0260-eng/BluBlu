@@ -115,7 +115,7 @@ export default function ClassDetail() {
                         onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending}>
                         {t('classes.resetPw')}
                       </button>
-                      <button className="danger" style={{ marginTop: 0 }} onClick={() => removeMember.mutate(m.userId)}>
+                      <button className="danger" style={{ marginTop: 0 }} onClick={() => { if (window.confirm(t('classes.removeMemberConfirm'))) removeMember.mutate(m.userId); }}>
                         {t('classes.removeMember')}
                       </button>
                       {resetPw.data && resetPw.variables === m.userId && (

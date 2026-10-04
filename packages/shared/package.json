@@ -8,7 +8,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./locales/ru.json": "./src/locales/ru.json",
-    "./locales/uz.json": "./src/locales/uz.json"
+    "./locales/uz.json": "./src/locales/uz.json",
+    "./locales/en.json": "./src/locales/en.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
