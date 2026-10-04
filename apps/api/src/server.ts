@@ -21,6 +21,11 @@ async function main() {
     console.warn(`migrations folder not found: ${migrationsFolder}`);
   }
 
+  // Cloud deploys: create the owner teacher from SEED_TEACHER_* (no-op when unset;
+  // the password is never logged).
+  const { seedTeacherAtBoot } = await import('./services/seed.js');
+  await seedTeacherAtBoot(db);
+
   // Telegram webhook registration (best-effort; server admin does it too)
   const bot = createBot();
   const transport = bot && env.TELEGRAM_TRANSPORT === 'telegram'

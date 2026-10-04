@@ -62,12 +62,15 @@ export default function Lesson() {
     if (!s) return;
     let ws: WebSocket | null = null;
     let disposed = false;
-    void (async () => {
-      if (!getToken()) return;
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const connect = async () => {
+      if (disposed || !getToken()) return;
       try {
-        const ticket = await wsTicket(s.id);
+        const ticket = await wsTicket(s.id); // one-time ticket — always fresh on reconnect
         if (disposed) return;
         ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/lesson/${s.id}?ticket=${encodeURIComponent(ticket)}`);
+        ws.onopen = () => { attempt = 0; };
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as { type: string; session?: Session; layout?: Session['layout']; on?: boolean };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
@@ -75,9 +78,22 @@ export default function Lesson() {
           if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
           if (msg.type === 'started' && msg.session) setSession(msg.session);
         };
-      } catch { /* status refetch query covers outages */ }
-    })();
-    return () => { disposed = true; ws?.close(); };
+        ws.onclose = (ev) => {
+          if (disposed) return;
+          if (ev.code === 4404) return; // session gone — the status query takes over
+          attempt++; // 4401 (expired ticket), 1006 (dropped), render restarts → backoff + reconnect
+          const delay = Math.min(1000 * 2 ** (attempt - 1), 10_000);
+          retryTimer = window.setTimeout(() => void connect(), delay);
+        };
+      } catch {
+        if (!disposed) {
+          attempt++;
+          retryTimer = window.setTimeout(() => void connect(), Math.min(1000 * 2 ** (attempt - 1), 10_000));
+        }
+      }
+    };
+    void connect();
+    return () => { disposed = true; window.clearTimeout(retryTimer); ws?.close(); };
   }, [session?.id]);
 
   useEffect(() => () => { void roomRef.current?.disconnect(); }, []);

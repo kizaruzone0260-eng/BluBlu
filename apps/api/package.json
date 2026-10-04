@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:secure": "node scripts/secure-db.mjs",
     "seed:teacher": "tsx --env-file=../../.env src/scripts/seed-teacher.ts",
     "demo": "node scripts/demo.mjs",
     "demo:check": "node scripts/demo-check.mjs",

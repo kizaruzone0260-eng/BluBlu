@@ -45,8 +45,16 @@ const envSchema = z
   // Demo: 'polling' uses grammY long-polling (no public webhook needed);
   // production keeps 'webhook' behind Caddy.
   TELEGRAM_MODE: z.enum(['webhook', 'polling']).default('webhook'),
+  // Instance owner teacher created at boot on an EMPTY database (cloud deploys).
+  // Both must be set to do anything; the password is never logged.
+  SEED_TEACHER_EMAIL: z.string().optional(),
+  SEED_TEACHER_NAME: z.string().default('Teacher'),
+  SEED_TEACHER_PASSWORD: z.string().min(8).optional(),
 })
   .superRefine((v, ctx) => {
+    if (v.SEED_TEACHER_EMAIL && !v.SEED_TEACHER_PASSWORD) {
+      ctx.addIssue({ code: 'custom', message: 'SEED_TEACHER_PASSWORD is required when SEED_TEACHER_EMAIL is set', path: ['SEED_TEACHER_PASSWORD'] });
+    }
     if (v.NODE_ENV === 'production' && v.JWT_SECRET === DEV_SECRET) {
       ctx.addIssue({ code: 'custom', message: 'JWT_SECRET must be set in production', path: ['JWT_SECRET'] });
     }

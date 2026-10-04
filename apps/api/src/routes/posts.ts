@@ -150,6 +150,12 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     }
     const opened = await storage.open(row.file.storageKey, range);
     if (!opened) return reply.code(404).send({ error: 'notFound' });
+    // Render free tier has NO persistent disk: the file can vanish between the
+    // stat above and the first read. Fail as a clean 404/abort, never a crash.
+    opened.stream.on('error', () => {
+      if (!reply.sent) void reply.code(404).send({ error: 'notFound' });
+      else reply.raw.destroy();
+    });
 
     reply.header('content-type', row.file.mime);
     reply.header('x-content-type-options', 'nosniff');

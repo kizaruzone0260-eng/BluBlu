@@ -31,12 +31,16 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
     if (!token || !me) return;
     let ws: WebSocket | null = null;
     let disposed = false;
-    void (async () => {
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const connect = async () => {
+      if (disposed) return;
       try {
-        const ticket = await wsTicket(sessionId);
+        const ticket = await wsTicket(sessionId); // one-time ticket — fresh on every reconnect
         if (disposed) return;
         ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/board/${sessionId}?ticket=${encodeURIComponent(ticket)}`);
         wsRef.current = ws;
+        ws.onopen = () => { attempt = 0; };
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as {
             type: string; canEdit?: boolean; page?: number; pages?: number[]; elements?: RawEl[];
@@ -58,9 +62,21 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
             setCurrentPage(msg.page ?? msg.pages?.[0] ?? 1);
           }
         };
-      } catch { /* board just stays empty until lesson status refreshes */ }
-    })();
-    return () => { disposed = true; ws?.close(); };
+        ws.onclose = (ev) => {
+          if (disposed) return;
+          if (ev.code === 4404) return; // session gone — lesson status WS clears the page
+          attempt++; // dropped connection (render restart, wifi blip, expired ticket) → reconnect
+          retryTimer = window.setTimeout(() => void connect(), Math.min(1000 * 2 ** (attempt - 1), 10_000));
+        };
+      } catch {
+        if (!disposed) {
+          attempt++;
+          retryTimer = window.setTimeout(() => void connect(), Math.min(1000 * 2 ** (attempt - 1), 10_000));
+        }
+      }
+    };
+    void connect();
+    return () => { disposed = true; window.clearTimeout(retryTimer); ws?.close(); };
   }, [sessionId, me]);
 
   function replaceScene(elements: RawEl[]) {

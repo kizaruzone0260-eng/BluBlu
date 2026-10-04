@@ -1,0 +1,61 @@
+# Render Blueprint for BluBlu (https://render.com/docs/blueprint-spec)
+# IMPORTANT: this file lists variable NAMES only — values live in
+# %USERPROFILE%\blublu-secrets\cloud.env (outside the repo) and are pasted into
+# the Render dashboard / encrypted blueprint secrets. Never commit real values.
+services:
+  - type: web
+    name: blublu-api
+    runtime: docker
+    plan: free
+    region: singapore # choose the region closest to your Supabase project
+    repo: https://github.com/OWNER/REPO  # ← replace before first sync
+    branch: overnight
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render injects PORT; the app listens on it (env.ts PORT).
+      - key: DATABASE_URL
+        sync: false   # Supabase Session pooler URL (postgresql://postgres.<ref>:***@aws-0-<region>.pooler.supabase.com:5432/postgres)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TRUST_PROXY
+        value: "1"    # Render's edge is a reverse proxy → real client IP comes from X-Forwarded-For
+      - key: PUBLIC_URL
+        sync: false   # https://<service>.onrender.com — set after the FIRST deploy, then redeploy
+      - key: STORAGE_DIR
+        value: /tmp/blublu-files  # free tier has NO persistent disk: uploads vanish on redeploy
+      - key: MAX_FILE_MB
+        value: "50"
+      - key: TEACHER_QUOTA_GB
+        value: "2"
+      - key: WEB_DIST
+        value: /repo/apps/web/dist
+      # --- LiveKit Cloud ---
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # --- Telegram (optional; leave token empty to disable notifications) ---
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_NAME
+        value: blublu_bot
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: TELEGRAM_TRANSPORT
+        value: telegram   # or log to keep messages in stdout only
+      - key: TELEGRAM_MODE
+        value: webhook    # webhook registration at boot uses PUBLIC_URL/DOMAIN
+      # --- owner teacher (empty ⇒ no seeding) ---
+      - key: SEED_TEACHER_EMAIL
+        sync: false
+      - key: SEED_TEACHER_NAME
+        value: Teacher
+      - key: SEED_TEACHER_PASSWORD
+        sync: false
