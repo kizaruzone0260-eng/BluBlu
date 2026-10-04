@@ -8,8 +8,8 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: 'http://127.0.0.1:3123',
-    // no browser download available in this env — use installed Edge
-    channel: 'msedge',
+    // local dev box has no browser download → installed Edge; CI installs chromium
+    channel: process.env.CI ? undefined : 'msedge',
     permissions: ['camera', 'microphone'],
     video: 'off',
     launchOptions: {

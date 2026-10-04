@@ -2,9 +2,21 @@ import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const stack = JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), 'utf8')) as {
-  port: number; teacherEmail: string; teacherPassword: string;
-};
+// .stack.json is written by the webServer a beat after the health check passes —
+// on a fresh CI checkout it does not exist at import time. Read it lazily.
+function readStack() {
+  for (let i = 0; i < 80; i++) {
+    try {
+      return JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), 'utf8')) as {
+        port: number; teacherEmail: string; teacherPassword: string;
+      };
+    } catch {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
+  }
+  throw new Error('.stack.json never appeared');
+}
+const stack = readStack();
 const BASE = `http://127.0.0.1:${stack.port}`;
 
 async function forceRuProfile() {

@@ -2,9 +2,19 @@ import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const stack = JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), 'utf8')) as {
-  port: number; teacherEmail: string; teacherPassword: string;
-};
+function readStack() {
+  for (let i = 0; i < 80; i++) {
+    try {
+      return JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), 'utf8')) as {
+        port: number; teacherEmail: string; teacherPassword: string;
+      };
+    } catch {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
+  }
+  throw new Error('.stack.json never appeared');
+}
+const stack = readStack();
 
 async function loginAs(page: import('@playwright/test').Page, email: string, password: string) {
   // the product rate-limits /api/auth/login to 10/min/IP — many specs log in,
