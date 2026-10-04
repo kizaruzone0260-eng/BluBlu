@@ -64,6 +64,7 @@ export default function Notes() {
   const [search, setSearch] = useState('');
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const dirtyRef = useRef(false);
+  const pendingRef = useRef<Record<string, unknown>>({});
   const timerRef = useRef<number | undefined>(undefined);
   const createdRef = useRef(false);
 
@@ -131,12 +132,16 @@ export default function Notes() {
 
   function queueSave(next: { title?: string; body?: string; classId?: string | null; eventId?: string | null }) {
     if (!activeId) return;
+    // merge, don't replace: a fast edit of two fields must not lose the first one
+    Object.assign(pendingRef.current, next);
     dirtyRef.current = true;
     window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       if (!dirtyRef.current) return;
       dirtyRef.current = false;
-      patchNote.mutate({ id: activeId, patch: next });
+      const patch = { ...pendingRef.current };
+      pendingRef.current = {};
+      patchNote.mutate({ id: activeId, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
     }, 800);
   }
 

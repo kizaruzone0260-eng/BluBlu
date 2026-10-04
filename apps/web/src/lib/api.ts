@@ -51,6 +51,16 @@ async function tryRefresh(): Promise<boolean> {
   return refreshing;
 }
 
+/**
+ * Boot-time session restore — MUST share the single-flight above.
+ * Without it, a double effect run (React StrictMode dev) POSTs /refresh twice
+ * with the same rotating cookie → reuse detection kills the token family →
+ * the user is logged out on every hard page load.
+ */
+export function restoreSession(): Promise<boolean> {
+  return tryRefresh();
+}
+
 export async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   let res = await rawFetch(path, init);
   if (res.status === 401 && accessToken) {

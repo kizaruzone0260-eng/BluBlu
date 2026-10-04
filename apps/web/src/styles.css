@@ -215,6 +215,8 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
   .tabbar a.active { color: var(--accent); }
   .tabbar .ico { font-size: 1.25rem; }
   .container { padding: var(--sp-3) var(--sp-3) 84px; }
+  .sheet-fab { bottom: 74px; }                     /* above the bottom tab bar */
+  .sheet-panel { z-index: 60; }                    /* covers the tab bar when open */
 }
 
 /* ── dashboard (A2) ─────────────────────────────────────────────────────── */

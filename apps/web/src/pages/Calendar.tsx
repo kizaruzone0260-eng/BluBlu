@@ -202,8 +202,16 @@ export default function Calendar() {
           </div>
           {save.isError && <p className="error">{t('common.errorGeneric')}</p>}
           <div className="row">
-            <button disabled={!form.title || !form.startLocal || save.isPending} onClick={() => save.mutate(form)}>{t('common.save')}</button>
+            <button data-testid="event-save" disabled={!form.title || !form.startLocal || save.isPending} onClick={() => save.mutate(form)}>{t('common.save')}</button>
             <button className="secondary" onClick={() => { setForm(null); setScopeChoice('all'); }}>{t('common.cancel')}</button>
+            {form.id && (
+              <button className="danger" data-testid="event-delete"
+                onClick={() => {
+                  if (!window.confirm(t('cal.deleteConfirm'))) return;
+                  const scope = form.occurrenceStart ? scopeChoice : 'all';
+                  del.mutate({ id: form.id!, scope, occurrenceStart: scope !== 'all' ? form.occurrenceStart : undefined });
+                }}>{t('cal.delete')}</button>
+            )}
             {form.kind === 'lesson' && form.id && (
               <a href={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></a>
             )}

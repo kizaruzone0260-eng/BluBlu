@@ -3,6 +3,7 @@
  * built web bundle) + seeded teacher. Playwright webServer launches this.
  */
 import EmbeddedPostgres from 'embedded-postgres';
+import { initUtf8Cluster } from '../../api/scripts/pg-init-utf8.mjs';
 import postgres from 'postgres';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -33,7 +34,10 @@ const pg = new EmbeddedPostgres({
   databaseDir: dataDir, user: 'klass', password: 'klass', port: PGPORT, persistent: true,
 });
 const needInit = !existsSync(path.join(dataDir, 'PG_VERSION'));
-if (needInit) await pg.initialise();
+if (needInit) {
+  // WIN1251 default breaks oʻ/emoji writes — force UTF8 like production (§B fonts test)
+  if (!await initUtf8Cluster(import.meta.url, dataDir)) await pg.initialise();
+}
 await pg.start();
 try { await pg.createDatabase('klass'); } catch { /* exists */ }
 

@@ -132,6 +132,9 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
             ))}
           </nav>
           <div className="side-foot">
+            <div className="side-lang" style={{ padding: '4px 8px' }}>
+              <LangDropdown me={me} onMeChanged={() => undefined} />
+            </div>
             <button className="ghost" style={{ margin: 0, width: '100%', justifyContent: 'flex-start' }}
               onClick={() => { const c = !collapsed; setCollapsed(c); localStorage.setItem('klass_sidebar', c ? '1' : '0'); }}
               title={t('nav.collapse')}>

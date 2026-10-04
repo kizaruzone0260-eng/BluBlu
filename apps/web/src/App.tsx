@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { fetchMe, onAuthChange, setAccessToken, type Me } from './lib/api';
+import { fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
 import { Nav, LangDropdown, ThemeToggle } from './components/Nav';
 import Home, { useLiveClass } from './pages/Home';
 import Login from './pages/Login';
@@ -20,14 +20,9 @@ const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null
 export const useAuth = () => useContext(AuthCtx);
 
 function tryRestoreSession(): Promise<void> {
-  // no access token in memory → attempt cookie refresh once at boot
-  return fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
-    .then(async (r) => {
-      if (!r.ok) return;
-      const j = await r.json();
-      setAccessToken(j.accessToken);
-    })
-    .catch(() => {});
+  // no access token in memory → attempt cookie refresh once at boot.
+  // Shared single-flight with api()'s 401 handler (StrictMode double-boot safe).
+  return restoreSession().then(() => undefined).catch(() => {});
 }
 
 export default function App() {

@@ -7,11 +7,22 @@ const stack = JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), '
 };
 const BASE = `http://127.0.0.1:${stack.port}`;
 
+async function forceRuProfile() {
+  // separate context: page.request would share (and race) the browser cookie jar
+  const api = await pw.newContext({ baseURL: BASE });
+  const l = await api.post('/api/auth/login', { data: { email: stack.teacherEmail, password: stack.teacherPassword } });
+  const token = (await l.json()).accessToken as string;
+  const me = await (await api.get('/api/me', { headers: { authorization: `Bearer ${token}` } })).json();
+  await api.patch('/api/me/profile', { headers: { authorization: `Bearer ${token}` }, data: { name: me.name, locale: 'ru', tz: me.tz } });
+  await api.dispose();
+}
+
 let classCode = '';
 let classIdForFlow = '';
 
 test.describe.serial('klass core flows', () => {
   test('teacher: login, create class, create invite code', async ({ page }) => {
+    await forceRuProfile();
     await page.goto('/login');
     await page.getByTestId('email').fill(stack.teacherEmail);
     await page.getByTestId('password').fill(stack.teacherPassword);
@@ -19,6 +30,7 @@ test.describe.serial('klass core flows', () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByTestId('home-title')).toBeVisible();
 
+    await page.goto('/classes');
     await page.getByTestId('new-class-name').fill('E2E Математика 7А');
     await page.getByTestId('create-class').click();
     await expect(page.getByTestId('class-card').first()).toContainText('E2E Математика 7А');
@@ -41,7 +53,8 @@ test.describe.serial('klass core flows', () => {
     await page.getByTestId('reg-password').fill('Secret1234');
     await page.getByTestId('reg-code').fill(classCode);
     await page.getByTestId('register-submit').click();
-    await expect(page).toHaveURL(/\/classes/);
+    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    await page.goto('/classes');
     await expect(page.getByTestId('class-card').first()).toContainText('E2E Математика 7А');
     // code is single-use: try to register again with the same one
     const page2 = await ctx.newPage();
@@ -54,7 +67,7 @@ test.describe.serial('klass core flows', () => {
     await page.getByTestId('email').fill(stack.teacherEmail);
     await page.getByTestId('password').fill(stack.teacherPassword);
     await page.getByTestId('login-submit').click();
-    await expect(page).toHaveURL(/\/classes/, { timeout: 20_000 });
+    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
     await page.goto('/calendar');
     await expect(page.getByTestId('new-event')).toBeVisible({ timeout: 20_000 });
     await page.getByTestId('new-event').click();
@@ -62,7 +75,7 @@ test.describe.serial('klass core flows', () => {
     const d = new Date(Date.now() + 2 * 86400_000);
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T09:00`;
     await page.locator('input[type="datetime-local"]').fill(iso);
-    await page.locator('form button[type="submit"], .card button:has-text("Сохранить")').first().click();
+    await page.getByTestId('event-save').click();
     await expect(page.locator('.fc-event, .fc-list-event').first()).toBeVisible();
   });
 
@@ -93,7 +106,7 @@ test.describe.serial('klass core flows', () => {
     const code = (await inv.json()).code as string;
     await page.getByTestId('reg-code').fill(code);
     await page.getByTestId('register-submit').click();
-    await expect(page).toHaveURL(/\/classes/);
+    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 
     // open lesson page by classId → session active, board visible to student (view-mode), drawer exists
     const stLogin = await api.post('/api/auth/login', { data: { email: `e2esheet${''}`, password: '' } }).catch(() => null); void stLogin;

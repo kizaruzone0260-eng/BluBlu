@@ -6,6 +6,7 @@
  * Usage: node scripts/with-postgres.mjs vitest run
  */
 import EmbeddedPostgres from 'embedded-postgres';
+import { initUtf8Cluster } from './pg-init-utf8.mjs';
 import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +33,7 @@ const pg = new EmbeddedPostgres({
 const needInit = !fs.existsSync(path.join(dataDir, 'PG_VERSION'));
 if (needInit) {
   console.log('[with-postgres] initialise (first run)…');
-  await pg.initialise();
+  if (!await initUtf8Cluster(import.meta.url, dataDir)) await pg.initialise();
 }
 await pg.start();
 try { await pg.createDatabase('klass'); } catch { /* exists */ }

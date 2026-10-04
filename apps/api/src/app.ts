@@ -90,9 +90,12 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   });
 
   // Global safety net; stricter limits per route below (§4).
+  // 1000/min/IP: an SPA boot pulls ~30 static chunks + a dozen API calls, so a
+  // human browsing easily does 100+ requests/min; the net only catches floods.
+  // Auth endpoints keep their own strict limits (login 10/min, register 8/min).
   await app.register(rateLimit, {
     global: true,
-    max: 300,
+    max: 1000,
     timeWindow: '1 minute',
   });
 
