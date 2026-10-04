@@ -154,6 +154,10 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 }
 .topbar a { padding: 8px 10px; border-radius: var(--r-sm); min-height: var(--tap); display: inline-flex; align-items: center; color: var(--text); font-weight: 550; transition: background var(--tr), color var(--tr); }
 .topbar a:hover { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 640px) {
+  .topbar { gap: var(--sp-2); }
+  .topbar .muted { display: none; } /* tagline would clip the language chip on phones */
+}
 
 /* ── sidebar shell (A1) ─────────────────────────────────────────────────── */
 .app-shell { display: flex; min-height: 100vh; }
