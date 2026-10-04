@@ -88,12 +88,48 @@ if (!evs.some((e) => e.title === 'Урок: дроби (showcase)')) {
   });
 }
 const notes = await api('GET', '/api/notes');
+// a small hand-made curve so the notes screenshots show the drawing feature (item 3)
+const inkStrokes = {
+  strokes: [
+    { c: '#0f766e', w: 4, pts: [[60, 300], [160, 140], [260, 300], [360, 120], [470, 300], [560, 160], [650, 280]] },
+    { c: '#c0392f', w: 5, pts: [[700, 150], [740, 230], [780, 150], [820, 230], [860, 150]] },
+    { c: '#17211d', w: 3, pts: [[60, 360], [300, 360]] },
+  ],
+};
+const inkHtml = `<div class="note-drawing" data-note-drawing="${encodeURIComponent(JSON.stringify(inkStrokes))}"></div>`;
+const showcaseBody = `<p>План урока: разминка 5 мин, доска, листки. Закрепить после звонка.</p>${inkHtml}`;
 const showcase = notes.find((n) => n.title === 'Заметка для скринов');
 if (!showcase) {
-  const created = await api('POST', '/api/notes', { title: 'Заметка для скринов', body: '<p>План урока: разминка 5 мин, доска, листки. Закрепить после звонка.</p>' });
+  const created = await api('POST', '/api/notes', { title: 'Заметка для скринов', body: showcaseBody });
   if (created?.id) await api('PATCH', `/api/notes/${created.id}`, { pinned: true });
-} else if (!showcase.pinned) {
-  await api('PATCH', `/api/notes/${showcase.id}`, { pinned: true });
+} else {
+  if (!showcase.pinned) await api('PATCH', `/api/notes/${showcase.id}`, { pinned: true });
+  if (!showcase.body?.includes('note-drawing')) await api('PATCH', `/api/notes/${showcase.id}`, { title: 'Заметка для скринов', body: showcaseBody });
+}
+
+// ── chat fixtures (item 8): a student + a few exchanged messages ─────────────
+const inv = await api('POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 });
+const chatStuEmail = `shots${cls.id.slice(0, 6)}@x.io`;
+let stuToken = null;
+const existing = await api('GET', '/api/classes/' + cls.id + '/members');
+if (!existing?.some?.((m) => m.email === chatStuEmail)) {
+  const reg = await (await fetch(`${BASE}/api/auth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ firstName: 'Азиза', lastName: 'Каримова', email: chatStuEmail, password: 'ShotPass123', code: inv.code }),
+  })).json().catch(() => null);
+  stuToken = reg?.accessToken ?? null;
+} else {
+  const l = await (await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: chatStuEmail, password: 'ShotPass123' }),
+  })).json().catch(() => null);
+  stuToken = l?.accessToken ?? null;
+}
+const chatMsgs = await (await fetch(`${BASE}/api/classes/${cls.id}/chat/messages?limit=50`, { headers: { authorization: `Bearer ${login.accessToken}` } })).json().catch(() => ({ messages: [] }));
+if (!(chatMsgs.messages?.length >= 3)) {
+  const say = async (tok, text) => { await fetch(`${BASE}/api/classes/${cls.id}/chat/messages`, { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' }, body: JSON.stringify({ text }) }); };
+  await say(login.accessToken, 'Всем привет! В четверг повторяем дроби — доска будет открыта за 5 минут до старта.');
+  if (stuToken) { await say(stuToken, 'Хорошо, подготовлю листок №4 📄'); await say(stuToken, 'А домашку можно сдавать до пятницы?'); await say(login.accessToken, 'Да, до 23:59 пятницы.'); }
 }
 
 // ── capture ──────────────────────────────────────────────────────────────────
@@ -126,6 +162,28 @@ for (const locale of locales) {
         await lp.waitForTimeout(400);
         await lp.screenshot({ path: path.join(outDir, `login-${locale}-${width}-${theme}.png`) });
         count++;
+        // item 9 — registration step 1 (fresh code; check-code never burns it)
+        if (!only || only.includes('register') || only.includes('register2')) {
+          const regInvite = await api('POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 });
+          await lp.goto(`${BASE}/register`);
+          await lp.waitForTimeout(300);
+          await lp.getByTestId('reg-code').fill(regInvite.code);
+          await lp.getByTestId('reg-email').fill('demo.student@example.com');
+          await lp.getByTestId('reg-password').fill('DemoPass123');
+          if (!only || only.includes('register')) {
+            await lp.screenshot({ path: path.join(outDir, `register-${locale}-${width}-${theme}.png`) });
+            count++;
+          }
+          if (!only || only.includes('register2')) {
+            await lp.getByTestId('register-step1').click();
+            await lp.getByTestId('reg-first').waitFor({ timeout: 8000 }).catch(() => undefined);
+            await lp.getByTestId('reg-first').fill('Азиза');
+            await lp.getByTestId('reg-last').fill('Каримова');
+            await lp.waitForTimeout(300);
+            await lp.screenshot({ path: path.join(outDir, `register2-${locale}-${width}-${theme}.png`) });
+            count++;
+          }
+        }
         await lctx.close();
       }
       // authenticated shots: ONE login per context; subsequent full loads reuse
@@ -158,7 +216,16 @@ for (const locale of locales) {
       await shot('home');
       await shot('class', `/classes/${cls.id}`);
       await shot('calendar', '/calendar');
+      // notes: OPEN the showcase note so the editor + drawing (item 3) are visible
       await shot('notes', '/notes');
+      {
+        await page.getByTestId('note-item').first().click();
+        await page.waitForTimeout(900);
+        await page.screenshot({ path: path.join(outDir, `notes-${locale}-${width}-${theme}.png`) });
+        count++;
+      }
+      await shot('chat', '/chat');
+      await shot('chatroom', `/chat/${cls.id}`);
       await shot('profile', '/profile');
       await ctx.close();
       }
