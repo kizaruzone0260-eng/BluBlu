@@ -31,7 +31,7 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
     });
     const app = await buildApp(t.db);
     const studentEmail = `les${Date.now()}@x.io`;
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil', email: studentEmail, password: 'Secret1234', code } });
+    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: studentEmail, password: 'Secret1234', code } });
     studentToken = r.json().accessToken as string;
     const [u] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, studentEmail)).limit(1);
     studentId = u!.id;
@@ -86,7 +86,7 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
     const oc = genCode();
     const [otherClass] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Other L' }).returning();
     await t.db.insert(inviteCodes).values({ classId: otherClass!.id, codeHash: hashInviteCode(oc, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const reg = await outApp.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Out L', email: `ol${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
+    const reg = await outApp.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Out L', lastName: 'Test', email: `ol${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
     const oj = await outApp.inject({ method: 'POST', url: `/api/lessons/${sessionId}/join`, headers: auth(reg.json().accessToken) });
     expect(oj.statusCode).toBe(404);
     await outApp.close();

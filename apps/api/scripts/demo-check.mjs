@@ -91,7 +91,7 @@ async function main() {
   const stuEmail = `check${stamp}@demo.invalid`;
   const reg = await fetch(`${base}/api/auth/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: 'Проверочный', email: stuEmail, password: 'Check12345', code: invite.code }),
+    body: JSON.stringify({ firstName: 'Проверочный', lastName: 'Демо', email: stuEmail, password: 'Check12345', code: invite.code }),
   });
   ok('student registers with the code', reg.status === 200 || reg.status === 201, `status ${reg.status}`);
   const student = (await json(reg))?.accessToken;

@@ -122,7 +122,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     if (url === '/api/auth/login') {
       routeOptions.config = { ...routeOptions.config, rateLimit: { max: 10, timeWindow: '1 minute' } };
     }
-    if (url === '/api/auth/register' || url === '/api/join-by-code') {
+    if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code') {
       routeOptions.config = { ...routeOptions.config, rateLimit: { max: 8, timeWindow: '1 minute' } };
     }
   });

@@ -9,11 +9,21 @@ const password = z
   .max(128)
   .regex(/(?=.*[a-zА-Яа-я])(?=[^ ]+$)/, 'passwordTooSimple');
 
+/**
+ * Item 9 — registration step 2: given name + family name are separate,
+ * both required. Step 1 (check-code) never reaches this schema.
+ */
 export const registerByCodeSchema = z.object({
-  name,
+  firstName: z.string().trim().min(2, 'name2').max(80),
+  lastName: z.string().trim().min(2, 'name2').max(80),
   email,
   password,
   code: z.string().trim().toUpperCase(),
+});
+
+/** Item 9 — step 1 validation only; never consumes the code. */
+export const checkCodeSchema = z.object({
+  code: z.string().trim().min(4).max(12),
 });
 
 export const loginSchema = z.object({ email, password });
@@ -46,6 +56,8 @@ export const inviteCreateSchema = z.object({
 
 export const profileUpdateSchema = z.object({
   name,
+  /** item 9 — family name; optional so pre-existing accounts (empty) keep working */
+  lastName: z.string().trim().max(80).optional(),
   locale: z.enum(['ru', 'uz', 'en']),
   tz: z.string().min(1).max(64).default(DEFAULT_TIMEZONE),
 });

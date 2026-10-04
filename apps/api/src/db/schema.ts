@@ -14,6 +14,8 @@ export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   role: userRoleEnum('role').notNull(),
   name: text('name').notNull(),
+  /** item 9 — family name, stored apart from the given name; '' for old accounts. */
+  lastName: text('last_name').notNull().default(''),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   locale: localeEnum('locale').notNull().default('ru'),

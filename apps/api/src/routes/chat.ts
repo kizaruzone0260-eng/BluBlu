@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { WebSocket } from 'ws';
-import { eq } from 'drizzle-orm';
+import { sql, eq } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { audit } from '../services/audit.js';
@@ -52,7 +52,10 @@ export async function chatRoutes(app: FastifyInstance, opts: { db: DB }) {
   const { db } = opts;
 
   const who = async (userId: string): Promise<{ name: string; role: 'teacher' | 'student' }> => {
-    const [u] = await db.select({ name: users.name, role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+    const [u] = await db.select({
+      name: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
+      role: users.role,
+    }).from(users).where(eq(users.id, userId)).limit(1);
     return { name: u?.name ?? '', role: (u?.role as 'teacher' | 'student') ?? 'student' };
   };
 

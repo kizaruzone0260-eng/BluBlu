@@ -34,6 +34,26 @@ export async function createInviteCode(
  * two concurrent requests can never consume the same code, because the row
  * is locked by the UPDATE itself and only an unused, unrevoked, unexpired row matches.
  */
+/**
+ * Item 9 step 1 — verify WITHOUT consuming: active, unredeemed, unexpired, unrevoked.
+ * The caller must answer with ONE generic error for every failing state, so an
+ * attacker cannot tell a wrong code from a used or expired one.
+ */
+export async function peekInviteCode(db: DB, plainCode: string): Promise<boolean> {
+  const hash = hashInviteCode(plainCode, env.JWT_SECRET);
+  const [row] = await db
+    .select({ id: inviteCodes.id })
+    .from(inviteCodes)
+    .where(and(
+      eq(inviteCodes.codeHash, hash),
+      isNull(inviteCodes.usedAt),
+      isNull(inviteCodes.revokedAt),
+      gt(inviteCodes.expiresAt, new Date()),
+    ))
+    .limit(1);
+  return Boolean(row);
+}
+
 export async function redeemInviteCode(db: DB, plainCode: string, userId: string): Promise<RedeemResult> {
   const hash = hashInviteCode(plainCode, env.JWT_SECRET);
   const res = await db.execute(sql`

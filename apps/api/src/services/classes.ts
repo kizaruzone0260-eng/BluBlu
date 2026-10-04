@@ -47,7 +47,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
         description: classes.description,
         color: classes.color,
         teacherId: classes.teacherId,
-        teacherName: users.name,
+        teacherName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
         archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
         chatMode: classes.chatMode,
         memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
@@ -68,7 +68,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
       description: classes.description,
       color: classes.color,
       teacherId: classes.teacherId,
-      teacherName: users.name,
+      teacherName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
       archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
       chatMode: classes.chatMode,
       memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
@@ -99,7 +99,7 @@ export async function listMembers(db: DB, classId: string) {
   return db
     .select({
       userId: users.id,
-      name: users.name,
+      name: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
       email: users.email,
       joinedAt: classMembers.joinedAt,
     })

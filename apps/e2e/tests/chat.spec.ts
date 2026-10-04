@@ -50,10 +50,13 @@ test.describe.serial('chat (item 8): teacher and student exchange in realtime', 
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.goto('/register');
-    await page.getByTestId('reg-name').fill('Чатист Е2Е');
+    await page.getByTestId('reg-code').fill(code);
     await page.getByTestId('reg-email').fill(stuEmail);
     await page.getByTestId('reg-password').fill('Secret1234');
-    await page.getByTestId('reg-code').fill(code);
+    await page.getByTestId('register-step1').click();
+    await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('reg-first').fill('Чатист');
+    await page.getByTestId('reg-last').fill('Е2Е');
     await page.getByTestId('register-submit').click();
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
     await page.goto('/chat');

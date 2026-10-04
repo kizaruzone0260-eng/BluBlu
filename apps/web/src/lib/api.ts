@@ -78,6 +78,8 @@ export interface Me {
   id: string;
   role: 'teacher' | 'student';
   name: string;
+  /** item 9 — family name; ''/undefined for accounts created before the split */
+  lastName?: string;
   email: string;
   locale: 'ru' | 'uz' | 'en';
   tz: string;
@@ -110,9 +112,14 @@ export async function login(email: string, password: string) {
   return j.user;
 }
 
-export async function registerByCode(name: string, email: string, password: string, code: string) {
+/** item 9 step 1 — verify the class code WITHOUT consuming it (throws on invalid). */
+export async function checkCode(code: string): Promise<void> {
+  await api<{ ok: true }>('/api/auth/check-code', { method: 'POST', body: JSON.stringify({ code }) });
+}
+
+export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string) {
   const j = await api<{ accessToken: string; user: Me }>('/api/auth/register', {
-    method: 'POST', body: JSON.stringify({ name, email, password, code }),
+    method: 'POST', body: JSON.stringify({ firstName, lastName, email, password, code }),
   });
   setAccessToken(j.accessToken);
   return j.user;

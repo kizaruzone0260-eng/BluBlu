@@ -89,7 +89,7 @@ suite('stage 7: security hardening', () => {
     const code = genCode();
     await t.db.insert(inviteCodes).values({ classId: cls!.id, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
     const email = `rstst${Date.now()}@x.io`;
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil R', email, password: 'Secret1234', code } });
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil R', lastName: 'Test', email, password: 'Secret1234', code } });
     const studentId = reg.json().user.id as string;
     const regCookie = (reg.headers['set-cookie'] as string).split(';')[0]!;
 
@@ -147,7 +147,7 @@ suite('stage 7: security hardening', () => {
     const code = genCode();
     await t.db.insert(inviteCodes).values({ classId: cls!.id, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
     const email = `dels${Date.now()}@x.io`;
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Del P', email, password: 'Secret1234', code } });
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Del P', lastName: 'Test', email, password: 'Secret1234', code } });
     const at = reg.json().accessToken as string;
     const del = await app.inject({ method: 'DELETE', url: '/api/me', headers: { authorization: `Bearer ${at}` } });
     expect(del.statusCode).toBe(200);

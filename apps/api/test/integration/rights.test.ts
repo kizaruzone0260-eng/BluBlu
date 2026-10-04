@@ -33,7 +33,7 @@ suite('§7 rights audit', () => {
       classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
       createdBy: teacherAId, expiresAt: new Date(Date.now() + 86400000),
     });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil', email, password: 'Secret1234', code } });
+    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email, password: 'Secret1234', code } });
     tok[who] = r.json().accessToken as string;
     if (who === 'studentA') studentAId = r.json().user.id;
     if (who === 'studentB') studentBId = r.json().user.id;

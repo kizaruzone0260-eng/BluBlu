@@ -32,6 +32,21 @@ async function forceRuProfile() {
 let classCode = '';
 let classIdForFlow = '';
 
+async function registerStudent(page: import('@playwright/test').Page, first: string, last: string, email: string, password: string, code: string) {
+  // item 9 — two-step: code+email+password are validated first (no burn),
+  // the account and the code consumption happen only on step 2
+  await page.goto('/register');
+  await page.getByTestId('reg-code').fill(code);
+  await page.getByTestId('reg-email').fill(email);
+  await page.getByTestId('reg-password').fill(password);
+  await page.getByTestId('register-step1').click();
+  await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('reg-first').fill(first);
+  await page.getByTestId('reg-last').fill(last);
+  await page.getByTestId('register-submit').click();
+  await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+}
+
 test.describe.serial('klass core flows', () => {
   test('teacher: login, create class, create invite code', async ({ page }) => {
     await forceRuProfile();
@@ -59,13 +74,7 @@ test.describe.serial('klass core flows', () => {
   test('student registers by code and sees the class', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto('/register');
-    await page.getByTestId('reg-name').fill('Ученик Тест');
-    await page.getByTestId('reg-email').fill(`e2estudent${Date.now()}@x.io`);
-    await page.getByTestId('reg-password').fill('Secret1234');
-    await page.getByTestId('reg-code').fill(classCode);
-    await page.getByTestId('register-submit').click();
-    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    await registerStudent(page, 'Ученик', 'Тест', `e2estudent${Date.now()}@x.io`, 'Secret1234', classCode);
     await page.goto('/classes');
     await expect(page.getByTestId('class-card').first()).toContainText('E2E Математика 7А');
     // code is single-use: try to register again with the same one
@@ -109,16 +118,10 @@ test.describe.serial('klass core flows', () => {
     // student context
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto('/register');
-    await page.getByTestId('reg-name').fill('Листок Тест');
-    await page.getByTestId('reg-email').fill(`e2esheet${Date.now()}@x.io`);
-    await page.getByTestId('reg-password').fill('Secret1234');
     // create fresh code for this student
     const inv = await api.post(`/api/classes/${cls.id}/invites`, { headers: { authorization: `Bearer ${token}` }, data: {} });
     const code = (await inv.json()).code as string;
-    await page.getByTestId('reg-code').fill(code);
-    await page.getByTestId('register-submit').click();
-    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    await registerStudent(page, 'Листок', 'Тест', `e2esheet${Date.now()}@x.io`, 'Secret1234', code);
 
     // open lesson page by classId → session active, board visible to student (view-mode), drawer exists
     const stLogin = await api.post('/api/auth/login', { data: { email: `e2esheet${''}`, password: '' } }).catch(() => null); void stLogin;

@@ -38,7 +38,13 @@
     "emailTaken": "Ushbu email allaqachon ro'yxatdan o'tgan",
     "passwordTooShort": "Kamida 8 ta belgi",
     "profile": "Profil",
-    "tempPasswordSet": "Vaqtinchalik parol o'rnatildi"
+    "tempPasswordSet": "Vaqtinchalik parol o'rnatildi",
+    "step1": "1-qadam — kod va kirish",
+    "step2": "2-qadam — ismingiz",
+    "continue": "Davom etish",
+    "back": "Orqaga",
+    "firstName": "Ism",
+    "lastName": "Familiya"
   },
   "classes": {
     "title": "Mening sinflarim",

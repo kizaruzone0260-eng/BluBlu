@@ -38,7 +38,13 @@
     "emailTaken": "This email is already registered",
     "passwordTooShort": "At least 8 characters",
     "profile": "Profile",
-    "tempPasswordSet": "Temporary password set"
+    "tempPasswordSet": "Temporary password set",
+    "step1": "Step 1 — code and access",
+    "step2": "Step 2 — your name",
+    "continue": "Continue",
+    "back": "Back",
+    "firstName": "First name",
+    "lastName": "Last name"
   },
   "classes": {
     "title": "My classes",

@@ -46,7 +46,7 @@ suite('stage 2: materials, files, teacher notes', () => {
         createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
       });
       const app = await buildApp(t.db);
-      const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil K', email, password: 'Secret1234', code } });
+      const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil K', lastName: 'Test', email, password: 'Secret1234', code } });
       await app.close();
       return r.json().accessToken as string;
     }
@@ -59,7 +59,7 @@ suite('stage 2: materials, files, teacher notes', () => {
       createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
     });
     const app0 = await buildApp(t.db);
-    const r0 = await app0.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Out S', email: `out${Date.now()}@x.io`, password: 'Secret1234', code: code2 } });
+    const r0 = await app0.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Out S', lastName: 'Test', email: `out${Date.now()}@x.io`, password: 'Secret1234', code: code2 } });
     outsiderToken = r0.json().accessToken as string;
     await app0.close();
   });

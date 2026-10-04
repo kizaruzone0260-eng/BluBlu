@@ -23,7 +23,7 @@ export async function getFeed(db: DB, classId: string): Promise<FeedItem[]> {
     .select({
       id: posts.id, kind: posts.kind, title: posts.title, body: posts.body,
       pinned: posts.pinned, topic: posts.topic, createdAt: posts.createdAt,
-      authorName: users.name,
+      authorName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
     })
     .from(posts)
     .innerJoin(users, eq(users.id, posts.authorId))

@@ -71,6 +71,13 @@
       "when": 1791139718010,
       "tag": "0009_early_baron_strucker",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791142222115,
+      "tag": "0010_useful_james_howlett",
+      "breakpoints": true
     }
   ]
 }

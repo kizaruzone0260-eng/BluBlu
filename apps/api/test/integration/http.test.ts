@@ -41,7 +41,7 @@ suite('stage 1: accounts, classes, codes, members', () => {
 
     const reg = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'Alice', email: 'alice@x.io', password: 'Secret1234', code },
+      payload: { firstName: 'Alice', lastName: 'Test', email: 'alice@x.io', password: 'Secret1234', code },
     });
     expect(reg.statusCode).toBe(200);
     expect(reg.json().user.role).toBe('student');
@@ -50,7 +50,7 @@ suite('stage 1: accounts, classes, codes, members', () => {
     // same code again → identical generic error (invalidCode), never a different message
     const reg2 = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'Bob', email: 'bob@x.io', password: 'Secret1234', code },
+      payload: { firstName: 'Bob', lastName: 'Test', email: 'bob@x.io', password: 'Secret1234', code },
     });
     expect(reg2.statusCode).toBe(400);
     expect(reg2.json().error).toBe('invalidCode');
@@ -58,7 +58,7 @@ suite('stage 1: accounts, classes, codes, members', () => {
     // wrong code → same error string
     const reg3 = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'Eve', email: 'eve@x.io', password: 'Secret1234', code: 'ZZZZZZZZ' },
+      payload: { firstName: 'Eve', lastName: 'Test', email: 'eve@x.io', password: 'Secret1234', code: 'ZZZZZZZZ' },
     });
     expect(reg3.statusCode).toBe(400);
     expect(reg3.json().error).toBe('invalidCode');
@@ -97,14 +97,14 @@ suite('stage 1: accounts, classes, codes, members', () => {
     // student tries to create a class → 403
     const reg = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'S1', email: `s1${Date.now()}@x.io`, password: 'Secret1234', code: 'A2CDEF3H' },
+      payload: { firstName: 'S1', lastName: 'Test', email: `s1${Date.now()}@x.io`, password: 'Secret1234', code: 'A2CDEF3H' },
     });
     // (code unknown → invalidCode; use join-by-code path below with a real code)
     expect(reg.statusCode).toBe(400);
     const inv = await app.inject({ method: 'POST', url: `/api/classes/${classId}/invites`, headers: auth, payload: {} });
     const reg2 = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'S2', email: `s2${Date.now()}@x.io`, password: 'Secret1234', code: inv.json().code },
+      payload: { firstName: 'S2', lastName: 'Test', email: `s2${Date.now()}@x.io`, password: 'Secret1234', code: inv.json().code },
     });
     expect(reg2.statusCode).toBe(200);
     const sa = { authorization: `Bearer ${reg2.json().accessToken}` };
@@ -124,13 +124,13 @@ suite('stage 1: accounts, classes, codes, members', () => {
     for (let i = 0; i < 5; i++) {
       const r = await app.inject({
         method: 'POST', url: '/api/auth/register',
-        payload: { name: 'Test Pupil', email: `x${i}${Date.now()}@x.io`, password: 'Secret1234', code: 'ABCDEFGH' },
+        payload: { firstName: 'Test Pupil', lastName: 'Test', email: `x${i}${Date.now()}@x.io`, password: 'Secret1234', code: 'ABCDEFGH' },
       });
       codes.push(r.statusCode);
     }
     const limited = await app.inject({
       method: 'POST', url: '/api/auth/register',
-      payload: { name: 'Test Pupil', email: 'y@x.io', password: 'Secret1234', code: 'ABCDEFGH' },
+      payload: { firstName: 'Test Pupil', lastName: 'Test', email: 'y@x.io', password: 'Secret1234', code: 'ABCDEFGH' },
     });
     expect(limited.statusCode).toBe(429);
     expect(limited.json().error).toBe('codeRateLimited');

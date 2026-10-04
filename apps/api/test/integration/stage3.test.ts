@@ -27,7 +27,7 @@ suite('stage 3: calendar, repeats, edit scopes, ICS', () => {
       createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
     });
     const app = await buildApp(t.db);
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil', email: `cal${Date.now()}@x.io`, password: 'Secret1234', code } });
+    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: `cal${Date.now()}@x.io`, password: 'Secret1234', code } });
     studentToken = r.json().accessToken as string;
     await app.close();
   });

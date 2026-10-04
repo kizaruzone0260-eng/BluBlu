@@ -65,7 +65,7 @@ export async function listMessages(db: DB, classId: string, before: Date | null,
   const rows = await db
     .select({
       id: chatMessages.id, authorId: chatMessages.authorId,
-      authorName: users.name, text: chatMessages.text, createdAt: chatMessages.createdAt,
+      authorName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`, text: chatMessages.text, createdAt: chatMessages.createdAt,
     })
     .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
     .where(cond).orderBy(desc(chatMessages.createdAt)).limit(limit);
@@ -127,7 +127,7 @@ export async function chatSummary(db: DB, userId: string, role: 'teacher' | 'stu
   const out: ChatSummary[] = [];
   for (const c of cls) {
     const [last] = await db
-      .select({ text: chatMessages.text, createdAt: chatMessages.createdAt, authorName: users.name })
+      .select({ text: chatMessages.text, createdAt: chatMessages.createdAt, authorName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))` })
       .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
       .where(eq(chatMessages.classId, c.id)).orderBy(desc(chatMessages.createdAt)).limit(1);
     const [read] = await db.select({ lastReadAt: chatReads.lastReadAt }).from(chatReads)
@@ -170,7 +170,7 @@ void inArray; // reserved
 /** moderation list for the teacher's chat settings */
 export async function listMutes(db: DB, classId: string): Promise<{ userId: string; name: string; until: string | null }[]> {
   const rows = await db
-    .select({ userId: chatMutes.userId, name: users.name, until: chatMutes.until })
+    .select({ userId: chatMutes.userId, name: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`, until: chatMutes.until })
     .from(chatMutes).innerJoin(users, eq(users.id, chatMutes.userId))
     .where(eq(chatMutes.classId, classId));
   return rows.map((r) => ({ userId: r.userId, name: r.name, until: r.until ? r.until.toISOString() : null }));

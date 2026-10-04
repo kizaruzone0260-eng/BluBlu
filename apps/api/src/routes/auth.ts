@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and, isNull } from 'drizzle-orm';
 import {
-  registerByCodeSchema, loginSchema, profileUpdateSchema,
+  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema,
 } from '@klass/shared';
 import { users, refreshTokens } from '../db/schema.js';
 import type { DB } from '../db/index.js';
@@ -9,6 +9,7 @@ import { env } from '../env.js';
 import {
   registerStudentByCode, login, issueRefreshSession, rotateRefresh, logout, signAccessTokenForUser,
 } from '../services/auth.js';
+import { peekInviteCode } from '../services/invites.js';
 import { normalizeInviteCode } from '../lib/invite.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
 
@@ -72,6 +73,26 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       return reply.send({ accessToken: result.accessToken, user: result.user });
     });
 
+    // Item 9 step 1 — code check WITHOUT consumption. One generic answer for
+    // wrong/used/expired/revoked, per-IP attempt throttle like register itself;
+    // email never touches this endpoint, so no account enumeration here.
+    app.post('/api/auth/check-code', async (req, reply) => {
+      const parsed = checkCodeSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalidCode' });
+      const key = `cc:${req.ip}`;
+      const gate = throttleCheck(key);
+      if (!gate.allowed) {
+        return reply.code(429).header('retry-after', String(gate.retryAfterSec)).send({ error: 'codeRateLimited' });
+      }
+      const okCode = await peekInviteCode(db, normalizeInviteCode(parsed.data.code));
+      if (!okCode) {
+        // failures count toward the probe budget (like login), successes don't
+        throttleRecordAttempt(key);
+        return reply.code(400).send({ error: 'invalidCode' });
+      }
+      return { ok: true };
+    });
+
     app.post('/api/auth/login', async (req, reply) => {
       const parsed = loginSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
@@ -115,7 +136,7 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       const [user] = await db.select().from(users).where(and(eq(users.id, req.user!.id), isNull(users.deletedAt))).limit(1);
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
       return {
-        id: user.id, role: user.role, name: user.name, email: user.email,
+        id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
         locale: user.locale, tz: user.tz,
       };
     });
@@ -129,7 +150,7 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
         .where(eq(users.id, req.user!.id))
         .returning();
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
-      return { id: user.id, role: user.role, name: user.name, email: user.email, locale: user.locale, tz: user.tz };
+      return { id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email, locale: user.locale, tz: user.tz };
     });
 
     // Full account removal (§3.1 privacy). Cascade removes memberships; refresh tokens revoked.

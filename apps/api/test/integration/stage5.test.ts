@@ -47,7 +47,7 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
     teacher.token = l.json().accessToken as string;
     const code = genCode();
     await t.db.insert(inviteCodes).values({ classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Pupil', email: `brd${Date.now()}@x.io`, password: 'Secret1234', code } });
+    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: `brd${Date.now()}@x.io`, password: 'Secret1234', code } });
     studentToken = r.json().accessToken as string;
     const st = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: { authorization: `Bearer ${teacher.token}` }, payload: { classId } });
     sessionId = st.json().id as string;
@@ -157,7 +157,7 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
     const oc = genCode();
     const [otherClass] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'OC' }).returning();
     await t.db.insert(inviteCodes).values({ classId: otherClass!.id, codeHash: hashInviteCode(oc, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { name: 'Other P', email: `op${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
+    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Other P', lastName: 'Test', email: `op${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
     const oth = await app.inject({ method: 'GET', url: '/api/student-notes', headers: { authorization: `Bearer ${reg.json().accessToken}` } });
     expect(oth.json()).toEqual([]);
   });

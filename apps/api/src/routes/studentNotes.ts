@@ -43,9 +43,10 @@ export async function studentNoteRoutes(app: FastifyInstance, opts: { db: DB }) 
     if (req.user!.role !== 'student') return reply.code(403).send({ error: 'forbidden' });
     const p = bodySchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
-    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     const cls = await resolveClass(db, req.user!.id, 'student', p.data.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
+    // §2 empty-guard AFTER the §7 rights answer (foreign class ⇒ 404, not 400)
+    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     if (p.data.sessionId) {
       const [s] = await db.select({ classId: lessonSessions.classId }).from(lessonSessions)
         .where(eq(lessonSessions.id, p.data.sessionId)).limit(1);

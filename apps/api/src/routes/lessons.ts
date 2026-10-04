@@ -8,7 +8,7 @@ import {
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env, livekitPublicWsUrl } from '../env.js';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { classTitle } from '../services/notifyQueue.js';
@@ -110,7 +110,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s || s.endedAt) return reply.code(404).send({ error: 'notFound' });
     const cls = await resolveClass(db, req.user!.id, req.user!.role, s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
-    const [me] = await db.select({ name: users.name }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+    const [me] = await db.select({ name: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))` }).from(users).where(eq(users.id, req.user!.id)).limit(1);
     const isTeacher = req.user!.role === 'teacher';
     const token = await buildJoinToken({
       room: s.roomName, identity: req.user!.id, name: me?.name ?? 'user',

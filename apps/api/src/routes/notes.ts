@@ -30,14 +30,15 @@ export async function noteRoutes(app: FastifyInstance, opts: { db: DB }) {
   app.post('/api/notes', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const p = bodySchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
-    // at least one non-blank char in title OR body text (client enforces too; §notes)
-    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     let classId: string | null = p.data.classId ?? null;
     if (classId) {
       const cls = await resolveClass(db, req.user!.id, 'teacher', classId);
       if (!cls) return reply.code(404).send({ error: 'notFound' });
       classId = cls.id;
     }
+    // at least one non-blank char in title OR body text (client enforces too; §notes).
+    // AFTER the §7 rights check — a foreign class must still answer 404, not 400.
+    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     // the lesson an optional link points at must belong to the same class (§7 ownership)
     let eventId: string | null = p.data.eventId ?? null;
     if (eventId) {
