@@ -10,6 +10,7 @@ data/
 files-store/
 .pgdata/
 .pgdata-demo/
+.pgdemo-pw.tmp
 .demo-files/
 apps/api/.demo-files/
 deploy/backups/

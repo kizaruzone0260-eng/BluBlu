@@ -47,7 +47,8 @@ async function apiAuth(email, password) {
 const authJson = (token, method, path, body) =>
   fetch(`${base}${path}`, {
     method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    // fastify rejects an empty body when content-type is json → POST/PATCH send {}
+    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
   });
 
 function decodeJwt(t) {
@@ -91,9 +92,10 @@ async function main() {
   ok('teacher join (token+wsUrl)', joinRes.status === 200 && Boolean(join.token), `wsUrl ${join.wsUrl}`);
   if (wantLivekit) ok('wsUrl == LIVEKIT_URL from .env', join.wsUrl === wantLivekit, `${join.wsUrl} vs ${wantLivekit}`);
   const claims = decodeJwt(join.token);
+  const gT = claims.video ?? claims; // livekit-server-sdk nests grants under `video`
   ok('token: teacher roomAdmin + room bound',
-    claims.room === session.roomName && (claims.roomAdmin === true || claims.video?.roomAdmin === true),
-    `room=${claims.room ?? claims.video?.room}`);
+    gT.room === session.roomName && gT.roomAdmin === true,
+    `room=${gT.room}`);
   ok('token: identity == user id', claims.sub === undefined || typeof (claims.sub ?? claims.identity) === 'string');
 
   const student = await apiAuth(STUDENT.email, STUDENT.password);

@@ -17,7 +17,9 @@
  * Ctrl+C stops tunnel, API and database.
  */
 import EmbeddedPostgres from 'embedded-postgres';
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execSync, execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,13 +68,42 @@ if (process.platform === 'win32') {
 
 // ── 1. database ──────────────────────────────────────────────────────────────
 console.log('[demo] starting embedded PostgreSQL (port %d)…', DB_PORT);
+const demoDataDir = path.join(apiDir, '.pgdata-demo');
+
+/**
+ * embedded-postgres.initialise() lets initdb pick the Windows ANSI codepage
+ * (WIN1251 here) — emoji and any other non-ANSI characters then fail to insert.
+ * Init the fresh cluster ourselves with the same native binary, forcing the
+ * production encoding (UTF8). Falls back to the library default on any error.
+ */
+async function initUtf8Cluster(dataDir) {
+  if (process.platform !== 'win32') return false;
+  try {
+    const reqApi = createRequire(import.meta.url);
+    const reqNative = createRequire(reqApi.resolve('embedded-postgres'));
+    const nativeEntry = reqNative.resolve('@embedded-postgres/windows-x64');
+    const { initdb } = await import(pathToFileURL(nativeEntry).href);
+    const pwFile = path.join(apiDir, '.pgdemo-pw.tmp');
+    fs.writeFileSync(pwFile, 'klass');
+    console.log('[demo] initialising UTF-8 data directory (first run, ~20s)…');
+    execFileSync(initdb, [
+      '-D', dataDir, '-U', 'klass', '-A', 'password', '--pwfile', pwFile,
+      '--locale=C', '-E', 'UTF8',
+    ], { stdio: 'inherit' });
+    fs.rmSync(pwFile, { force: true });
+    return true;
+  } catch (e) {
+    console.warn('[demo] UTF-8 initdb failed (%s) — falling back to embedded-postgres default', (e && e.message) || e);
+    return false;
+  }
+}
+
 const pg = new EmbeddedPostgres({
-  databaseDir: path.join(apiDir, '.pgdata-demo'),
+  databaseDir: demoDataDir,
   user: 'klass', password: 'klass', port: DB_PORT, persistent: true,
 });
-if (!fs.existsSync(path.join(apiDir, '.pgdata-demo', 'PG_VERSION'))) {
-  console.log('[demo] initialising data directory (first run, ~20s)…');
-  await pg.initialise();
+if (!fs.existsSync(path.join(demoDataDir, 'PG_VERSION'))) {
+  if (!await initUtf8Cluster(demoDataDir)) await pg.initialise();
 }
 await pg.start();
 try { await pg.createDatabase('klass'); } catch { /* exists */ }
@@ -178,14 +209,20 @@ api.on('exit', (c) => { if (!shuttingDown) { console.error('[demo] API exited, c
 
 // ── 4. seed ──────────────────────────────────────────────────────────────────
 console.log('[demo] seeding demo data…');
-const seed = await new Promise((res, rej) => {
-  const s = spawn('pnpm', ['exec', 'tsx', 'src/scripts/seed-demo.ts'], {
-    cwd: apiDir, env: apiEnv, stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32',
+let seed = '';
+try {
+  seed = await new Promise((res, rej) => {
+    const s = spawn('pnpm', ['exec', 'tsx', 'src/scripts/seed-demo.ts'], {
+      cwd: apiDir, env: apiEnv, stdio: ['ignore', 'pipe', 'inherit'], shell: process.platform === 'win32',
+    });
+    let out = '';
+    s.stdout.on('data', (b) => { out += String(b); });
+    s.on('exit', (c) => (c === 0 ? res(out) : rej(new Error(`seed exited ${c}`))));
   });
-  let out = '';
-  s.stdout.on('data', (b) => { out += String(b); });
-  s.on('exit', (c) => (c === 0 ? res(out) : rej(new Error(`seed exited ${c}`))));
-});
+} catch (e) {
+  console.error('[demo] seed failed:', e?.message ?? e, '— stopping (fix the seed and rerun)');
+  await shutdown(1);
+}
 const demo = JSON.parse(seed.slice(seed.indexOf('{'), seed.lastIndexOf('}') + 1));
 
 // ── banner ───────────────────────────────────────────────────────────────────
