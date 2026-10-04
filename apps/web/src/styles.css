@@ -327,3 +327,13 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .chat-msg-text { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
 .chat-unread { background: var(--accent); color: var(--accent-text); }
 button.danger-text { color: var(--danger); }
+
+/* visually hidden but available to screen readers */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* item 6: let the calendar toolbar wrap at narrow widths (the view-switcher
+   chunk used to clip «Список» at 390 px) */
+.fc .fc-header-toolbar { flex-wrap: wrap; row-gap: var(--sp-2); }

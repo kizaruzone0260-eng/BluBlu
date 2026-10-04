@@ -23,6 +23,12 @@ function Tiptap({ value, onChange }: { value: string; onChange: (html: string) =
     editorProps: { attributes: { class: 'tiptap' } },
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
   });
+  // controlled-content sync: when the note SWITCHES (value arrives from the
+  // server after mount) push it into the editor; typing never round-trips back
+  // because onUpdate already keeps value === editor.getHTML().
+  useEffect(() => {
+    if (editor && value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
+  }, [value, editor]);
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>
       <MenuBar editor={editor} />
@@ -60,6 +66,9 @@ export default function Notes() {
   const qc = useQueryClient();
   const [sp, setSp] = useSearchParams();
   const [activeId, setActiveId] = useState<string | null>(null);
+  // item 2/3: the editor must NOT remount when a draft is promoted to a real
+  // note (the POST happens mid-typing); it only changes on user-driven switches
+  const [editorSeed, setEditorSeed] = useState('none');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [noteClass, setNoteClass] = useState('');       // binding of the ACTIVE note
@@ -89,6 +98,9 @@ export default function Notes() {
   metaRef.current = { cls: noteClass, ev: noteEvent };
   inkRef.current = ink;
   const creatingRef = useRef(false);
+  const skipLoadRef = useRef<string | null>(null);
+  const activeIdRef = useRef<string | null>(activeId);
+  activeIdRef.current = activeId;
 
   // D.1/§2: a note exists only once it has content — «add» opens a client-side
   // draft; the POST fires at the first autosave with non-blank title/body.
@@ -97,7 +109,11 @@ export default function Notes() {
       api<Note>('/api/notes', { method: 'POST', body: JSON.stringify(p) }),
     onSuccess: (n) => {
       creatingRef.current = false;
+      skipLoadRef.current = n.id; // the note we just made — do not clobber the in-progress editor
       setActiveId(n.id);
+      // the POST itself IS a save — without this a draft written in one burst
+      // (title+body together) would never show «Сохранено»
+      setSavedAt(new Date().toLocaleTimeString());
       void qc.invalidateQueries({ queryKey: ['notes'] });
       // edits made while the POST was in flight still belong to the note
       const leftover = { ...pendingRef.current };
@@ -147,7 +163,7 @@ export default function Notes() {
     dirtyRef.current = false;
     pendingRef.current = {};
     creatingRef.current = false;
-    setActiveId(DRAFT);
+    setActiveId(DRAFT); setEditorSeed('draft-' + Date.now());
     setTitle(''); setBody(''); setInk(null);
     setNoteClass(classId ?? ''); setNoteEvent(eventId ?? '');
     setSavedAt(null);
@@ -161,6 +177,9 @@ export default function Notes() {
   // load active note into local state (drawing split out of the body — item 3)
   useEffect(() => {
     if (realActive) {
+      // right after the draft POST created this note the SERVER copy is older
+      // than what the user is typing — re-loading it would wipe the keystrokes
+      if (skipLoadRef.current === activeId) { skipLoadRef.current = null; return; }
       const { rest, ink: fromBody } = extractInk(realActive.body);
       setTitle(realActive.title); setBody(rest); setInk(fromBody);
       setNoteClass(realActive.classId ?? ''); setNoteEvent(realActive.eventId ?? '');
@@ -183,15 +202,20 @@ export default function Notes() {
     Object.assign(pendingRef.current, next);
     dirtyRef.current = true;
     window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
+    const fire = () => {
       if (!dirtyRef.current) return;
+      const curId = activeIdRef.current; // may have moved DRAFT→real since scheduling
       const patch = { ...pendingRef.current };
       const mergedTitle = (patch.title as string | undefined) ?? titleRef.current;
       const mergedBody = (patch.body as string | undefined) ?? composeInk(bodyRef.current, inkRef.current);
       // §2: an empty DRAFT is never sent to the API at all; the note is created
       // at the first save that has content.
-      if (activeId === DRAFT) {
-        if (!noteHasContent(mergedTitle, mergedBody) || creatingRef.current) return;
+      if (curId === DRAFT) {
+        if (!noteHasContent(mergedTitle, mergedBody)) return;
+        // the promoting POST is still in flight → retry shortly; once it lands,
+        // activeIdRef holds the real id and the next fire takes the PATCH path
+        timerRef.current = creatingRef.current ? window.setTimeout(fire, 400) : undefined;
+        if (creatingRef.current) return;
         dirtyRef.current = false;
         pendingRef.current = {};
         creatingRef.current = true;
@@ -204,8 +228,9 @@ export default function Notes() {
       }
       dirtyRef.current = false;
       pendingRef.current = {};
-      patchNote.mutate({ id: activeId, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
-    }, 800);
+      if (curId) patchNote.mutate({ id: curId, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
+    };
+    timerRef.current = window.setTimeout(fire, 800);
   }
 
   // save on unmount/switch too (real api() helper → keeps the Authorization header)
@@ -274,7 +299,7 @@ export default function Notes() {
           {list.map((n) => (
             <button key={n.id} type="button" data-testid="note-item"
               className={n.id === activeId ? 'note-item active' : 'note-item'}
-              onClick={() => setActiveId(n.id)}>
+              onClick={() => { setActiveId(n.id); setEditorSeed(n.id); }}>
               <strong>{n.pinned && <span className="pin-star">★ </span>}{n.title || t('notes.untitled')}</strong>
               <span className="meta">
                 {new Intl.DateTimeFormat(i18n.language, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(n.updatedAt))}
@@ -322,7 +347,7 @@ export default function Notes() {
                 </select>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Tiptap key={activeId ?? 'none'} value={body}
+                <Tiptap key={editorSeed} value={body}
                   onChange={(html) => { setBody(html); queueSave({ body: composeInk(html, inkRef.current) }); }} />
                 {/* item 3 — drawing (pen/eraser/colors/thickness/undo/redo/clear), stored in the body */}
                 <InkEditor ink={ink} onChange={(next) => {

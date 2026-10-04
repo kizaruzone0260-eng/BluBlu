@@ -12,7 +12,7 @@ interface InviteRow {
   expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
 }
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
-interface ClassView { id: string; name: string; description: string; color: string; archived: boolean }
+interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce' }
 
 export default function ClassDetail() {
   const { id = '' } = useParams();
@@ -166,6 +166,11 @@ export default function ClassDetail() {
             <h2>{t('tg.group')}</h2>
             <TelegramClassSettings classId={id} />
           </div>
+          {/* item 8 — chat state + mute management (teacher) */}
+          <div className="card" data-testid="chat-settings">
+            <h2>{t('chat.settingsTitle')}</h2>
+            <ChatSettings classId={id} initialMode={cls?.chatMode ?? 'on'} />
+          </div>
           {/* C.2 — class settings: rename / description / color / archive */}
           {cls && edit && (
             <div className="card" data-testid="class-settings">
@@ -192,6 +197,52 @@ export default function ClassDetail() {
         </>
       )}
     </div>
+  );
+}
+
+/** item 8 — chat mode + mute management (teacher). */
+function ChatSettings({ classId, initialMode }: { classId: string; initialMode: 'on' | 'off' | 'announce' }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [mode, setMode] = useState(initialMode);
+  useEffect(() => setMode(initialMode), [initialMode]);
+  const mutes = useQuery({
+    queryKey: ['chat-mutes', classId],
+    queryFn: () => api<{ mutes: { userId: string; name: string; until: string | null }[] }>(`/api/classes/${classId}/chat/mutes`),
+  });
+  const setModeM = useMutation({
+    mutationFn: (m: string) => api(`/api/classes/${classId}/chat/mode`, { method: 'PUT', body: JSON.stringify({ mode: m }) }),
+    onSuccess: (_r, m) => { setMode(m as 'on' | 'off' | 'announce'); void qc.invalidateQueries({ queryKey: ['classes'] }); void qc.invalidateQueries({ queryKey: ['chat-summary'] }); },
+  });
+  const unmute = useMutation({
+    mutationFn: (userId: string) => api(`/api/classes/${classId}/chat/mutes/${userId}`, { method: 'DELETE' }),
+    onSuccess: () => void mutes.refetch(),
+  });
+  return (
+    <>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <span className="muted">{t('chat.mode.label')}</span>
+        <select style={{ width: 'auto', marginTop: 0 }} data-testid="chat-mode" value={mode}
+          onChange={(e) => setModeM.mutate(e.target.value)} disabled={setModeM.isPending}>
+          <option value="on">{t('chat.mode.on')}</option>
+          <option value="off">{t('chat.mode.off')}</option>
+          <option value="announce">{t('chat.mode.announce')}</option>
+        </select>
+      </div>
+      {(mutes.data?.mutes ?? []).length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <strong style={{ fontSize: '.85rem' }}>{t('chat.mutedTitle')}</strong>
+          {(mutes.data?.mutes ?? []).map((m) => (
+            <div key={m.userId} className="row" style={{ alignItems: 'center', marginTop: 4 }}>
+              <span>{m.name}</span>
+              <span className="muted">{m.until ? new Date(m.until).toLocaleString() : t('chat.muteForever')}</span>
+              <div className="spacer" />
+              <button className="secondary" style={{ marginTop: 0 }} onClick={() => unmute.mutate(m.userId)}>{t('chat.unmute')}</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
