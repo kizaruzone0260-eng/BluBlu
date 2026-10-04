@@ -40,6 +40,41 @@ suite('notes (D): optional class, lesson link, pin, publish', () => {
   const a = () => ({ authorization: tok });
   const post = (payload: unknown) => app.inject({ method: 'POST', url: '/api/notes', headers: a(), payload: payload as object });
 
+  it('rejects a note that is empty in BOTH title and body (§2)', async () => {
+    const r1 = await post({ title: '', body: '', classId: null });
+    expect(r1.statusCode).toBe(400);
+    expect(r1.json().error).toBe('noteEmpty');
+    // whitespace-only title + tag-only body is still empty
+    const r2 = await post({ title: '   ', body: '<p>  </p><p>&nbsp;</p>' });
+    expect(r2.statusCode).toBe(400);
+    expect(r2.json().error).toBe('noteEmpty');
+    // a drawing payload counts as content
+    const r3 = await post({
+      title: '', classId: null,
+      body: `<p></p><div class="note-drawing" data-note-drawing="${encodeURIComponent(JSON.stringify({ strokes: [{ c: '#000', w: 3, pts: [[1, 2], [3, 4]] }] }))}"></div>`,
+    });
+    expect(r3.statusCode).toBe(201);
+    await app.inject({ method: 'DELETE', url: `/api/notes/${r3.json().id}`, headers: a() });
+  });
+
+  it('PATCH cannot empty an existing note (§2)', async () => {
+    const n = (await post({ title: 'есть текст', body: '<p>раз</p>' })).json();
+    const r = await app.inject({ method: 'PATCH', url: `/api/notes/${n.id}`, headers: a(), payload: { title: '', body: '<p> </p>' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toBe('noteEmpty');
+    // pin-only patch of the same note stays legal
+    const p = await app.inject({ method: 'PATCH', url: `/api/notes/${n.id}`, headers: a(), payload: { pinned: true } });
+    expect(p.statusCode).toBe(200);
+    await app.inject({ method: 'DELETE', url: `/api/notes/${n.id}`, headers: a() });
+  });
+
+  it('title-only and text-only notes are both valid (§2)', async () => {
+    const t1 = await post({ title: 'только заголовок', body: '' });
+    const t2 = await post({ title: '', body: '<p>только текст</p>' });
+    expect([t1.statusCode, t2.statusCode]).toEqual([201, 201]);
+    for (const r of [t1, t2]) await app.inject({ method: 'DELETE', url: `/api/notes/${r.json().id}`, headers: a() });
+  });
+
   it('creates a note without any class (за заметкой вне урока)', async () => {
     const r = await post({ title: 'Идея', body: '<p>просто</p>' });
     expect(r.statusCode).toBe(201);

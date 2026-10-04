@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, desc, eq } from 'drizzle-orm';
+import { noteHasContent } from '@klass/shared';
 import type { DB } from '../db/index.js';
 import { studentNotes, lessonSessions } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
@@ -41,6 +42,7 @@ export async function studentNoteRoutes(app: FastifyInstance, opts: { db: DB }) 
     if (req.user!.role !== 'student') return reply.code(403).send({ error: 'forbidden' });
     const p = bodySchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     const cls = await resolveClass(db, req.user!.id, 'student', p.data.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     if (p.data.sessionId) {
@@ -58,6 +60,14 @@ export async function studentNoteRoutes(app: FastifyInstance, opts: { db: DB }) 
   app.patch('/api/student-notes/:id', { preHandler: app.authenticate }, async (req, reply) => {
     const p = patchSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    if (p.data.title !== undefined || p.data.body !== undefined) {
+      const [ex] = await db.select({ title: studentNotes.title, body: studentNotes.body })
+        .from(studentNotes)
+        .where(and(eq(studentNotes.id, (req.params as { id: string }).id), eq(studentNotes.userId, req.user!.id)))
+        .limit(1);
+      if (!ex) return reply.code(404).send({ error: 'notFound' });
+      if (!noteHasContent(p.data.title ?? ex.title, p.data.body ?? ex.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
+    }
     const [row] = await db.update(studentNotes)
       .set({ ...p.data, updatedAt: new Date() })
       .where(and(eq(studentNotes.id, (req.params as { id: string }).id), eq(studentNotes.userId, req.user!.id)))

@@ -4,8 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../App';
+
+const DRAFT = '__draft__';
 
 interface Note {
   id: string; classId: string | null; eventId: string | null; pinned: boolean;
@@ -76,10 +79,30 @@ export default function Notes() {
       `/api/events?from=${new Date(Date.now() - 30 * 864e5).toISOString()}&to=${new Date(Date.now() + 120 * 864e5).toISOString()}`),
   });
 
+  // latest field values for the debounced save (state closures go stale)
+  const titleRef = useRef(''); const bodyRef = useRef('');
+  const metaRef = useRef<{ cls: string; ev: string }>({ cls: '', ev: '' });
+  titleRef.current = title; bodyRef.current = body;
+  metaRef.current = { cls: noteClass, ev: noteEvent };
+  const creatingRef = useRef(false);
+
+  // D.1/§2: a note exists only once it has content — «add» opens a client-side
+  // draft; the POST fires at the first autosave with non-blank title/body.
   const create = useMutation({
-    mutationFn: (p: { classId: string | null; eventId: string | null }) =>
-      api<Note>('/api/notes', { method: 'POST', body: JSON.stringify({ title: '', body: '', ...p }) }),
-    onSuccess: (n) => { setActiveId(n.id); void qc.invalidateQueries({ queryKey: ['notes'] }); },
+    mutationFn: (p: { classId: string | null; eventId: string | null; title: string; body: string }) =>
+      api<Note>('/api/notes', { method: 'POST', body: JSON.stringify(p) }),
+    onSuccess: (n) => {
+      creatingRef.current = false;
+      setActiveId(n.id);
+      void qc.invalidateQueries({ queryKey: ['notes'] });
+      // edits made while the POST was in flight still belong to the note
+      const leftover = { ...pendingRef.current };
+      pendingRef.current = {};
+      if (Object.keys(leftover).length > 0) {
+        patchNote.mutate({ id: n.id, patch: leftover as Partial<Pick<Note, 'title' | 'body' | 'classId' | 'eventId'>> });
+      }
+    },
+    onError: () => { creatingRef.current = false; },
   });
   const patchNote = useMutation({
     mutationFn: (p: { id: string; patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> }) =>
@@ -106,17 +129,36 @@ export default function Notes() {
     return rows;
   }, [notes.data, filter, search]);
 
-  const active = (notes.data ?? []).find((n) => n.id === activeId) ?? null;
+  const realActive = (notes.data ?? []).find((n) => n.id === activeId) ?? null;
+  const active: Note | null = activeId === DRAFT
+    ? { id: DRAFT, classId: noteClass || null, eventId: noteEvent || null, pinned: false, title, body, sharedPostId: null, updatedAt: new Date().toISOString() }
+    : realActive;
   const lessonOptions = useMemo(() => {
     const cid = noteClass || active?.classId;
     return (eventsQ.data ?? []).filter((e) => e.kind === 'lesson' && (!cid || e.classId === cid));
   }, [eventsQ.data, noteClass, active]);
 
+  function openDraft(classId?: string | null, eventId?: string | null) {
+    if (activeId === DRAFT) return; // repeated clicks reuse the one open draft
+    dirtyRef.current = false;
+    pendingRef.current = {};
+    creatingRef.current = false;
+    setActiveId(DRAFT);
+    setTitle(''); setBody('');
+    setNoteClass(classId ?? ''); setNoteEvent(eventId ?? '');
+    setSavedAt(null);
+  }
+  function discardDraft() {
+    dirtyRef.current = false;
+    pendingRef.current = {};
+    setActiveId(null);
+  }
+
   // load active note into local state
   useEffect(() => {
-    if (active) {
-      setTitle(active.title); setBody(active.body);
-      setNoteClass(active.classId ?? ''); setNoteEvent(active.eventId ?? '');
+    if (realActive) {
+      setTitle(realActive.title); setBody(realActive.body);
+      setNoteClass(realActive.classId ?? ''); setNoteEvent(realActive.eventId ?? '');
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -125,7 +167,7 @@ export default function Notes() {
     if (me?.role !== 'teacher' || createdRef.current) return;
     if (sp.get('new') === '1') {
       createdRef.current = true;
-      create.mutate({ classId: sp.get('classId') || null, eventId: sp.get('eventId') || null });
+      openDraft(sp.get('classId'), sp.get('eventId'));
       setSp({}, { replace: true });
     }
   }, [sp, me]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -138,8 +180,24 @@ export default function Notes() {
     window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       if (!dirtyRef.current) return;
-      dirtyRef.current = false;
       const patch = { ...pendingRef.current };
+      const mergedTitle = (patch.title as string | undefined) ?? titleRef.current;
+      const mergedBody = (patch.body as string | undefined) ?? bodyRef.current;
+      // §2: an empty DRAFT is never sent to the API at all; the note is created
+      // at the first save that has content.
+      if (activeId === DRAFT) {
+        if (!noteHasContent(mergedTitle, mergedBody) || creatingRef.current) return;
+        dirtyRef.current = false;
+        pendingRef.current = {};
+        creatingRef.current = true;
+        create.mutate({
+          classId: (patch.classId as string | null | undefined) ?? (noteClass || null),
+          eventId: (patch.eventId as string | null | undefined) ?? (noteEvent || null),
+          title: mergedTitle, body: mergedBody,
+        });
+        return;
+      }
+      dirtyRef.current = false;
       pendingRef.current = {};
       patchNote.mutate({ id: activeId, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
     }, 800);
@@ -147,13 +205,29 @@ export default function Notes() {
 
   // save on unmount/switch too (real api() helper → keeps the Authorization header)
   useEffect(() => () => {
-    if (dirtyRef.current && activeId) {
-      void api(`/api/notes/${activeId}`, { method: 'PATCH', body: JSON.stringify({ title, body }), keepalive: true } as RequestInit)
+    if (!dirtyRef.current) return;
+    if (activeId === DRAFT) {
+      // leaving an empty draft discards it silently; a draft WITH content is created
+      if (noteHasContent(titleRef.current, bodyRef.current)) {
+        void api('/api/notes', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: titleRef.current, body: bodyRef.current,
+            classId: metaRef.current.cls || null, eventId: metaRef.current.ev || null,
+          }),
+          keepalive: true,
+        } as RequestInit).catch(() => undefined);
+      }
+      return;
+    }
+    if (activeId) {
+      void api(`/api/notes/${activeId}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: bodyRef.current }), keepalive: true } as RequestInit)
         .catch(() => undefined);
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (me?.role !== 'teacher') return <p className="error">{t('common.errorGeneric')}</p>;
+  const isDraft = activeId === DRAFT;
 
   return (
     <div>
@@ -161,7 +235,7 @@ export default function Notes() {
         <h1 style={{ margin: 0 }}>{t('notes.title')}</h1>
         <div className="spacer" />
         <button style={{ marginTop: 0 }} data-testid="notes-add" disabled={create.isPending}
-          onClick={() => create.mutate({ classId: filter && filter !== 'noclass' ? filter : null, eventId: null })}>
+          onClick={() => openDraft(filter && filter !== 'noclass' ? filter : null)}>
           {t('notes.add')}
         </button>
       </div>
@@ -182,8 +256,14 @@ export default function Notes() {
             <div className="empty-state card">
               <div className="big">📝</div>
               <p>{t('notes.pickNote')}</p>
-              <button style={{ marginTop: 0 }} onClick={() => create.mutate({ classId: null, eventId: null })}>{t('notes.new')}</button>
+              <button style={{ marginTop: 0 }} onClick={() => openDraft(null)}>{t('notes.new')}</button>
             </div>
+          )}
+          {activeId === DRAFT && (
+            <button type="button" data-testid="note-item-draft" className="note-item active">
+              <strong>{title || t('notes.untitled')}</strong>
+              <span className="meta">{t('notes.editing')}</span>
+            </button>
           )}
           {list.map((n) => (
             <button key={n.id} type="button" data-testid="note-item"
@@ -236,22 +316,26 @@ export default function Notes() {
                 </select>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Tiptap value={body} onChange={(html) => { setBody(html); queueSave({ body: html }); }} />
+                <Tiptap key={activeId ?? 'none'} value={body} onChange={(html) => { setBody(html); queueSave({ body: html }); }} />
               </div>
               <div className="row" style={{ marginTop: 8 }}>
                 <span className="muted" data-testid="notes-saved">{savedAt ? `${t('notes.saved')} ${savedAt}` : t('notes.editing')}</span>
                 <div className="spacer" />
-                <button className="ghost" style={{ marginTop: 0 }} data-testid="note-pin"
+                <button className="ghost" style={{ marginTop: 0 }} data-testid="note-pin" disabled={isDraft}
                   onClick={() => patchNote.mutate({ id: active.id, patch: { pinned: !active.pinned } })}>
                   {active.pinned ? `★ ${t('notes.unpinNote')}` : `☆ ${t('notes.pinNote')}`}
                 </button>
+                {/* §2: publishing an empty note is impossible — the button itself knows */}
                 <button className="secondary" style={{ marginTop: 0 }} onClick={() => publish.mutate(active.id)}
-                  disabled={!active.classId || publish.isPending} data-testid="note-publish">
+                  disabled={isDraft || !active.classId || publish.isPending || !noteHasContent(title, body)} data-testid="note-publish">
                   {t('notes.publish')}
                 </button>
                 <button className="danger" style={{ marginTop: 0 }} data-testid="note-delete"
-                  onClick={() => { if (window.confirm(t('notes.deleteConfirm'))) del.mutate(active.id); }}>
-                  {t('common.delete')}
+                  onClick={() => {
+                    if (isDraft) { discardDraft(); return; }
+                    if (window.confirm(t('notes.deleteConfirm'))) del.mutate(active.id);
+                  }}>
+                  {isDraft ? t('common.cancel') : t('common.delete')}
                 </button>
               </div>
             </>

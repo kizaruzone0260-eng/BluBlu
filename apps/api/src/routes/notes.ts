@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
+import { noteHasContent } from '@klass/shared';
 import type { DB } from '../db/index.js';
 import { events } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
@@ -28,6 +29,8 @@ export async function noteRoutes(app: FastifyInstance, opts: { db: DB }) {
   app.post('/api/notes', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const p = bodySchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    // at least one non-blank char in title OR body text (client enforces too; §notes)
+    if (!noteHasContent(p.data.title, p.data.body)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
     let classId: string | null = p.data.classId ?? null;
     if (classId) {
       const cls = await resolveClass(db, req.user!.id, 'teacher', classId);
@@ -53,6 +56,11 @@ export async function noteRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const existing = await getNote(db, req.user!.id, id);
     if (!existing) return reply.code(404).send({ error: 'notFound' });
+    if (p.data.title !== undefined || p.data.body !== undefined) {
+      const mergedTitle = p.data.title ?? existing.title;
+      const mergedBody = p.data.body ?? existing.body;
+      if (!noteHasContent(mergedTitle, mergedBody)) return reply.code(400).send({ error: 'noteEmpty', message: 'A note needs a title or some text (at least one non-blank character)' });
+    }
     const patch: Record<string, unknown> = { ...p.data };
     if (p.data.classId !== undefined && p.data.classId !== null) {
       const cls = await resolveClass(db, req.user!.id, 'teacher', p.data.classId);
