@@ -8,7 +8,7 @@ import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import type { DB } from './db/index.js';
-import { env } from './env.js';
+import { env, livekitPublicWsUrl } from './env.js';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { classRoutes } from './routes/classes.js';
@@ -53,6 +53,13 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     trustProxy: env.TRUST_PROXY,
   });
 
+  // CSP: connect-src names ONLY concrete origins — same-origin API/WS via 'self'
+  // (CSP treats https:'self' as matching its wss counterpart) plus the LiveKit
+  // address taken from the environment (LIVEKIT_URL wins over LIVEKIT_WS_URL).
+  // No bare ws:/wss: wildcards.
+  const livekitConnectOrigin = (() => {
+    try { return [new URL(livekitPublicWsUrl()).origin]; } catch { return []; }
+  })();
   await app.register(helmet, {
     global: true,
     contentSecurityPolicy: {
@@ -64,7 +71,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'", 'blob:', 'data:'],
         fontSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", 'ws:', 'wss:', 'blob:'],
+        connectSrc: ["'self'", 'blob:', ...livekitConnectOrigin],
         workerSrc: ["'self'", 'blob:'],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],

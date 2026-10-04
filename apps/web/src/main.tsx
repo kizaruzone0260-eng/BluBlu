@@ -10,6 +10,12 @@ import App from './App';
 
 applyTheme(getThemeChoice());
 
+// service-worker registration lives in the module bundle: an inline <script> in
+// index.html would violate our own CSP (script-src 'self') on served builds.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } });
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

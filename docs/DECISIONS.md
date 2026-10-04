@@ -156,3 +156,14 @@
   перезапуска; для прода — volume/S3-совместимый провайдер), health-check
   GET /api/health без версий/секретов, WS-клиенты переподключаются с новым
   одноразовым билетом (backoff до 10 с).
+- **Видеозвонок в облаке: refresh-403 как первопричина.** Live-воспроизведение
+  на Render показало: при любой перезагрузке страницы POST /api/auth/refresh
+  отвечает 403, потому что checkSameOrigin сверял Origin только со статическим
+  списком из env (PUBLIC_WEB_ORIGIN/DOMAIN/PUBLIC_URL), а PUBLIC_URL на первом
+  деплое пуст → сессия не восстанавливается, /lesson открывает логин. Правка:
+  Origin разрешается и когда его host совпадает с заголовком Host запроса
+  (CSRF-safe: скрипты не могут подставлять Host). Плюс CSP: connect-src больше
+  не содержит голых ws:/wss: — только 'self', blob: и origin LiveKit из
+  LIVEKIT_URL/LIVEKIT_WS_URL; inline-регистрация service worker вынесена в
+  main.tsx и отключён vite modulePreload-полифилл, чтобы script-src 'self'
+  не нарушался. Тесты: same-Host refresh (Render-сценарий) и CSP-директивы.

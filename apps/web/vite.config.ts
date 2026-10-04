@@ -10,5 +10,10 @@ export default defineConfig({
       '/rtc': { target: 'ws://localhost:7880', ws: true },
     },
   },
-  build: { outDir: 'dist', sourcemap: false },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    // no inline module-preload polyfill script — keeps index.html CSP-clean
+    modulePreload: { polyfill: false },
+  },
 });

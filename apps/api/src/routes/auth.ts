@@ -24,12 +24,20 @@ function refreshCookieOpts(ttlMs: number) {
   };
 }
 
-/** §3.9/§4: refresh endpoint must reject cross-origin POSTs (Origin, when present, must match). */
+/** §3.9/§4: refresh endpoint must reject cross-origin POSTs (Origin, when present, must match).
+ * Two ways to pass: (1) the configured origins (dev vite on another port, PUBLIC_URL/DOMAIN);
+ * (2) the request's own Host header — a same-origin fetch from the deployed page (Render/cloud-
+ * flare/localhost) whose origin we could not know from env (PUBLIC_URL is empty before the
+ * first deploy). Browsers forbid scripts from setting Host, so (2) is still CSRF-safe. */
 function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply): boolean {
   const origin = req.headers.origin;
   if (!origin) return true; // curl / same-origin navigations
   const allowed = new Set([env.PUBLIC_WEB_ORIGIN, `https://${env.DOMAIN ?? ''}`, `http://localhost:5173`, ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : [])]);
-  if (!allowed.has(origin)) {
+  let sameHost = false;
+  try {
+    sameHost = new URL(origin).host === (req.headers.host ?? '');
+  } catch { /* malformed origin ⇒ not same host */ }
+  if (!allowed.has(origin) && !sameHost) {
     reply.code(403).send({ error: 'forbidden' });
     return false;
   }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
+import { env } from '../../src/env.js';
 import { classes, inviteCodes, users, auditLog, telegramLinks } from '../../src/db/schema.js';
 import { hashInviteCode } from '../../src/lib/invite.js';
 import { processUpdate } from '../../src/services/telegramBot.js';
@@ -36,6 +37,47 @@ suite('stage 7: security hardening', () => {
     const good = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie, origin: 'http://localhost:5173' } });
     expect(good.statusCode).toBe(200);
     await app.close();
+  });
+
+  it('refresh accepts Origin == request Host even when PUBLIC_URL/DOMAIN are unset (Render cloud fix)', async () => {
+    const app = await buildApp(t.db);
+    const teacher = await makeTeacher(t.sql, `shost${Date.now()}@x.io`);
+    const login = await app.inject({
+      method: 'POST', url: '/api/auth/login',
+      headers: { host: 'blublu.onrender.com' },
+      payload: { email: teacher.email, password: teacher.password },
+    });
+    const cookie = (login.headers['set-cookie'] as string).split(';')[0]!;
+    // same-origin on a deployment whose address is NOT in env (PUBLIC_URL empty before first deploy)
+    const same = await app.inject({
+      method: 'POST', url: '/api/auth/refresh',
+      headers: { cookie, host: 'blublu.onrender.com', origin: 'https://blublu.onrender.com' },
+    });
+    expect(same.statusCode).toBe(200);
+    // a different origin on the same host is still rejected
+    const evil = await app.inject({
+      method: 'POST', url: '/api/auth/refresh',
+      headers: { cookie, host: 'blublu.onrender.com', origin: 'https://evil.example' },
+    });
+    expect(evil.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('CSP connect-src names the LiveKit origin from env — no bare ws:/wss: wildcards', async () => {
+    const prev = env.LIVEKIT_URL;
+    env.LIVEKIT_URL = 'wss://lv-test.livekit.cloud';
+    try {
+      const app = await buildApp(t.db);
+      const r = await app.inject({ method: 'GET', url: '/api/health/live' });
+      const csp = String(r.headers['content-security-policy']);
+      const connect = /connect-src([^;]*)/.exec(csp)?.[1] ?? '';
+      expect(connect).toContain('wss://lv-test.livekit.cloud');
+      expect(connect).not.toMatch(/(^|\s)ws:(\s|$)/);
+      expect(connect).not.toMatch(/(^|\s)wss:(\s|$)/);
+      const script = /script-src([^;]*)/.exec(csp)?.[1] ?? '';
+      expect(script).not.toContain('unsafe-inline'); // SW registration lives in the bundle now
+      await app.close();
+    } finally { env.LIVEKIT_URL = prev; }
   });
 
   it('teacher resets student password: temp works, old sessions revoked', async () => {
