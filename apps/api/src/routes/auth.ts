@@ -28,7 +28,7 @@ function refreshCookieOpts(ttlMs: number) {
 function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply): boolean {
   const origin = req.headers.origin;
   if (!origin) return true; // curl / same-origin navigations
-  const allowed = new Set([env.PUBLIC_WEB_ORIGIN, `https://${env.DOMAIN ?? ''}`, `http://localhost:5173`]);
+  const allowed = new Set([env.PUBLIC_WEB_ORIGIN, `https://${env.DOMAIN ?? ''}`, `http://localhost:5173`, ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : [])]);
   if (!allowed.has(origin)) {
     reply.code(403).send({ error: 'forbidden' });
     return false;

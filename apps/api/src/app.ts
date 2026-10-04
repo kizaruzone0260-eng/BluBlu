@@ -74,7 +74,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
 
   const corsOrigins = env.NODE_ENV === 'production'
     ? (env.DOMAIN ? [`https://${env.DOMAIN}`] : [])
-    : [env.PUBLIC_WEB_ORIGIN];
+    : [env.PUBLIC_WEB_ORIGIN, ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : [])];
   await app.register(cors, {
     origin: corsOrigins,
     credentials: true,

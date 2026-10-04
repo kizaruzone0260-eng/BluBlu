@@ -17,6 +17,8 @@
     "db:generate": "pnpm --filter @klass/api db:generate",
     "db:migrate": "pnpm --filter @klass/api db:migrate",
     "seed:teacher": "pnpm --filter @klass/api seed:teacher",
+    "demo": "node apps/api/scripts/demo.mjs",
+    "demo:check": "node apps/api/scripts/demo-check.mjs",
     "audit": "pnpm audit --prod"
   },
   "pnpm": {

@@ -20,6 +20,12 @@ const envSchema = z
   LIVEKIT_API_SECRET: z.string().default('devsecretdevsecretdevsecret123456'),
   LIVEKIT_WS_URL: z.string().default('ws://localhost:7880'),
   LIVEKIT_INTERNAL_URL: z.string().default('http://localhost:7880'),
+  // Demo (docs/DEMO.md): external LiveKit address (e.g. LiveKit Cloud wss://…).
+  // When set it overrides LIVEKIT_WS_URL (client) and LIVEKIT_INTERNAL_URL (RoomService API).
+  LIVEKIT_URL: z.string().default(''),
+  // Demo: public origin of this deployment (e.g. https://xxxx.trycloudflare.com).
+  // Used for notification links and same-origin checks. Empty ⇒ production logic (DOMAIN).
+  PUBLIC_URL: z.string().default(''),
   STORAGE_DIR: z.string().default('./files-store'),
   MAX_FILE_MB: z.coerce.number().default(100),
   TEACHER_QUOTA_GB: z.coerce.number().default(5),
@@ -30,6 +36,9 @@ const envSchema = z
   TELEGRAM_BOT_NAME: z.string().default('klass_bot'),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
   TELEGRAM_TRANSPORT: z.enum(['log', 'telegram']).default('log'),
+  // Demo: 'polling' uses grammY long-polling (no public webhook needed);
+  // production keeps 'webhook' behind Caddy.
+  TELEGRAM_MODE: z.enum(['webhook', 'polling']).default('webhook'),
 })
   .superRefine((v, ctx) => {
     if (v.NODE_ENV === 'production' && v.JWT_SECRET === DEV_SECRET) {
@@ -42,3 +51,14 @@ const envSchema = z
 
 export const env = envSchema.parse(process.env);
 export type Env = typeof env;
+
+/** Client-facing LiveKit WebSocket address: LIVEKIT_URL (Cloud/demo) wins over LIVEKIT_WS_URL (self-host via Caddy). */
+export function livekitPublicWsUrl(): string {
+  return env.LIVEKIT_URL || env.LIVEKIT_WS_URL;
+}
+
+/** RoomService REST base: wss→https / ws→http; falls back to LIVEKIT_INTERNAL_URL for self-hosted LAN access. */
+export function livekitRoomApiUrl(): string {
+  const base = env.LIVEKIT_URL || env.LIVEKIT_INTERNAL_URL;
+  return base.replace(/^wss/, 'https').replace(/^ws/, 'http');
+}

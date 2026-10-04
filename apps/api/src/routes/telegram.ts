@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
+import type { Bot } from 'grammy';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import {
@@ -12,11 +13,9 @@ import { processUpdate, createBot, type BotDeps } from '../services/telegramBot.
 import { randomBytes } from 'node:crypto';
 import { hashToken } from '../services/notify.js';
 
-export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
-  const { db } = opts;
-  const bot = createBot();
-
-  const botDeps: BotDeps = {
+/** Bot dependencies shared by the webhook route and the demo long-polling loop (server.ts). */
+export function botDeps(db: DB, bot: Bot | null): BotDeps {
+  return {
     db,
     isGroupAdmin: async (chatId, tgUserId) => {
       if (!bot) return false;
@@ -28,6 +27,13 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
       }
     },
   };
+}
+
+export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
+  const { db } = opts;
+  const bot = createBot();
+
+  const deps: BotDeps = botDeps(db, bot);
 
   // Webhook from Telegram (behind Caddy). Secret header check per §3.9.
   app.post('/webhook/telegram', async (req, reply) => {
@@ -36,7 +42,7 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
       return reply.code(403).send({ error: 'forbidden' });
     }
     const update = req.body as Parameters<typeof processUpdate>[1];
-    const res = await processUpdate(botDeps, update);
+    const res = await processUpdate(deps, update);
     if (res.handled && res.reply && bot) {
       const chatId = update.message?.chat?.id;
       if (chatId !== undefined) {

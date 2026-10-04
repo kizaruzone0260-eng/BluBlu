@@ -10,6 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "seed:teacher": "tsx --env-file=../../.env src/scripts/seed-teacher.ts",
+    "demo": "node scripts/demo.mjs",
+    "demo:check": "node scripts/demo-check.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",

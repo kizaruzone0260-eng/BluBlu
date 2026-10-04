@@ -7,7 +7,7 @@ import {
   getSession, buildJoinToken, getRoomService, studentPermission, type LessonSession,
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
-import { env } from '../env.js';
+import { env, livekitPublicWsUrl } from '../env.js';
 import { eq } from 'drizzle-orm';
 import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
@@ -100,7 +100,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     const s = await getActiveSessionForClass(db, cls.id);
     if (!s) return { session: null };
-    return { session: { ...withRoom(s), wsUrl: env.LIVEKIT_WS_URL } };
+    return { session: { ...withRoom(s), wsUrl: livekitPublicWsUrl() } };
   });
 
   // Join: issue short-lived LiveKit JWT (§5 поток входа)
@@ -116,7 +116,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       room: s.roomName, identity: req.user!.id, name: me?.name ?? 'user',
       isTeacher, lectureMode: s.lectureMode,
     });
-    return { token, wsUrl: env.LIVEKIT_WS_URL, room: s.roomName, session: withRoom(s) };
+    return { token, wsUrl: livekitPublicWsUrl(), room: s.roomName, session: withRoom(s) };
   });
 
   // Layout for everyone (§3.6)
@@ -243,7 +243,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       wsJoin(q, socket);
       socket.send(JSON.stringify({
         type: s.endedAt ? 'ended' : 'started',
-        session: { ...withRoom(s), wsUrl: env.LIVEKIT_WS_URL },
+        session: { ...withRoom(s), wsUrl: livekitPublicWsUrl() },
       }));
     })().catch(() => socket.close(1011));
   });

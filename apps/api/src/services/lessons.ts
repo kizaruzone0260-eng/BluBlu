@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk';
 import { lessonSessions } from '../db/schema.js';
 import type { DB } from '../db/index.js';
-import { env } from '../env.js';
+import { env, livekitRoomApiUrl } from '../env.js';
 
 export type LessonSession = typeof lessonSessions.$inferSelect;
 
@@ -92,7 +92,7 @@ export const studentPermission = (lectureMode: boolean, screenShare = false) => 
 let roomService: RoomServiceClient | null = null;
 export function getRoomService(): RoomServiceClient {
   roomService ??= new RoomServiceClient(
-    env.LIVEKIT_INTERNAL_URL.replace(/^ws/, 'http'), env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET,
+    livekitRoomApiUrl(), env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET,
   );
   return roomService;
 }

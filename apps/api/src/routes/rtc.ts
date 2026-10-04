@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AccessToken } from 'livekit-server-sdk';
 import type { DB } from '../db/index.js';
-import { env } from '../env.js';
+import { env, livekitPublicWsUrl } from '../env.js';
 
 /**
  * Stage-0 spike + stage-4 base: server-issued short-lived LiveKit JWT.
@@ -35,6 +35,6 @@ export async function rtcRoutes(app: FastifyInstance, _opts: { db: DB }) {
       canSubscribe: true,
       canPublishData: true,
     });
-    return { token: await at.toJwt(), wsUrl: env.LIVEKIT_WS_URL, room };
+    return { token: await at.toJwt(), wsUrl: livekitPublicWsUrl(), room };
   });
 }

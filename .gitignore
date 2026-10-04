@@ -9,6 +9,9 @@ coverage/
 data/
 files-store/
 .pgdata/
+.pgdata-demo/
+.demo-files/
+apps/api/.demo-files/
 deploy/backups/
 apps/e2e/e2edata/
 apps/e2e/files/

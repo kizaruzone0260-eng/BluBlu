@@ -87,6 +87,9 @@ const T: Record<NotifyKind, { ru: (p: Record<string, string>) => string; uz: (p:
 };
 
 export function siteUrl(): string {
+  // demo (Cloudflare Tunnel / any public origin override) wins over the
+  // production DOMAIN logic.
+  if (env.PUBLIC_URL) return env.PUBLIC_URL.replace(/\/+$/, '');
   return env.DOMAIN ? `https://${env.DOMAIN}` : env.PUBLIC_WEB_ORIGIN;
 }
 

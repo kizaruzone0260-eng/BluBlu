@@ -31,7 +31,7 @@ async function main() {
   setInterval(() => {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
   }, 10 * 60_000).unref?.();
-  if (bot && env.DOMAIN && env.TELEGRAM_WEBHOOK_SECRET) {
+  if (bot && env.DOMAIN && env.TELEGRAM_WEBHOOK_SECRET && env.TELEGRAM_MODE === 'webhook') {
     try {
       await bot.api.setWebhook(`https://${env.DOMAIN}/webhook/telegram`, {
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
@@ -40,6 +40,26 @@ async function main() {
     } catch (e) {
       console.warn('setWebhook failed:', (e as Error).message);
     }
+  }
+  // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
+  if (bot && env.TELEGRAM_MODE === 'polling') {
+    const [{ processUpdate }, { botDeps }] = await Promise.all([
+      import('./services/telegramBot.js'),
+      import('./routes/telegram.js'),
+    ]);
+    try {
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+    } catch (e) {
+      console.warn('deleteWebhook failed:', (e as Error).message);
+    }
+    bot.on('message', async (ctx) => {
+      const res = await processUpdate(botDeps(db, bot), ctx.update as Parameters<typeof processUpdate>[1]);
+      if (res.handled && res.reply) {
+        try { await ctx.reply(res.reply); } catch { /* sender blocked the bot */ }
+      }
+    });
+    bot.catch((err) => console.warn('telegram polling error:', (err.error as Error)?.message ?? String(err.error)));
+    void bot.start().catch((e: Error) => console.warn('telegram polling stopped:', e.message));
   }
 
   const app = await buildApp(db);
