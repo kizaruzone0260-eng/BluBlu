@@ -29,6 +29,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # web/api typecheck imports @klass/shared → its dist must exist first
+      - run: pnpm --filter @klass/shared build
       - run: pnpm -r typecheck
       - run: pnpm -r build
       - run: pnpm --filter @klass/api test          # unit + integration (real Postgres 16)
