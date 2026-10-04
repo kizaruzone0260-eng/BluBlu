@@ -131,6 +131,8 @@ suite('stage 7: security hardening', () => {
       role: 'student', name: 'Bek', email: `uz${Date.now()}@x.io`, passwordHash: 'x', locale: 'uz', tz: 'Asia/Tashkent',
     }).returning();
     const { createLinkToken } = await import('../../src/services/notify.js');
+    const { env: e7 } = await import('../../src/env.js');
+    e7.TELEGRAM_BOT_TOKEN = '1234:test'; e7.TELEGRAM_BOT_NAME = 'itest_bot'; // item 5: no link tokens without config
     const { token } = await createLinkToken(t.db, u!.id);
     const deps = { db: t.db, send: async () => undefined, isGroupAdmin: async () => false };
     const r = await processUpdate(deps, { message: { text: `/start ${token}`, chat: { id: 555, type: 'private' }, from: { id: 555 } } });

@@ -191,7 +191,8 @@
     "channelBoth": "ikkalasiga",
     "makeCode": "Bog'lash kodi",
     "howto": "Botni guruhga qo'shing, uni administrator qiling va /link <kod> buyrug'ini yuboring (faqat guruh administratori).",
-    "noGroup": "Guruh bog'lanmagan"
+    "noGroup": "Guruh bog'lanmagan",
+    "notConfigured": "Telegram bildirishnomalari sozlanmagan"
   },
   "sheets": {
     "title": "Mening qaydlarim",

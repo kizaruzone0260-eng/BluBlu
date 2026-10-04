@@ -45,7 +45,7 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_NAME
-        value: blublu_bot
+        sync: false   # exact @BotFather username without '@'; no fallback names in code (item 5)
       - key: TELEGRAM_WEBHOOK_SECRET
         generateValue: true
       - key: TELEGRAM_TRANSPORT

@@ -6,6 +6,7 @@ import {
   applyQuietHours, type NotifyTransport, type TransportResult,
 } from '../../src/services/notify.js';
 import { processUpdate } from '../../src/services/telegramBot.js';
+import { env } from '../../src/env.js';
 import { notifications, telegramLinks, classTelegramChats, classLinkTokens, classNotifyPrefs, users, classes, classMembers, events } from '../../src/db/schema.js';
 import { createEvent } from '../../src/services/events.js';
 import { hashToken } from '../../src/services/notify.js';
@@ -33,6 +34,9 @@ suite('stage 6: telegram queue, quiet hours, dedupe, rights', () => {
   let transport: RecordingTransport;
 
   beforeAll(async () => {
+    // item 5: createLinkToken returns null unless the bot is configured — the
+    // flow tests below exercise the CONFIGURED path, so stand in values here.
+    env.TELEGRAM_BOT_TOKEN = '1234:test'; env.TELEGRAM_BOT_NAME = 'itest_bot';
     t = await preparedDb(TEST_DATABASE_URL);
     const teacher = await makeTeacher(t.sql, `tg${Date.now()}@x.io`);
     teacherId = teacher.id;
@@ -161,6 +165,31 @@ suite('stage 6: telegram queue, quiet hours, dedupe, rights', () => {
     expect(b).toBe(0);
     const remRows = await t.db.select().from(notifications).where(sql`kind in ('reminder24h','reminder1h','reminder10m')`);
     expect(remRows.length).toBe(a);
+  });
+
+  it('item 5: unconfigured bot → configured:false status and NO t.me link; configured → link uses TELEGRAM_BOT_NAME only', async () => {
+    const prevTok = env.TELEGRAM_BOT_TOKEN, prevName = env.TELEGRAM_BOT_NAME;
+    const { buildApp } = await import('../../src/app.js');
+    const app = await buildApp(t.db);
+    const teacher = await makeTeacher(t.sql, `cfg${Date.now()}@x.io`);
+    const l = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
+    const a = { authorization: `Bearer ${l.json().accessToken}` };
+    env.TELEGRAM_BOT_TOKEN = ''; env.TELEGRAM_BOT_NAME = '';
+    const st = await app.inject({ method: 'GET', url: '/api/me/telegram-status', headers: a });
+    expect(st.json().configured).toBe(false);
+    const link = await app.inject({ method: 'POST', url: '/api/me/telegram-link', headers: a });
+    expect(link.statusCode).toBe(400);
+    expect(link.json().error).toBe('telegramNotConfigured');
+    env.TELEGRAM_BOT_TOKEN = '1:x'; env.TELEGRAM_BOT_NAME = 'reallink_bot';
+    const st2 = await app.inject({ method: 'GET', url: '/api/me/telegram-status', headers: a });
+    expect(st2.json().configured).toBe(true);
+    const link2 = await app.inject({ method: 'POST', url: '/api/me/telegram-link', headers: a });
+    expect(link2.statusCode).toBe(200);
+    const url = String(link2.json().url);
+    expect(url).toBe(`https://t.me/reallink_bot?start=${link2.json().token}`);
+    expect(url).not.toMatch(/klass_bot|blublu_bot/); // no fallback names anywhere
+    env.TELEGRAM_BOT_TOKEN = prevTok; env.TELEGRAM_BOT_NAME = prevName;
+    await app.close();
   });
 
   it('bot flows: /start consumes one-time token; /link requires admin; webhook ignores others', async () => {

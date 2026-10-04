@@ -39,9 +39,22 @@ Render web service (free) + Supabase Free (Postgres) + LiveKit Cloud Build
 4. После первого деплоя: скопировать `https://<name>.onrender.com` в
    `PUBLIC_URL` (ссылки уведомлений, CORS/CSRF, webhook Telegram) →
    Environment → Publish.
-5. **Telegram (опционально):** @BotFather → токен в `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_MODE=webhook`, `TELEGRAM_TRANSPORT=telegram`; приложение само
-   зарегистрирует `https://<PUBLIC_URL>/webhook/telegram` с секретом при старте.
+5. **Telegram (опционально).** Как включить бота:
+   - @BotFather → `/newbot` (или существующий) → взять токен;
+   - в cloud.env: `TELEGRAM_BOT_TOKEN=<токен>` и `TELEGRAM_BOT_NAME=<имя бота
+     из @BotFather без «@», например my_blublu_bot>` — Имя обязательно: без
+     пары токен+имени приложение НЕ генерирует ссылку t.me (в профиле
+     «Telegram-уведомления не настроены»); запасных имён в коде нет;
+   - `TELEGRAM_TRANSPORT=telegram`, `TELEGRAM_MODE=webhook`,
+     `TELEGRAM_WEBHOOK_SECRET` (уже генерируется);
+   - вписать все четыре значения в Render → redeploy. При старте приложение
+     само зарегистрирует `https://<PUBLIC_URL>/webhook/telegram` с секретом
+     (PUBLIC_URL должен быть задан — см. шаг 4; без него регистрация
+     пропускается с понятной строкой в логе). Ошибка регистрации видна в
+     логе Render текстом `telegram webhook registration FAILED: …` — сам
+     токен в лог не попадает никогда.
+   - Проверка: в профиле учителя «Подключить Telegram» → ссылка ведёт на
+     вашего бота → `/start` привязывает аккаунт.
 6. **Учитель:** задать `SEED_TEACHER_EMAIL`/`SEED_TEACHER_PASSWORD` в
    cloud.env → вписать в Render → при старте на пустой базе создастся аккаунт
    (пароль в логи не попадает). Не задан — сид молчит.

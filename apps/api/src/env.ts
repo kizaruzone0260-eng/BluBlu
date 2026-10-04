@@ -43,7 +43,9 @@ const envSchema = z
     .default('0')
     .transform((v) => v === true || v === '1' || v === 'true'),
   TELEGRAM_BOT_TOKEN: z.string().default(''),
-  TELEGRAM_BOT_NAME: z.string().default('klass_bot'),
+  // item 5: NO default bot name — without TELEGRAM_BOT_NAME the app must not
+  // invent t.me/… links; the UI then shows «Telegram notifications not configured».
+  TELEGRAM_BOT_NAME: z.string().default(''),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
   TELEGRAM_TRANSPORT: z.enum(['log', 'telegram']).default('log'),
   // Demo: 'polling' uses grammY long-polling (no public webhook needed);

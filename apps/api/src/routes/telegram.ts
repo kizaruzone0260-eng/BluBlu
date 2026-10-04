@@ -5,7 +5,7 @@ import type { Bot } from 'grammy';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import {
-  createLinkToken, unlinkUser, getPrefs,
+  createLinkToken, unlinkUser, getPrefs, telegramReady,
 } from '../services/notify.js';
 import { notificationPrefs, classNotifyPrefs, classTelegramChats, classLinkTokens, users, telegramLinks } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
@@ -53,8 +53,10 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   });
 
   // Profile: link/unlink personal Telegram, notification prefs
-  app.post('/api/me/telegram-link', { preHandler: app.authenticate }, async (req) => {
-    return createLinkToken(db, req.user!.id);
+  app.post('/api/me/telegram-link', { preHandler: app.authenticate }, async (req, reply) => {
+    const res = await createLinkToken(db, req.user!.id);
+    if (!res) return reply.code(400).send({ error: 'telegramNotConfigured' }); // item 5: no invented bot names
+    return res;
   });
 
   app.delete('/api/me/telegram-link', { preHandler: app.authenticate }, async (req) => {
@@ -65,7 +67,7 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   app.get('/api/me/telegram-status', { preHandler: app.authenticate }, async (req) => {
     const [link] = await db.select({ linkedAt: telegramLinks.linkedAt, blockedAt: telegramLinks.blockedAt })
       .from(telegramLinks).where(eq(telegramLinks.userId, req.user!.id)).limit(1);
-    return { linked: Boolean(link), blocked: Boolean(link?.blockedAt) };
+    return { linked: Boolean(link), blocked: Boolean(link?.blockedAt), configured: telegramReady() };
   });
 
   app.get('/api/me/notify-prefs', { preHandler: app.authenticate }, async (req) => getPrefs(db, req.user!.id));

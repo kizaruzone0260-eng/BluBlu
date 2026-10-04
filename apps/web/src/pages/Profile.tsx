@@ -10,17 +10,25 @@ export default function Profile() {
   const [locale, setLocale] = useState<'ru' | 'uz' | 'en'>(me?.locale ?? 'ru');
   const [saved, setSaved] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [tg, setTg] = useState<{ linked: boolean; blocked: boolean } | null>(null);
+  const [tg, setTg] = useState<{ linked: boolean; blocked: boolean; configured?: boolean } | null>(null);
   const [tgUrl, setTgUrl] = useState('');
+  const [tgErr, setTgErr] = useState('');
 
   useEffect(() => {
-    void api<{ linked: boolean; blocked: boolean }>('/api/me/telegram-status').then(setTg).catch(() => undefined);
+    void api<{ linked: boolean; blocked: boolean; configured?: boolean }>('/api/me/telegram-status').then(setTg).catch(() => undefined);
   }, []);
 
   async function linkTelegram() {
-    const r = await api<{ url: string }>('/api/me/telegram-link', { method: 'POST' });
-    setTgUrl(r.url);
-    window.open(r.url, '_blank');
+    setTgErr('');
+    try {
+      const r = await api<{ url: string }>('/api/me/telegram-link', { method: 'POST' });
+      setTgUrl(r.url);
+      window.open(r.url, '_blank');
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      // item 5: the server refuses to invent a bot address when nothing is configured
+      setTgErr(code === 'telegramNotConfigured' ? t('tg.notConfigured') : t('common.errorGeneric'));
+    }
     setTimeout(() => void api<{ linked: boolean; blocked: boolean }>('/api/me/telegram-status').then(setTg).catch(() => undefined), 2000);
   }
 
@@ -74,9 +82,13 @@ export default function Profile() {
           </span>
           <button className="danger" style={{ marginTop: 0 }} onClick={unlinkTelegram}>{t('tg.disable')}</button>
         </div>
+      ) : tg && tg.configured === false ? (
+        // item 5: no bot token/name on the server → we do NOT invent a t.me address
+        <p className="muted" data-testid="tg-not-configured">{t('tg.notConfigured')}</p>
       ) : (
         <>
-          <button onClick={linkTelegram}>{t('tg.connect')}</button>
+          <button onClick={linkTelegram} data-testid="tg-connect">{t('tg.connect')}</button>
+          {tgErr && <p className="error" data-testid="tg-error">{tgErr}</p>}
           {tgUrl && <p className="muted" style={{ wordBreak: 'break-all' }}>{tgUrl}</p>}
         </>
       )}

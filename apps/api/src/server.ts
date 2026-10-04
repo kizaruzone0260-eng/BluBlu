@@ -26,7 +26,7 @@ async function main() {
   const { seedTeacherAtBoot } = await import('./services/seed.js');
   await seedTeacherAtBoot(db);
 
-  // Telegram webhook registration (best-effort; server admin does it too)
+  // Telegram bot (null when TELEGRAM_BOT_TOKEN is empty — §3.9/§5)
   const bot = createBot();
   const transport = bot && env.TELEGRAM_TRANSPORT === 'telegram'
     ? new TelegramTransport(bot)
@@ -36,15 +36,23 @@ async function main() {
   setInterval(() => {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
   }, 10 * 60_000).unref?.();
-  if (bot && env.DOMAIN && env.TELEGRAM_WEBHOOK_SECRET && env.TELEGRAM_MODE === 'webhook') {
+  // Telegram webhook registration (best-effort; server admin does it too).
+  // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.
+  const webhookBase = env.PUBLIC_URL || (env.DOMAIN ? `https://${env.DOMAIN}` : '');
+  if (bot && webhookBase && env.TELEGRAM_WEBHOOK_SECRET && env.TELEGRAM_MODE === 'webhook') {
     try {
-      await bot.api.setWebhook(`https://${env.DOMAIN}/webhook/telegram`, {
+      await bot.api.setWebhook(`${webhookBase}/webhook/telegram`, {
         secret_token: env.TELEGRAM_WEBHOOK_SECRET,
         drop_pending_updates: false,
       });
+      console.log(`telegram webhook registered for ${webhookBase.replace(/^https:\/\//, '')}`); // host only, no secrets
     } catch (e) {
-      console.warn('setWebhook failed:', (e as Error).message);
+      // understandable reason, token scrubbed (grammY messages may embed nothing secret, belt-and-braces)
+      const msg = String((e as Error).message ?? e).replaceAll(env.TELEGRAM_BOT_TOKEN, '***');
+      console.warn(`telegram webhook registration FAILED (bot is up, Telegram will not reach it until this works): ${msg}`);
     }
+  } else if (bot && env.TELEGRAM_MODE === 'webhook') {
+    console.warn('telegram webhook skipped: set PUBLIC_URL (or DOMAIN) and TELEGRAM_WEBHOOK_SECRET');
   }
   // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
   if (bot && env.TELEGRAM_MODE === 'polling') {

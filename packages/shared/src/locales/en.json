@@ -191,7 +191,8 @@
     "channelBoth": "both",
     "makeCode": "Link code",
     "howto": "Add the bot to the group, make it an administrator, then send /link <code> (group admins only).",
-    "noGroup": "No group linked"
+    "noGroup": "No group linked",
+    "notConfigured": "Telegram notifications are not configured"
   },
   "sheets": {
     "title": "My notes",

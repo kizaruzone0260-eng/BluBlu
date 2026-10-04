@@ -321,7 +321,13 @@ async function tryInsertForUser(
 
 // ─── link tokens (§3.9) ───────────────────────────────────────────────────────
 
-export async function createLinkToken(db: DB, userId: string): Promise<{ token: string; url: string }> {
+/** Item 5: no fallback bot names — a link only exists when BOTH are configured. */
+export function telegramReady(): boolean {
+  return Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_BOT_NAME);
+}
+
+export async function createLinkToken(db: DB, userId: string): Promise<{ token: string; url: string } | null> {
+  if (!telegramReady()) return null;
   const token = newOpaqueToken();
   await db.insert(telegramTokens).values({
     tokenHash: hash(token), userId,
