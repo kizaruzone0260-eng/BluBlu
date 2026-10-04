@@ -17,7 +17,8 @@ export async function noteRoutes(app: FastifyInstance, opts: { db: DB }) {
     eventId: z.string().uuid().nullable().optional(),
     pinned: z.boolean().optional(),
     title: z.string().trim().max(200).default(''),
-    body: z.string().max(200000).default(''),
+    // item 3: the body may carry an embedded vector drawing (≤ ~500 KB encoded)
+    body: z.string().max(800000).default(''),
   });
   const patchSchema = bodySchema.partial();
 

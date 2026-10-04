@@ -7,6 +7,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../App';
+import { InkEditor, composeInk, extractInk, type InkData } from '../components/NoteInk';
 
 const DRAFT = '__draft__';
 
@@ -82,8 +83,11 @@ export default function Notes() {
   // latest field values for the debounced save (state closures go stale)
   const titleRef = useRef(''); const bodyRef = useRef('');
   const metaRef = useRef<{ cls: string; ev: string }>({ cls: '', ev: '' });
+  const [ink, setInk] = useState<InkData | null>(null);
+  const inkRef = useRef<InkData | null>(null);
   titleRef.current = title; bodyRef.current = body;
   metaRef.current = { cls: noteClass, ev: noteEvent };
+  inkRef.current = ink;
   const creatingRef = useRef(false);
 
   // D.1/§2: a note exists only once it has content — «add» opens a client-side
@@ -131,7 +135,7 @@ export default function Notes() {
 
   const realActive = (notes.data ?? []).find((n) => n.id === activeId) ?? null;
   const active: Note | null = activeId === DRAFT
-    ? { id: DRAFT, classId: noteClass || null, eventId: noteEvent || null, pinned: false, title, body, sharedPostId: null, updatedAt: new Date().toISOString() }
+    ? { id: DRAFT, classId: noteClass || null, eventId: noteEvent || null, pinned: false, title, body: composeInk(body, ink), sharedPostId: null, updatedAt: new Date().toISOString() }
     : realActive;
   const lessonOptions = useMemo(() => {
     const cid = noteClass || active?.classId;
@@ -144,7 +148,7 @@ export default function Notes() {
     pendingRef.current = {};
     creatingRef.current = false;
     setActiveId(DRAFT);
-    setTitle(''); setBody('');
+    setTitle(''); setBody(''); setInk(null);
     setNoteClass(classId ?? ''); setNoteEvent(eventId ?? '');
     setSavedAt(null);
   }
@@ -154,10 +158,11 @@ export default function Notes() {
     setActiveId(null);
   }
 
-  // load active note into local state
+  // load active note into local state (drawing split out of the body — item 3)
   useEffect(() => {
     if (realActive) {
-      setTitle(realActive.title); setBody(realActive.body);
+      const { rest, ink: fromBody } = extractInk(realActive.body);
+      setTitle(realActive.title); setBody(rest); setInk(fromBody);
       setNoteClass(realActive.classId ?? ''); setNoteEvent(realActive.eventId ?? '');
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -182,7 +187,7 @@ export default function Notes() {
       if (!dirtyRef.current) return;
       const patch = { ...pendingRef.current };
       const mergedTitle = (patch.title as string | undefined) ?? titleRef.current;
-      const mergedBody = (patch.body as string | undefined) ?? bodyRef.current;
+      const mergedBody = (patch.body as string | undefined) ?? composeInk(bodyRef.current, inkRef.current);
       // §2: an empty DRAFT is never sent to the API at all; the note is created
       // at the first save that has content.
       if (activeId === DRAFT) {
@@ -206,13 +211,14 @@ export default function Notes() {
   // save on unmount/switch too (real api() helper → keeps the Authorization header)
   useEffect(() => () => {
     if (!dirtyRef.current) return;
+    const fullBody = composeInk(bodyRef.current, inkRef.current);
     if (activeId === DRAFT) {
       // leaving an empty draft discards it silently; a draft WITH content is created
-      if (noteHasContent(titleRef.current, bodyRef.current)) {
+      if (noteHasContent(titleRef.current, fullBody)) {
         void api('/api/notes', {
           method: 'POST',
           body: JSON.stringify({
-            title: titleRef.current, body: bodyRef.current,
+            title: titleRef.current, body: fullBody,
             classId: metaRef.current.cls || null, eventId: metaRef.current.ev || null,
           }),
           keepalive: true,
@@ -221,7 +227,7 @@ export default function Notes() {
       return;
     }
     if (activeId) {
-      void api(`/api/notes/${activeId}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: bodyRef.current }), keepalive: true } as RequestInit)
+      void api(`/api/notes/${activeId}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: fullBody }), keepalive: true } as RequestInit)
         .catch(() => undefined);
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -316,7 +322,13 @@ export default function Notes() {
                 </select>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Tiptap key={activeId ?? 'none'} value={body} onChange={(html) => { setBody(html); queueSave({ body: html }); }} />
+                <Tiptap key={activeId ?? 'none'} value={body}
+                  onChange={(html) => { setBody(html); queueSave({ body: composeInk(html, inkRef.current) }); }} />
+                {/* item 3 — drawing (pen/eraser/colors/thickness/undo/redo/clear), stored in the body */}
+                <InkEditor ink={ink} onChange={(next) => {
+                  setInk(next); inkRef.current = next;
+                  queueSave({ body: composeInk(bodyRef.current, next) });
+                }} />
               </div>
               <div className="row" style={{ marginTop: 8 }}>
                 <span className="muted" data-testid="notes-saved">{savedAt ? `${t('notes.saved')} ${savedAt}` : t('notes.editing')}</span>
@@ -327,7 +339,7 @@ export default function Notes() {
                 </button>
                 {/* §2: publishing an empty note is impossible — the button itself knows */}
                 <button className="secondary" style={{ marginTop: 0 }} onClick={() => publish.mutate(active.id)}
-                  disabled={isDraft || !active.classId || publish.isPending || !noteHasContent(title, body)} data-testid="note-publish">
+                  disabled={isDraft || !active.classId || publish.isPending || !noteHasContent(title, composeInk(body, ink))} data-testid="note-publish">
                   {t('notes.publish')}
                 </button>
                 <button className="danger" style={{ marginTop: 0 }} data-testid="note-delete"

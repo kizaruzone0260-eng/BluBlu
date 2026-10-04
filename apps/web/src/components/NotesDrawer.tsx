@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { InkEditor, composeInk, extractInk, type InkData } from './NoteInk';
 
 interface Sheet {
   id: string; classId: string; sessionId: string | null;
@@ -17,10 +18,13 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
   const { t } = useTranslation();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState('');
+  const [ink, setInk] = useState<InkData | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const dirty = useRef(false);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
+  const partRef = useRef<{ text: string; ink: InkData | null }>({ text: '', ink: null });
+  partRef.current = { text, ink };
 
   const sheets = useQuery({
     queryKey: ['sheets', sessionId, classId],
@@ -36,11 +40,19 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
     if (raw && row) {
       try {
         const buf = JSON.parse(raw) as { body: string; at: number };
-        if (buf.body !== row.body) { setText(buf.body); flushNow(activeId, buf.body); return; }
+        if (buf.body !== row.body) {
+          const { rest, ink: i } = extractInk(buf.body);
+          setText(rest); setInk(i);
+          flushNow(activeId, composeInk(rest, i));
+          return;
+        }
       } catch { /* ignore */ }
       localStorage.removeItem(bufKey(activeId));
     }
-    if (row) setText(row.body);
+    if (row) {
+      const { rest, ink: i } = extractInk(row.body);
+      setText(rest); setInk(i);
+    }
   }, [activeId, sheets.data]);
 
   const save = useMutation({
@@ -54,16 +66,20 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
     save.mutate({ id, body });
   }
 
-  function onEdit(v: string) {
-    setText(v);
+  function emit(v: string, nextInk: InkData | null) {
+    setText(v); setInk(nextInk);
     if (!activeId) return;
-    localStorage.setItem(bufKey(activeId), JSON.stringify({ body: v, at: Date.now() }));
+    const full = composeInk(v, nextInk);
+    localStorage.setItem(bufKey(activeId), JSON.stringify({ body: full, at: Date.now() }));
     dirty.current = true;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      if (dirty.current && activeId) flushNow(activeId, v);
+      if (dirty.current && activeId) flushNow(activeId, full);
     }, 1000); // §3.8 debounce 1 s
   }
+
+  function onEdit(v: string) { emit(v, partRef.current.ink); }
+  function onInkChange(next: InkData | null) { emit(partRef.current.text, next); }
 
   const create = useMutation({
     mutationFn: () => api<Sheet>('/api/student-notes', {
@@ -117,6 +133,8 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
                 placeholder={t('sheets.placeholder')}
                 style={{ flex: 1, minHeight: 200, marginTop: 8 }}
               />
+              {/* item 3 — drawing on the sheet during the lesson */}
+              <InkEditor ink={ink} onChange={onInkChange} />
               <div className="row">
                 <span className="muted">{save.isPending ? t('sheets.saving') : t('sheets.saved')}</span>
                 <div className="spacer" />

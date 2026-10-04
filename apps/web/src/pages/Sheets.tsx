@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useAuth } from '../App';
+import { InkEditor, NoteBodyView, composeInk, extractInk, type InkData } from '../components/NoteInk';
 
 interface Sheet {
   id: string; classId: string; sessionId: string | null;
@@ -19,6 +20,11 @@ export default function Sheets() {
   const [q, setQ] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [ink, setInk] = useState<InkData | null>(null);
+  const inkRef = useRef<InkData | null>(null);
+  inkRef.current = ink;
+  const draftRef = useRef('');
+  draftRef.current = draft;
   const dirty = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   const createdRef = useRef(false);
@@ -30,7 +36,7 @@ export default function Sheets() {
     mutationFn: (classId: string) => api<Sheet>('/api/student-notes', {
       method: 'POST', body: JSON.stringify({ classId, title: `${t('sheets.sheet')} ${(sheets.data?.length ?? 0) + 1}`, body: '' }),
     }),
-    onSuccess: (s) => { setOpenId(s.id); setDraft(s.body); void qc.invalidateQueries({ queryKey: ['sheets-all'] }); },
+    onSuccess: (s) => { openSheet(s); void qc.invalidateQueries({ queryKey: ['sheets-all'] }); },
   });
   const patch = useMutation({
     mutationFn: (p: { id: string; body: string }) => api(`/api/student-notes/${p.id}`, { method: 'PATCH', body: JSON.stringify({ body: p.body }) }),
@@ -61,7 +67,8 @@ export default function Sheets() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   const exportSheet = (s: Sheet, ext: 'md' | 'txt') => {
-    const content = ext === 'md' ? `# ${s.title}\n\n${s.body}` : s.body;
+    const { rest } = extractInk(s.body); // drawings don't travel into .md/.txt
+    const content = ext === 'md' ? `# ${s.title}\n\n${rest}` : rest;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
     a.download = `${s.title || 'sheet'}.${ext}`;
@@ -71,14 +78,30 @@ export default function Sheets() {
 
   const className = (id: string) => (classes.data ?? []).find((c) => c.id === id)?.name ?? '';
 
+  function openSheet(s: Sheet) {
+    const { rest, ink: i } = extractInk(s.body);
+    setDraft(rest); setInk(i); inkRef.current = i;
+    setOpenId(s.id);
+  }
+
   function onEdit(v: string) {
     if (!openId) return;
     setDraft(v);
     dirty.current = true;
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
-      if (dirty.current && openId) { dirty.current = false; patch.mutate({ id: openId, body: v }); }
+      if (dirty.current && openId) { dirty.current = false; patch.mutate({ id: openId, body: composeInk(v, inkRef.current) }); }
     }, 1000); // §3.8 autosave 1 s
+  }
+
+  function onInkChange(next: InkData | null) {
+    setInk(next); inkRef.current = next;
+    if (!openId) return;
+    dirty.current = true;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      if (dirty.current && openId) { dirty.current = false; patch.mutate({ id: openId, body: composeInk(draftRef.current, next) }); }
+    }, 1000);
   }
 
   return (
@@ -109,9 +132,9 @@ export default function Sheets() {
             <button className="secondary" style={{ marginTop: 0 }} data-testid="sheet-edit"
               onClick={() => {
                 if (openId === s.id) {
-                  if (dirty.current) patch.mutate({ id: s.id, body: draft });
+                  if (dirty.current) patch.mutate({ id: s.id, body: composeInk(draft, inkRef.current) });
                   setOpenId(null);
-                } else { setOpenId(s.id); setDraft(s.body); }
+                } else { openSheet(s); }
               }}>{openId === s.id ? t('common.save') : '≡'}</button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => exportSheet(s, 'md')}>.md</button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => exportSheet(s, 'txt')}>.txt</button>
@@ -119,10 +142,16 @@ export default function Sheets() {
               onClick={() => { if (window.confirm(t('notes.deleteConfirm'))) del.mutate(s.id); }}>✕</button>
           </div>
           {openId === s.id && (
-            <textarea data-testid="sheet-textarea" value={draft} onChange={(e) => onEdit(e.target.value)}
-              placeholder={t('sheets.placeholder')} style={{ minHeight: 160, marginTop: 8 }} />
+            <>
+              <textarea data-testid="sheet-textarea" value={draft} onChange={(e) => onEdit(e.target.value)}
+                placeholder={t('sheets.placeholder')} style={{ minHeight: 160, marginTop: 8 }} />
+              {/* item 3 — drawing on the student sheet, stored in the same body */}
+              <InkEditor ink={openId === s.id ? ink : null} onChange={onInkChange} />
+            </>
           )}
-          {openId !== s.id && s.body && <p style={{ whiteSpace: 'pre-wrap', maxHeight: '8em', overflow: 'auto' }}>{s.body}</p>}
+          {openId !== s.id && s.body && (
+            <div style={{ maxHeight: '12em', overflow: 'auto' }}><NoteBodyView body={s.body} plain /></div>
+          )}
         </div>
       ))}
     </div>

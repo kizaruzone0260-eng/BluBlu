@@ -106,7 +106,16 @@
     "filterByClass": "By class",
     "filterNoLesson": "Not linked to a lesson",
     "linkedLesson": "Lesson",
-    "noClass": "No class"
+    "noClass": "No class",
+    "draw": {
+      "mode": "Drawing mode",
+      "pen": "Pen",
+      "eraser": "Eraser",
+      "color": "Color",
+      "thickness": "Thickness",
+      "clear": "Clear",
+      "toobig": "Drawing is too large (max 500 KB) — clear it or remove strokes"
+    }
   },
   "cal": {
     "title": "Calendar",

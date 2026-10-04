@@ -13,11 +13,12 @@ export async function studentNoteRoutes(app: FastifyInstance, opts: { db: DB }) 
     classId: z.string().uuid(),
     sessionId: z.string().uuid().nullable().optional(),
     title: z.string().max(200).default(''),
-    body: z.string().max(200000).default(''),
+    // item 3: student sheets may carry an embedded drawing too
+    body: z.string().max(800000).default(''),
   });
   const patchSchema = z.object({
     title: z.string().max(200).optional(),
-    body: z.string().max(200000).optional(),
+    body: z.string().max(800000).optional(),
   });
 
   app.get('/api/student-notes', { preHandler: app.authenticate }, async (req) => {

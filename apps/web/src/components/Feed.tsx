@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { blobUrlFor, downloadFile } from '../lib/preview';
+import { NoteBodyView } from './NoteInk';
 import { useAuth } from '../App';
 
 interface FileItem { id: string; name: string; mime: string; size: number }
@@ -146,8 +147,8 @@ export default function Feed({ classId }: { classId: string }) {
             )}
           </div>
           <strong>{p.title}</strong>
-          {p.body && p.kind === 'announcement' && <p style={{ whiteSpace: 'pre-wrap' }}>{p.body}</p>}
-          {p.body && p.kind === 'material' && <p className="muted">{p.body}</p>}
+          {p.body && p.kind === 'announcement' && <p style={{ whiteSpace: 'pre-wrap' }}><NoteBodyView body={p.body} plain /></p>}
+          {p.body && p.kind === 'material' && <p className="muted"><NoteBodyView body={p.body} /></p>}
           {p.files.map((f) => (
             <span key={f.id} className="row" style={{ marginTop: 4 }}>
               <a href="#" onClick={(e) => { e.preventDefault(); void downloadFile(f.id, f.name); }}>
