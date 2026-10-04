@@ -64,6 +64,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
       STORAGE_DIR: /data/files
+      # we sit behind Caddy → real client IP comes from X-Forwarded-For
+      # (auth rate limits must key on it, not on the container network IP)
+      TRUST_PROXY: "1"
     volumes:
       - files:/data/files
     depends_on:

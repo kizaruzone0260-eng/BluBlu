@@ -2,7 +2,8 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 90_000,
+  // loginAs retries a 10/min login limit with a 20 s backoff — give it room
+  timeout: 150_000,
   workers: 1,
   reporter: [['list']],
   use: {

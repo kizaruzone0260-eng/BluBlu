@@ -185,6 +185,8 @@ const apiEnv = {
   WEB_DIST: webDist,
   STORAGE_DIR: path.join(apiDir, '.demo-files'),
   PUBLIC_URL: publicUrl,
+  // cloudflared is a reverse proxy → per-IP limits must read X-Forwarded-For
+  TRUST_PROXY: '1',
   TELEGRAM_MODE: cfg('TELEGRAM_MODE', 'polling'),
 };
 // never let a stale test URL from the shell leak in

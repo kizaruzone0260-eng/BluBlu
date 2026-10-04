@@ -120,3 +120,21 @@
 - **UTF8 для всех embedded-кластеров** (with-postgres, e2e-stack, demo): нативный
   initdb от embedded-postgres с `-E UTF8 --locale=C`; на сервере PostgreSQL из
   официального образа и так UTF8.
+
+## 2026-10-04 (ребрендинг BluBlu + rate-limit)
+
+- **Бренд = одна константа:** `APP_NAME='BluBlu'` в packages/shared (+ overrides
+  через `VITE_APP_NAME` для web). Видимые места берут её; внутренние идентификаторы
+  НЕ трогали: пакеты @klass/*, БД `klass`, контейнеры/тома, env-переменные,
+  ключи localStorage (klass_locale/klass_theme — иначе выкинули бы пользователей),
+  UID событий ICS (`@klass` — иначе задвоятся в подписках). Тест brand.test.ts
+  запрещает слово «Klass» в локалях, манифесте и собранном index.html.
+- **Rate-limit (замена решения 300→1000 того же дня):** глобальный лимит вернулся
+  к 300/мин/IP, но распространяется только на /api и /webhook — раздача статики
+  исключена (`exclude` в @fastify/rate-limit). Всплески SPA-ассетов больше не
+  сжигают квоту, API под сетью как было.
+- **trustProxy — по env TRUST_PROXY (0/1), по умолчанию 0.** За Caddy (compose
+  ставит TRUST_PROXY=1), cloudflared (demo-лончер) и Render заголовок
+  X-Forwarded-For доверяется и auth-лимиты считают реальный IP клиента; без
+  прокси заголовок не принимается (нельзя обойти лимит подделкой). Тест
+  rate-limit.test.ts проверяет оба режима.

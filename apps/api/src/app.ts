@@ -46,7 +46,11 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
             }),
           },
         },
-    trustProxy: true, // behind Caddy
+    // §rate-limit task: trust X-Forwarded-For ONLY when we really run behind a
+    // proxy (Caddy in production, cloudflared in demo, Render in the cloud).
+    // Configurable via TRUST_PROXY env; default off — otherwise a client could
+    // forge the header and dodge the per-IP auth limits.
+    trustProxy: env.TRUST_PROXY,
   });
 
   await app.register(helmet, {
@@ -89,27 +93,32 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     limits: { fileSize: env.MAX_FILE_MB * 1024 * 1024, files: 4 },
   });
 
-  // Global safety net; stricter limits per route below (§4).
-  // 1000/min/IP: an SPA boot pulls ~30 static chunks + a dozen API calls, so a
-  // human browsing easily does 100+ requests/min; the net only catches floods.
-  // Auth endpoints keep their own strict limits (login 10/min, register 8/min).
-  await app.register(rateLimit, {
-    global: true,
-    max: 1000,
-    timeWindow: '1 minute',
-  });
-
-  // Stricter limits: login (brute force), register/join (code attempts).
-  // NOTE: onRoute hook must be added BEFORE routes are registered.
+  // Rate limiting (task §2): the 300/min/IP safety net covers the API surface
+  // (/api/* and /webhook/*) only — static web assets are OUT of the limiter
+  // (an SPA boot pulls ~30 chunks; capping that punished real users, not floods).
+  // @fastify/rate-limit v10 has no plugin-level `exclude`, so we register with
+  // global:false and attach the cap per-route via config.rateLimit.
+  // IMPORTANT: this hook must be added BEFORE registering the plugin — awaiting
+  // app.register() flushes avvio, and the plugin's own onRoute (which reads
+  // config.rateLimit) would otherwise run before we set it.
   app.addHook('onRoute', (routeOptions) => {
     const url = routeOptions.url;
+    const isApi = url === '/api' || url.startsWith('/api/') || url.startsWith('/webhook');
+    if (isApi) {
+      routeOptions.config = {
+        ...routeOptions.config,
+        rateLimit: { max: 300, timeWindow: '1 minute' },
+      };
+    }
+    // stricter: login (brute force), register/join (one-time code attempts)
     if (url === '/api/auth/login') {
-      routeOptions.config = { rateLimit: { max: 10, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: 10, timeWindow: '1 minute' } };
     }
     if (url === '/api/auth/register' || url === '/api/join-by-code') {
-      routeOptions.config = { rateLimit: { max: 8, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: 8, timeWindow: '1 minute' } };
     }
   });
+  await app.register(rateLimit, { global: false });
 
   await app.register(authPlugin, { db });
 

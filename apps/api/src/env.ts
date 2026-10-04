@@ -32,6 +32,12 @@ const envSchema = z
   PUBLIC_WEB_ORIGIN: z.string().default('http://localhost:5173'),
   DOMAIN: z.string().optional(),
   WEB_DIST: z.string().optional(),
+  // trust X-Forwarded-For for client IP (rate limits, logs): '1' behind Caddy/
+  // cloudflared/Render, '0' (default) when the API socket IS the client address.
+  TRUST_PROXY: z
+    .union([z.enum(['0', '1', 'true', 'false']), z.boolean()])
+    .default('0')
+    .transform((v) => v === true || v === '1' || v === 'true'),
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   TELEGRAM_BOT_NAME: z.string().default('klass_bot'),
   TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
