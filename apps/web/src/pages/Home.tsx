@@ -62,7 +62,7 @@ export default function Home({ me }: { me: Me }) {
 
   return (
     <div>
-      <h1 style={{ marginTop: 0 }}>{t('home.title')}</h1>
+      <h1 style={{ marginTop: 0 }} data-testid="home-title">{t('home.title')}</h1>
 
       {liveClassId && (
         <div className="card live-card" data-testid="home-live">

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Room, RoomEvent, Track } from 'livekit-client';
@@ -208,6 +208,18 @@ export default function Lesson() {
   return (
     <div>
       <h1>{t('lesson.title')}</h1>
+      {/* D.3 — quick note with lesson binding */}
+      <div className="row" style={{ marginTop: -6, marginBottom: 10 }}>
+        {isTeacher ? (
+          <Link data-testid="lesson-new-note" to={`/notes?new=1&classId=${session?.classId ?? classIdParam}&eventId=${eventId ?? session?.eventId ?? ''}`}>
+            <button className="ghost" style={{ marginTop: 0 }}>📝 {t('home.newNote')}</button>
+          </Link>
+        ) : (
+          <Link data-testid="lesson-new-note" to="/sheets?new=1">
+            <button className="ghost" style={{ marginTop: 0 }}>📝 {t('home.newNote')}</button>
+          </Link>
+        )}
+      </div>
       {!session && (
         <div className="card">
           <p className="muted">{t('cal.notStarted')}</p>

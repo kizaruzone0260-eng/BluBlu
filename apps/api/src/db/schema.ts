@@ -96,7 +96,11 @@ export const files = pgTable('files', {
 export const teacherNotes = pgTable('teacher_notes', {
   id: uuid('id').primaryKey().defaultRandom(),
   teacherId: uuid('teacher_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  // D.1: notes are not bound to a class necessarily
+  classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }),
+  // optional link to the lesson (calendar event) the note was made for
+  eventId: uuid('event_id').references(() => events.id, { onDelete: 'set null' }),
+  pinned: boolean('pinned').notNull().default(false),
   title: text('title').notNull().default(''),
   body: text('body').notNull().default(''),
   sharedPostId: uuid('shared_post_id').references(() => posts.id, { onDelete: 'set null' }),

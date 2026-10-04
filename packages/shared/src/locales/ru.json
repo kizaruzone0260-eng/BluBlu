@@ -46,6 +46,7 @@
     "className": "Название класса",
     "description": "Описание",
     "color": "Цвет",
+    "settings": "Настройки класса",
     "archive": "В архив",
     "archived": "Архив",
     "members": "Ученики",

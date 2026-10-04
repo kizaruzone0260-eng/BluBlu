@@ -46,6 +46,7 @@
     "className": "Class name",
     "description": "Description",
     "color": "Color",
+    "settings": "Class settings",
     "archive": "Archive",
     "archived": "Archived",
     "members": "Students",

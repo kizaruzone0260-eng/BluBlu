@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -11,6 +11,7 @@ interface InviteRow {
   expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
 }
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
+interface ClassView { id: string; name: string; description: string; color: string; archived: boolean }
 
 export default function ClassDetail() {
   const { id = '' } = useParams();
@@ -19,6 +20,23 @@ export default function ClassDetail() {
   const qc = useQueryClient();
   const [newCode, setNewCode] = useState<string | null>(null);
   const [ttlDays, setTtlDays] = useState(7);
+
+  const classesQ = useQuery({ queryKey: ['classes'], queryFn: () => api<ClassView[]>('/api/classes') });
+  const cls = (classesQ.data ?? []).find((c) => c.id === id) ?? null;
+  const [edit, setEdit] = useState<{ name: string; description: string; color: string } | null>(null);
+  useEffect(() => {
+    if (cls && !edit) setEdit({ name: cls.name, description: cls.description ?? '', color: cls.color });
+  }, [cls]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveClass = useMutation({
+    mutationFn: (p: { name: string; description: string; color: string }) =>
+      api(`/api/classes/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); window.alert(t('notes.saved')); },
+  });
+  const archiveClass = useMutation({
+    mutationFn: () => api(`/api/classes/${id}/archive`, { method: 'POST' }),
+    onSuccess: () => { window.location.href = '/classes'; },
+  });
 
   const invites = useQuery({
     queryKey: ['invites', id],
@@ -52,6 +70,17 @@ export default function ClassDetail() {
   return (
     <div>
       <p><Link to="/classes">← {t('classes.title')}</Link></p>
+      <div className="row" style={{ marginBottom: 8 }}>
+        {cls && <span className="dot" style={{ background: cls.color, width: 14, height: 14 }} />}
+        <h1 style={{ margin: 0 }} data-testid="class-title">{cls?.name ?? t('common.loading')}</h1>
+        <div className="spacer" />
+        {me?.role === 'teacher' && (
+          <Link data-testid="class-new-note" to={`/notes?new=1&classId=${id}`}>
+            <button className="ghost" style={{ marginTop: 0 }}>📝 {t('home.newNote')}</button>
+          </Link>
+        )}
+      </div>
+      {cls?.description && <p className="muted">{cls.description}</p>}
       {me?.role === 'teacher' && (
         <p><a href={`/lesson?classId=${id}`}><button style={{ marginTop: 0 }} className="secondary">{t('lesson.title')}</button></a></p>
       )}
@@ -131,6 +160,29 @@ export default function ClassDetail() {
             <h2>{t('tg.group')}</h2>
             <TelegramClassSettings classId={id} />
           </div>
+          {/* C.2 — class settings: rename / description / color / archive */}
+          {cls && edit && (
+            <div className="card" data-testid="class-settings">
+              <h2>{t('classes.settings')}</h2>
+              <label>{t('classes.className')}</label>
+              <input data-testid="cls-name" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+              <label>{t('classes.description')}</label>
+              <textarea data-testid="cls-desc" rows={2} value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
+              <div className="row" style={{ marginTop: 8 }}>
+                <label style={{ margin: 0 }}>{t('classes.color')}</label>
+                <input type="color" value={edit.color} onChange={(e) => setEdit({ ...edit, color: e.target.value })} />
+              </div>
+              <div className="row" style={{ marginTop: 10 }}>
+                <button data-testid="cls-save" style={{ marginTop: 0 }} disabled={saveClass.isPending || !edit.name.trim()}
+                  onClick={() => saveClass.mutate(edit)}>{t('common.save')}</button>
+                <div className="spacer" />
+                <button className="danger" style={{ marginTop: 0 }} data-testid="cls-archive" disabled={archiveClass.isPending}
+                  onClick={() => { if (window.confirm(`${t('classes.archive')}: ${cls.name}?`)) archiveClass.mutate(); }}>
+                  {t('classes.archive')}
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

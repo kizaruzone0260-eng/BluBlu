@@ -27,6 +27,7 @@ interface EventForm {
   repeatWeekdays: number[]; // ISO 1..7
   repeatUntil: string; // YYYY-MM-DD or ''
   occurrenceStart?: string; // for scope edits
+  scopeOverride?: 'this' | 'following' | 'all'; // drag & drop chooses its own scope
 }
 
 function toLocalInput(isoUtc: string, tz: string): string {
@@ -66,11 +67,12 @@ export default function Calendar() {
         repeat: f.repeatWeekdays.length ? { weekdays: f.repeatWeekdays, until: f.repeatUntil || undefined } : null,
       };
       if (f.id) {
+        const scope = f.scopeOverride ?? (f.occurrenceStart ? scopeChoice : 'all');
         return api(`/api/events/${f.id}`, {
           method: 'PATCH',
           body: JSON.stringify({
-            scope: f.occurrenceStart ? scopeChoice : 'all',
-            occurrenceStart: scopeChoice === 'all' ? undefined : f.occurrenceStart,
+            scope,
+            occurrenceStart: scope === 'all' ? undefined : f.occurrenceStart,
             changes: payload,
           }),
         });
@@ -245,6 +247,32 @@ export default function Calendar() {
             }
           }}
           datesSet={onDatesSet}
+          editable={me?.role === 'teacher'}
+          eventDrop={(info) => {
+            // C.2 — drag to reschedule (teacher). Recurring series → move only this occurrence.
+            const o = openOcc(info.event.id);
+            if (!o || !info.event.start) return;
+            const durationMin = Math.round((+new Date(o.endsAt) - +new Date(o.startsAt)) / 60000);
+            save.mutate({
+              id: o.eventId, kind: o.kind, title: o.title, description: o.description,
+              startLocal: toLocalInput(info.event.start.toISOString(), o.tz), durationMin,
+              tz: o.tz, repeatWeekdays: [], repeatUntil: '',
+              occurrenceStart: o.recurring ? info.oldEvent.start?.toISOString() : undefined,
+              scopeOverride: o.recurring ? 'this' : 'all',
+            });
+            info.revert();
+          }}
+          eventResize={(info) => {
+            const o = openOcc(info.event.id);
+            if (!o || !info.event.start || !info.event.end || o.recurring) return;
+            save.mutate({
+              id: o.eventId, kind: o.kind, title: o.title, description: o.description,
+              startLocal: toLocalInput(info.event.start.toISOString(), o.tz),
+              durationMin: Math.round((+info.event.end - +info.event.start) / 60000),
+              tz: o.tz, repeatWeekdays: [], repeatUntil: '',
+            });
+            info.revert();
+          }}
         />
       </div>
 

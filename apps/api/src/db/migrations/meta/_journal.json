@@ -57,6 +57,13 @@
       "when": 1791088640209,
       "tag": "0007_silky_pestilence",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791089590732,
+      "tag": "0008_crazy_tempest",
+      "breakpoints": true
     }
   ]
 }

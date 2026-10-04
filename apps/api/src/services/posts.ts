@@ -130,15 +130,17 @@ export async function listNotes(db: DB, teacherId: string, classId?: string) {
     .where(classId
       ? and(eq(teacherNotes.teacherId, teacherId), eq(teacherNotes.classId, classId))
       : eq(teacherNotes.teacherId, teacherId))
-    .orderBy(desc(teacherNotes.updatedAt));
+    .orderBy(desc(teacherNotes.pinned), desc(teacherNotes.updatedAt));
 }
 
-export async function createNote(db: DB, teacherId: string, classId: string, title: string, body: string) {
-  const [n] = await db.insert(teacherNotes).values({ teacherId, classId, title, body }).returning();
+export async function createNote(db: DB, teacherId: string, classId: string | null, title: string, body: string, eventId?: string | null) {
+  const [n] = await db.insert(teacherNotes).values({ teacherId, classId, title, body, eventId: eventId ?? null }).returning();
   return n!;
 }
 
-export async function updateNote(db: DB, teacherId: string, id: string, patch: Partial<{ title: string; body: string }>) {
+export async function updateNote(db: DB, teacherId: string, id: string, patch: Partial<{
+  title: string; body: string; pinned: boolean; classId: string | null; eventId: string | null;
+}>) {
   const [n] = await db.update(teacherNotes)
     .set({ ...patch, updatedAt: new Date() })
     .where(and(eq(teacherNotes.id, id), eq(teacherNotes.teacherId, teacherId)))
@@ -164,6 +166,7 @@ export async function getNote(db: DB, teacherId: string, id: string) {
 export async function publishNote(db: DB, teacherId: string, id: string) {
   const note = await getNote(db, teacherId, id);
   if (!note) return null;
+  if (!note.classId) return 'no-class' as const;
   if (note.sharedPostId) {
     await updatePost(db, note.sharedPostId, { title: note.title, body: note.body });
     return note.sharedPostId;

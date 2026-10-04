@@ -16,7 +16,8 @@ test.describe.serial('klass core flows', () => {
     await page.getByTestId('email').fill(stack.teacherEmail);
     await page.getByTestId('password').fill(stack.teacherPassword);
     await page.getByTestId('login-submit').click();
-    await expect(page).toHaveURL(/\/classes/);
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId('home-title')).toBeVisible();
 
     await page.getByTestId('new-class-name').fill('E2E Математика 7А');
     await page.getByTestId('create-class').click();
