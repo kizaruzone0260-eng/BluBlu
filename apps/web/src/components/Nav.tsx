@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, type Me } from '../lib/api';
+import { APP_NAME } from '../lib/brand';
 import { getThemeChoice, setTheme, type ThemeChoice } from '../lib/theme';
 
 /** Minimal inline icon set (stroke-based, inherits currentColor). */
@@ -119,8 +120,8 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
       {me && !loggedOut && (
         <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
           <Link to="/" className="side-brand">
-            <span className="side-logo">K</span>
-            <span className="lbl">{t('app.name')}</span>
+            <span className="side-logo">B</span>
+            <span className="lbl">{APP_NAME}</span>
           </Link>
           <nav className="side-nav">
             {items.map((it) => (
@@ -167,8 +168,8 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
       {/* <768px — compact app bar + bottom tabs */}
       <header className="appbar">
         <Link to="/" className="side-brand" style={{ padding: 0 }}>
-          <span className="side-logo" style={{ width: 28, height: 28, flex: '0 0 28px', fontSize: '.95rem' }}>K</span>
-          <span>{t('app.name')}</span>
+          <span className="side-logo" style={{ width: 28, height: 28, flex: '0 0 28px', fontSize: '.95rem' }}>B</span>
+          <span>{APP_NAME}</span>
         </Link>
         <div className="spacer" />
         <LangDropdown me={me} />

@@ -19,5 +19,13 @@ export const MAX_CLASS_PARTICIPANTS_V1 = 25;
 export const DEFAULT_TIMEZONE = 'Asia/Tashkent';
 export const SUPPORTED_LOCALES = ['ru', 'uz', 'en'] as const;
 
+/**
+ * Product name shown to users. NOT translated (BluBlu in all three languages)
+ * and NOT to be confused with internal identifiers (pnpm @klass/* packages,
+ * the `klass` database, container/volume names, env vars, localStorage keys,
+ * ICS event UIDs) which intentionally stay as they are.
+ */
+export const APP_NAME = 'BluBlu';
+
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export type UserRole = 'teacher' | 'student';

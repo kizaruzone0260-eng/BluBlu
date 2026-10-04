@@ -6,6 +6,7 @@ import { createEvent, listEventsInRange, editEvent, deleteEventOccurrence, rotat
 import { events } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { enqueueNotification } from '../services/notify.js';
+import { APP_NAME } from '@klass/shared';
 import { classTitle } from '../services/notifyQueue.js';
 
 const eventInputSchema = z.object({
@@ -120,6 +121,6 @@ export async function eventRoutes(app: FastifyInstance, opts: { db: DB }) {
     const all = [...asTeacher, ...asStudent].filter((o) => !seen.has(o.uid) && !!seen.add(o.uid));
     reply.header('content-type', 'text/calendar; charset=utf-8');
     reply.header('content-disposition', 'inline; filename="klass.ics"');
-    return buildIcs(all, 'Klass');
+    return buildIcs(all, APP_NAME);
   });
 }

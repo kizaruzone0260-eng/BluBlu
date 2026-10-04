@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
+import { APP_NAME } from './lib/brand';
 import { Nav, LangDropdown, ThemeToggle } from './components/Nav';
 import Home, { useLiveClass } from './pages/Home';
 import Login from './pages/Login';
@@ -101,8 +102,8 @@ function AuthHeader() {
   return (
     <div className="topbar">
       <a href="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text)' }}>
-        <span className="side-logo">K</span>
-        <strong>{t('app.name')}</strong>
+        <span className="side-logo">B</span>
+        <strong>{APP_NAME}</strong>
       </a>
       <span className="muted">{t('app.tagline')}</span>
       <div className="spacer" />

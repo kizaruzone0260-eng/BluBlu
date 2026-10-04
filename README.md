@@ -1,4 +1,4 @@
-# Klass — платформа онлайн-уроков (self-hosted)
+# BluBlu — платформа онлайн-уроков (self-hosted)
 
 Аналог Google Classroom со встроенными видеоуроками (свой LiveKit SFU), доской
 учителя (Excalidraw), личными листками учеников и Telegram-уведомлениями.

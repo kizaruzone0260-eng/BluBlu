@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Klass design system — tokens, themes, primitives.
+   BluBlu design system — tokens, themes, primitives.
    Single source of truth: colors/radii/shadows/typography live here only.
    Accent: deep teal (one accent, used consistently). Light by default,
    dark via html[data-theme="dark"] (JS resolves saved choice vs system).

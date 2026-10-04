@@ -1,5 +1,5 @@
 /**
- * Klass demo launcher (docs/DEMO.md) — one command, no Docker, no Caddy:
+ * BluBlu demo launcher (docs/DEMO.md) — one command, no Docker, no Caddy:
  *
  *   pnpm demo            (from repo root; or: pnpm --filter @klass/api demo)
  *
@@ -229,7 +229,7 @@ const demo = JSON.parse(seed.slice(seed.indexOf('{'), seed.lastIndexOf('}') + 1)
 const line = '─'.repeat(64);
 console.log(`
 ╭${line}╮
-│  KLASS DEMO ONLINE${' '.repeat(45)}│
+│  BLUBLU DEMO ONLINE${' '.repeat(45)}│
 │  Адрес: ${publicUrl.padEnd(55)}│
 ╰${line}╯
 

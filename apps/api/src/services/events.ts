@@ -251,7 +251,7 @@ const icsUtc = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 
 export function buildIcs(occurrences: Occurrence[], prodId: string): string {
   const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Klass//EN',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', `PRODID:-//${prodId}//EN`,
     'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', `X-WR-CALNAME:${icsEsc(prodId)}`,
   ];
   for (const o of occurrences) {

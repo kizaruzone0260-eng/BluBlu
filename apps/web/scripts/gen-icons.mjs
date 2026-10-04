@@ -1,7 +1,23 @@
 import { deflateSync } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
 
-/** Tiny lossless PNG writer: solid indigo square with a lighter inset block (placeholder icon). */
+/**
+ * Tiny lossless PNG writer: teal (brand accent) square with a white letter B
+ * (5×8 bitmap scaled to the middle 60% of the icon). Placeholder until a
+ * designer logo arrives.
+ */
+const BG = [15, 118, 110];   // #0f766e
+const FG = [255, 255, 255];
+const GLYPH = [
+  '11110',
+  '10001',
+  '10001',
+  '11110',
+  '10001',
+  '10001',
+  '10001',
+  '11110',
+];
 function crc32(buf) {
   let c, table = [];
   for (let n = 0; n < 256; n++) { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0; }
@@ -16,13 +32,20 @@ function chunk(type, data) {
   return Buffer.concat([len, body, c]);
 }
 function png(size) {
+  const box = Math.floor(size * 0.6);
+  const cell = box / 5;
+  const offX = Math.floor((size - box) / 2);
+  const offY = Math.floor((size - cell * 8) / 2);
   const rows = [];
   for (let y = 0; y < size; y++) {
     const row = Buffer.alloc(1 + size * 3);
     for (let x = 0; x < size; x++) {
-      const inset = x > size * 0.25 && x < size * 0.75 && y > size * 0.25 && y < size * 0.75;
-      const [r, g, b] = inset ? [125, 118, 240] : [79, 70, 229];
-      row[1 + x * 3] = r; row[2 + x * 3] = g; row[3 + x * 3] = b;
+      let px = FG;
+      const gx = Math.floor((x - offX) / cell);
+      const gy = Math.floor((y - offY) / cell);
+      const inGlyph = x >= offX && y >= offY && gx >= 0 && gx < 5 && gy >= 0 && gy < 8;
+      if (!inGlyph || GLYPH[gy]?.[gx] !== '1') px = BG;
+      row[1 + x * 3] = px[0]; row[2 + x * 3] = px[1]; row[3 + x * 3] = px[2];
     }
     rows.push(row);
   }
@@ -38,4 +61,4 @@ function png(size) {
 }
 writeFileSync('public/icon-192.png', png(192));
 writeFileSync('public/icon-512.png', png(512));
-console.log('icons written');
+console.log('icons written (BluBlu B, teal)');

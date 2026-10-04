@@ -18,14 +18,14 @@ export interface BotDeps {
 
 const T = {
   usage: {
-    ru: 'Пришлите ссылку привязки из профиля Klass или /stop.',
+    ru: 'Пришлите ссылку привязки из профиля BluBlu или /stop.',
     uz: 'Proildagi bog‘lanish havolasini yuboring yoki /stop.',
-    en: 'Send the link URL from your Klass profile, or /stop.',
+    en: 'Send the link URL from your BluBlu profile, or /stop.',
   },
   linked: {
-    ru: 'Готово: Telegram привязан к аккаунту Klass.',
-    uz: 'Tayyor: Telegram Klass hisobiga bog‘landi.',
-    en: 'Done: Telegram is linked to your Klass account.',
+    ru: 'Готово: Telegram привязан к аккаунту BluBlu.',
+    uz: 'Tayyor: Telegram BluBlu hisobiga bog‘landi.',
+    en: 'Done: Telegram is linked to your BluBlu account.',
   },
   badLink: {
     ru: 'Ссылка недействительна или устарела. Создайте новую в профиле.',
@@ -48,9 +48,9 @@ const T = {
     en: 'Only a group administrator can run /link.',
   },
   needPersonal: {
-    ru: 'Сначала привяжите личный Telegram в профиле Klass (команда /start из личной ссылки).',
+    ru: 'Сначала привяжите личный Telegram в профиле BluBlu (команда /start из личной ссылки).',
     uz: 'Avval proilda shaxsiy Telegramni boglang (/start shaxsiy havola orqali).',
-    en: 'First link your personal Telegram in the Klass profile (/start via your personal link).',
+    en: 'First link your personal Telegram in the BluBlu profile (/start via your personal link).',
   },
   badCode: {
     ru: 'Код привязки не найден или истёк. Создайте новый в интерфейсе класса.',

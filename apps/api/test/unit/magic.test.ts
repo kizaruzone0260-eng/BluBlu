@@ -32,7 +32,7 @@ describe('magic bytes (§3.3)', () => {
   });
 
   it('accepts printable text .txt, rejects NUL-containing', () => {
-    expect(detectFileType(Buffer.from('Privet, Klass!'), 'notes.txt').group).toBe('text');
+    expect(detectFileType(Buffer.from('Privet, BluBlu!'), 'notes.txt').group).toBe('text');
     expect(detectFileType(Buffer.from('ab\0cd'), 'bad.txt').group).toBe('unknown');
   });
 

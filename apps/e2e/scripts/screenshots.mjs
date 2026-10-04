@@ -98,7 +98,7 @@ if (!showcase) {
 
 // ── capture ──────────────────────────────────────────────────────────────────
 const browser = await chromium.launch({ channel: 'msedge' });
-const widths = [390, 768, 1280];
+const widths = process.env.SHOT_WIDTHS ? process.env.SHOT_WIDTHS.split(',').map(Number) : [390, 768, 1280];
 const themes = ['light', 'dark'];
 const allLocales = ['ru', 'uz', 'en'];
 const locales = process.env.SHOT_LOCALE ? [process.env.SHOT_LOCALE] : allLocales;

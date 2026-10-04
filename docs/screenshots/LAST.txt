@@ -1,1 +1,1 @@
-class-en-1280-dark.png
+home-en-1280-dark.png
