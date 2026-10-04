@@ -95,12 +95,31 @@ export type RefreshResult =
   | { ok: true; userId: string; newRefresh: SessionPair }
   | { ok: false; reason: 'invalid' | 'expired' | 'reused' };
 
-/** Rotation: old token is marked replaced; presenting a replaced token kills the whole family. */
+/**
+ * Rotation: old token is marked replaced; presenting a replaced token kills the
+ * whole family — UNLESS within REFRESH_REUSE_GRACE_MS of the rotation AND the
+ * family still has its active successor untouched. That grace covers the benign
+ * case: the browser aborted the rotation response (instant reload) and replays
+ * the stale token; a real thief replay gets a fresh session ≤5 s old, while any
+ * later replay still triggers the family kill.
+ */
 export async function rotateRefresh(db: DB, token: string): Promise<RefreshResult> {
   const hash = hashRefreshToken(token);
   const [row] = await db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, hash)).limit(1);
   if (!row) return { ok: false, reason: 'invalid' };
   if (row.replacedAt) {
+    const withinGrace = Date.now() - row.replacedAt.getTime() <= env.REFRESH_REUSE_GRACE_MS;
+    if (withinGrace) {
+      const [successor] = await db.select({ id: refreshTokens.id }).from(refreshTokens)
+        .where(and(eq(refreshTokens.familyId, row.familyId), isNull(refreshTokens.replacedAt)))
+        .limit(1);
+      if (successor) {
+        await db.update(refreshTokens).set({ replacedAt: new Date() })
+          .where(and(eq(refreshTokens.id, successor.id), isNull(refreshTokens.replacedAt)));
+        const fresh = await issueRefreshSession(db, row.userId, row.familyId);
+        return { ok: true, userId: row.userId, newRefresh: fresh };
+      }
+    }
     await db.delete(refreshTokens).where(eq(refreshTokens.familyId, row.familyId));
     return { ok: false, reason: 'reused' };
   }

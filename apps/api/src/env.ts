@@ -13,6 +13,10 @@ const envSchema = z
     JWT_SECRET: z.string().min(32).default(DEV_SECRET),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TTL_DAYS: z.coerce.number().default(30),
+  // Grace for replaying an ALREADY-ROTATED refresh token: browsers that abort a
+  // rotation response (instant reload mid-boot) would otherwise trip the
+  // reuse-theft kill. 0 restores strict §4 behaviour (used by the theft test).
+  REFRESH_REUSE_GRACE_MS: z.coerce.number().min(0).max(30_000).default(5000),
   ARGON2_MEMORY_COST: z.coerce.number().default(19456),
   ARGON2_TIME_COST: z.coerce.number().default(2),
   ARGON2_PARALLELISM: z.coerce.number().default(1),

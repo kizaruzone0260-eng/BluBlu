@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util';
 import { buildApp } from '../../src/app';
+import { env } from '../../src/env';
 import type { FastifyInstance } from 'fastify';
 
 /**
@@ -139,6 +140,8 @@ suite('stage 1: accounts, classes, codes, members', () => {
 
   it('refresh rotation: old token reuse kills the family', async () => {
     const app = await freshApp();
+    const prevGrace = env.REFRESH_REUSE_GRACE_MS;
+    env.REFRESH_REUSE_GRACE_MS = 0; // strict §4 behaviour (no lost-response grace)
     const teacher = await makeTeacher(t.sql, `t4${Date.now()}@x.io`);
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
     const cookie1 = (login.headers['set-cookie'] as string).split(';')[0]!;
@@ -152,6 +155,31 @@ suite('stage 1: accounts, classes, codes, members', () => {
     expect(reuse.statusCode).toBe(401);
     const after = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: cookie2 } });
     expect(after.statusCode).toBe(401);
+    env.REFRESH_REUSE_GRACE_MS = prevGrace;
+    await app.close();
+  });
+
+  it('lost rotation response (instant reload): stale replay inside the grace heals the session', async () => {
+    const app = await freshApp();
+    const prevGrace = env.REFRESH_REUSE_GRACE_MS;
+    env.REFRESH_REUSE_GRACE_MS = 5000;
+    const teacher = await makeTeacher(t.sql, `t5${Date.now()}@x.io`);
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
+    const cookie1 = (login.headers['set-cookie'] as string).split(';')[0]!;
+    // rotation happens but the client "never sees" the response (aborted reload)
+    await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: cookie1 } });
+    // client boots again and replays the stale cookie → grace: fresh session issued
+    const heal = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: cookie1 } });
+    expect(heal.statusCode).toBe(200);
+    const cookie3 = (heal.headers['set-cookie'] as string).split(';')[0]!;
+    // once the grace window is over (simulated by tightening it), a late replay
+    // of the stale token is treated as theft: family killed, good cookie dies too
+    env.REFRESH_REUSE_GRACE_MS = 0;
+    const late = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: cookie1 } });
+    expect(late.statusCode).toBe(401);
+    const dead = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: cookie3 } });
+    expect(dead.statusCode).toBe(401);
+    env.REFRESH_REUSE_GRACE_MS = prevGrace;
     await app.close();
   });
 });
