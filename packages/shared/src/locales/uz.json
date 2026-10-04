@@ -147,7 +147,11 @@
     "notStarted": "Dars hali boshlanmadi",
     "ical": "Taqvim obunasi (ICS)",
     "icalGet": "Shaxsiy havolani olish",
-    "icalHint": "Havolani Google/Apple Calendar'da oching — tadbirlar avtomatik sinxronlanadi. Havola maxfiy, e'lon qilmang."
+    "icalHint": "Havolani Google/Apple Calendar'da oching — tadbirlar avtomatik sinxronlanadi. Havola maxfiy, e'lon qilmang.",
+    "icsAdd": "Mening kalendaryimga qo‘shish",
+    "icsExplain": "Obuna havolasi: Google/Apple kalendari darslarni avtomatik yangilaydi.",
+    "icsCopied": "Havola nusxalandi",
+    "icsHint": "Maxfiy havola — bilanmang."
   },
   "lesson": {
     "title": "Video-dars",

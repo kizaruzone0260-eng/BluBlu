@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
+import { api, fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
 import { APP_NAME } from './lib/brand';
 import { Nav, LangDropdown, ThemeToggle } from './components/Nav';
 import Home, { useLiveClass } from './pages/Home';
@@ -30,6 +30,23 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [booted, setBooted] = useState(false);
   const { i18n } = useTranslation();
+
+  // item 4 — the timezone is captured from the device (no profile field for it):
+  // on login/restore, on profile load and on window focus (user moved cities).
+  useEffect(() => {
+    if (!me) return;
+    const syncTz = () => {
+      const dev = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (!dev || dev === me.tz) return;
+      void api('/api/me/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: me.name, locale: me.locale, tz: dev }),
+      }).then(() => refresh()).catch(() => undefined);
+    };
+    syncTz();
+    window.addEventListener('focus', syncTz);
+    return () => window.removeEventListener('focus', syncTz);
+  }, [me?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function refresh() {
     const u = await fetchMe();

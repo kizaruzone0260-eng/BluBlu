@@ -147,7 +147,11 @@
     "notStarted": "The lesson hasn't started yet",
     "ical": "Calendar subscription (ICS)",
     "icalGet": "Get personal link",
-    "icalHint": "Open the link in Google/Apple Calendar — events sync automatically. The link is secret, don't publish it."
+    "icalHint": "Open the link in Google/Apple Calendar — events sync automatically. The link is secret, don't publish it.",
+    "icsAdd": "Add to my calendar",
+    "icsExplain": "Subscription link: Google/Apple Calendar refreshes lessons automatically.",
+    "icsCopied": "Link copied",
+    "icsHint": "Secret link — do not share it."
   },
   "lesson": {
     "title": "Video lesson",

@@ -8,10 +8,8 @@ export default function Profile() {
   const { me, refresh } = useAuth();
   const [name, setName] = useState(me?.name ?? '');
   const [locale, setLocale] = useState<'ru' | 'uz' | 'en'>(me?.locale ?? 'ru');
-  const [tz, setTz] = useState(me?.tz ?? 'Asia/Tashkent');
   const [saved, setSaved] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [icsUrl, setIcsUrl] = useState('');
   const [tg, setTg] = useState<{ linked: boolean; blocked: boolean } | null>(null);
   const [tgUrl, setTgUrl] = useState('');
 
@@ -32,16 +30,13 @@ export default function Profile() {
     setTg({ linked: false, blocked: false });
   }
 
-  async function getIcs() {
-    const { token } = await api<{ token: string }>('/api/me/ical-token', { method: 'POST' });
-    setIcsUrl(`${window.location.origin}/api/ical/${token}`);
-  }
-
   if (!me) return null;
 
   async function save() {
     setSaved(false);
-    await api('/api/me/profile', { method: 'PATCH', body: JSON.stringify({ name, locale, tz }) });
+    // item 4: no manual timezone — App syncs it from the device automatically
+    const dev = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tashkent';
+    await api('/api/me/profile', { method: 'PATCH', body: JSON.stringify({ name, locale, tz: dev }) });
     await i18n.changeLanguage(locale);
     refresh();
     setSaved(true);
@@ -67,8 +62,7 @@ export default function Profile() {
         <option value="uz">Oʻzbekcha</option>
         <option value="en">English</option>
       </select>
-      <label>{t('common.timezone')}</label>
-      <input value={tz} onChange={(e) => setTz(e.target.value)} placeholder="Asia/Tashkent" />
+      {/* item 4: timezone is detected automatically (Intl) — no manual field */}
       <button onClick={save}>{t('common.save')}</button>
       {saved && <span className="ok"> ✓</span>}
       <hr />
@@ -86,15 +80,7 @@ export default function Profile() {
           {tgUrl && <p className="muted" style={{ wordBreak: 'break-all' }}>{tgUrl}</p>}
         </>
       )}
-      <hr />
-      <h2>{t('cal.ical')}</h2>
-      <button className="secondary" onClick={getIcs}>{t('cal.icalGet')}</button>
-      {icsUrl && (
-        <>
-          <input readOnly value={icsUrl} onFocus={(e) => e.target.select()} style={{ marginTop: 8, fontFamily: 'ui-monospace, monospace', fontSize: '.8rem' }} />
-          <p className="muted">{t('cal.icalHint')}</p>
-        </>
-      )}
+      {/* item 4: ICS subscription moved to the Calendar page (the link stays secret) */}
       <hr />
       <button className="danger" onClick={deleteAccount} disabled={deleting}>
         {t('common.deleteAccount')}

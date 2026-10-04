@@ -52,6 +52,21 @@ export default function Calendar() {
   const [classFilter, setClassFilter] = useState('');
   const [form, setForm] = useState<EventForm | null>(null);
   const [scopeChoice, setScopeChoice] = useState<'this' | 'following' | 'all'>('all');
+  // item 4: calendar subscription lives here (was in Profile). The link stays
+  // secret — revealed only on demand, never rendered in lists.
+  const [icsUrl, setIcsUrl] = useState('');
+  const [icsCopied, setIcsCopied] = useState(false);
+
+  async function getIcs() {
+    const { token } = await api<{ token: string }>('/api/me/ical-token', { method: 'POST' });
+    const url = `${window.location.origin}/api/ical/${token}`;
+    setIcsUrl(url);
+    setIcsCopied(false);
+    try {
+      await navigator.clipboard.writeText(url);
+      setIcsCopied(true);
+    } catch { /* no clipboard permission — field is selectable manually */ }
+  }
 
   const classes = useQuery({ queryKey: ['classes'], queryFn: () => api<{ id: string; name: string }[]>('/api/classes') });
   const events = useQuery({
@@ -162,6 +177,21 @@ export default function Calendar() {
             kind: 'lesson', title: '', description: '', startLocal: '', durationMin: 50,
             tz: me.tz, repeatWeekdays: [], repeatUntil: '',
           })}>{t('cal.newEvent')}</button>
+        )}
+      </div>
+
+      {/* item 4 — «Добавить в мой календарь» with a short explanation, 3 languages */}
+      <div className="row card" style={{ alignItems: 'center' }}>
+        <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-add" onClick={() => void getIcs()} disabled={!me}>
+          📅 {t('cal.icsAdd')}
+        </button>
+        <span className="muted" style={{ fontSize: 13 }}>{t('cal.icsExplain')}</span>
+        {icsUrl && (
+          <div className="row" style={{ width: '100%', alignItems: 'center' }}>
+            <input readOnly value={icsUrl} onFocus={(e) => e.target.select()} data-testid="ics-url"
+              style={{ flex: 1, minWidth: 200, fontFamily: 'ui-monospace, monospace', fontSize: '.8rem', margin: 0 }} />
+            <span className={icsCopied ? 'ok' : 'muted'} style={{ fontSize: 13 }}>{icsCopied ? t('cal.icsCopied') : t('cal.icsHint')}</span>
+          </div>
         )}
       </div>
 
