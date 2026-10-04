@@ -32,8 +32,9 @@ Render web service (free) + Supabase Free (Postgres) + LiveKit Cloud Build
    с DATABASE_URL из cloud.env, либо просто первый деплой — приложение
    применяет миграции при старте само.
 3. **Render.** Запушить ветку в приватный GitHub-репозиторий → New → Blueprint →
-   выбрать репозиторий → render.yaml подхватится. Заменить `repo:`/`region:`
-   в render.yaml на свои. В dashboard вписать значения для `sync: false`
+   выбрать репозиторий → render.yaml подхватится (`repo:`/`region:` уже указаны;
+   `autoDeploy: false` — пуши не перезапускают сервис, деплой вручную через
+   Manual Deploy). В dashboard вписать значения для `sync: false`
    переменных из cloud.env (никогда не коммитить!).
 4. После первого деплоя: скопировать `https://<name>.onrender.com` в
    `PUBLIC_URL` (ссылки уведомлений, CORS/CSRF, webhook Telegram) →

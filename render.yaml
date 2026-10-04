@@ -7,13 +7,13 @@ services:
     name: blublu-api
     runtime: docker
     plan: free
-    region: singapore # choose the region closest to your Supabase project
-    repo: https://github.com/OWNER/REPO  # ← replace before first sync
+    region: frankfurt # choose the region closest to your Supabase project
+    repo: https://github.com/kizaruzone0260-eng/BluBlu
     branch: overnight
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /api/health
-    autoDeploy: true
+    autoDeploy: false # pushes must NOT restart the service mid-lesson; deploys are manual
     envVars:
       - key: NODE_ENV
         value: production
