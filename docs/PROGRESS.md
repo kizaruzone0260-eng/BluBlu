@@ -240,3 +240,27 @@ CJK-скан исходников          — чисто (иероглифы т
 
 Не проверено (см. BLOCKERS): docker compose up на этой машине, живой RTC/TURN/нагрузка,
 живой Bot API, ICS в чужих календарях, Virgil-шрифт для oʻ/gʻ.
+
+## 2026-10-04, демо-режим (LIVEKIT_URL + Tunnel + polling)
+
+```
+pnpm -r typecheck             — 0 ошибок
+vitest (with-postgres)        — Test Files 15 passed; Tests 90 passed (90)
+pnpm -r build                 — ✓ (web 2m45s)
+playwright e2e                — 4 passed
+pnpm demo -- --no-tunnel      — баннер с адресом, сид свежий
+node apps/api/scripts/demo-check.mjs --base http://127.0.0.1:3000
+                              — 14/14 PASS: HTTP/логин/старт урока/join (wsUrl==LIVEKIT_URL
+                              из .env, roomAdmin у учителя, camera+mic у ученика),
+                              WS урока и WS доски, одноразовость билетов (4401), end-lesson
+siteUrl() c PUBLIC_URL        — https://demo-abc.trycloudflare.com (проверено tsx-one-liner)
+git hygiene                   — .env в .gitignore; git log --all: .env не коммитился,
+                              ключевых строк в истории нет (0 hits)
+```
+
+Найдено и починено по ходу: embedded-postgres на Windows инициализирует кластер в
+WIN1251 → эмодзи в ленте падали с ошибкой 22P05; демо-лончер теперь сам зовёт
+нативный initdb с `-E UTF8 --locale=C`.
+
+Не проверено: живой туннель cloudflared (бинарник недоступен на машине и его загрузка
+заблокирована авто-режимом — B-5) и фактический видеозвонок (проверяется вручную).

@@ -34,3 +34,13 @@
 - Не покрыто объективно (нужны сервер/токены/браузеры): compose-поднятие, TURN,
   живой Bot API, ICS в Google/Apple, шрифты Excalidraw oʻ/gʻ, ручная матрица
   устройств, lk load-test.
+
+## B-5. cloudflared отсутствует, загрузка внешнего бинарника заблокирована
+- Пробовал: `curl` официальный релиз cloudflared-windows-amd64.exe из GitHub —
+  авто-режим заблокировал скачивание/исполнение внешнего бинарника (классификатор).
+- Обход: demo-лончер определяет `cloudflared` в PATH; без него печатает инструкцию
+  и умеет `pnpm demo -- --no-tunnel` (всё локально, включая WS-проверки — 14/14 PASS).
+- Что делает заказчик (2 минуты): `winget install --id Cloudflare.cloudflared -e`
+  (или скачать cloudflared.exe и в PATH) → затем `pnpm demo` выдаст живой
+  https://….trycloudflare.com и проверка `pnpm demo:check -- --base <адрес>`
+  подтвердит WS через туннель.
