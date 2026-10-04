@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -40,7 +41,7 @@ function toLocalInput(isoUtc: string, tz: string): string {
 }
 
 export default function Calendar() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const qc = useQueryClient();
   const [range, setRange] = useState<{ from: string; to: string }>({
@@ -101,6 +102,49 @@ export default function Calendar() {
     if (!o) return null;
     return o;
   };
+
+  const fcLocale = useMemo(() => {
+    // B.3 — FullCalendar has no uz bundle; build the locale object from Intl
+    // (Edge/V8 full-ICU ships ru/uz/en) + i18n strings for buttons.
+    const lng = i18n.language === 'uz' ? 'uz-UZ' : i18n.language === 'en' ? 'en-GB' : 'ru-RU';
+    const days = (o: Intl.DateTimeFormatOptions, n: number, base: number) =>
+      Array.from({ length: n }, (_, i) => new Date(2024, 0, 1 + i + base).toLocaleDateString(lng, o));
+    return {
+      code: i18n.language,
+      week: { dow: 1, doy: 4 }, // Monday week start (B.3)
+      dayNamesLong: days({ weekday: 'long' }, 7, 0),
+      dayNamesShort: days({ weekday: 'short' }, 7, 0),
+      dayNamesMin: days({ weekday: 'short' }, 7, 0).map((s) => s.slice(0, 2)),
+      monthNamesLong: Array.from({ length: 12 }, (_, i) => new Date(2024, i, 15).toLocaleDateString(lng, { month: 'long' })),
+      monthNamesShort: Array.from({ length: 12 }, (_, i) => new Date(2024, i, 15).toLocaleDateString(lng, { month: 'short' })),
+      buttonText: {
+        today: t('fc.today'), month: t('fc.month'), week: t('fc.week'), list: t('fc.list'), prev: t('fc.prev'), next: t('fc.next'),
+      },
+      weekLabel: t('fc.week'),
+      allDayText: t('fc.allDay'),
+      noEventsText: t('fc.noEvents'),
+      moreLinkText: (n: number) => `+${n}`,
+      // 24-hour clock everywhere (B.3)
+      slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      slotLabelTextFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      slotColumnLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      dayHeaderFormat: { weekday: 'short' },
+      listDayFormat: { year: 'numeric', month: 'long', day: 'numeric' },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }, [i18n.language, t]);
+
+  // A2 — quick action «Добавить событие» lands on /calendar?new=1
+  const [sp] = useSearchParams();
+  useEffect(() => {
+    if (me?.role === 'teacher' && sp.get('new') === '1') {
+      setForm({
+        kind: 'lesson', title: '', description: '', startLocal: '', durationMin: 50,
+        tz: me.tz, repeatWeekdays: [], repeatUntil: '',
+      });
+    }
+  }, [sp, me]);
 
   return (
     <div>
@@ -168,6 +212,7 @@ export default function Calendar() {
       <div className="card">
         <FullCalendar
           plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+          locale={fcLocale}
           initialView="dayGridMonth"
           headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }}
           views={{ listWeek: { listDayFormat: { year: 'numeric', month: 'long', day: 'numeric' } } }}
@@ -213,7 +258,7 @@ export default function Calendar() {
               </button>
             ))}
             <div className="spacer" />
-            <button className="danger" onClick={() => del.mutate({ id: form.id!, scope: scopeChoice, occurrenceStart: scopeChoice === 'all' ? undefined : form.occurrenceStart })}>
+            <button className="danger" onClick={() => { if (window.confirm(t('cal.deleteConfirm'))) del.mutate({ id: form.id!, scope: scopeChoice, occurrenceStart: scopeChoice === 'all' ? undefined : form.occurrenceStart }); }}>
               {t('cal.delete')}
             </button>
           </div>

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."app_locale" ADD VALUE 'en';

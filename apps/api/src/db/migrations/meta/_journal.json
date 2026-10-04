@@ -50,6 +50,13 @@
       "when": 1790998101806,
       "tag": "0006_empty_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791088640209,
+      "tag": "0007_silky_pestilence",
+      "breakpoints": true
     }
   ]
 }

@@ -69,7 +69,7 @@ export interface Me {
   role: 'teacher' | 'student';
   name: string;
   email: string;
-  locale: 'ru' | 'uz';
+  locale: 'ru' | 'uz' | 'en';
   tz: string;
 }
 

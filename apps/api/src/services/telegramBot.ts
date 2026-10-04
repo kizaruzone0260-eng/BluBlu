@@ -20,49 +20,58 @@ const T = {
   usage: {
     ru: 'Пришлите ссылку привязки из профиля Klass или /stop.',
     uz: 'Proildagi bog‘lanish havolasini yuboring yoki /stop.',
+    en: 'Send the link URL from your Klass profile, or /stop.',
   },
   linked: {
     ru: 'Готово: Telegram привязан к аккаунту Klass.',
     uz: 'Tayyor: Telegram Klass hisobiga bog‘landi.',
+    en: 'Done: Telegram is linked to your Klass account.',
   },
   badLink: {
     ru: 'Ссылка недействительна или устарела. Создайте новую в профиле.',
     uz: 'Havola yaroqsiz yoki eskirgan. Proilda yangisini yarating.',
+    en: 'This link is invalid or expired. Create a new one in your profile.',
   },
   stopped: {
     ru: 'Ок, уведомления отключены.',
     uz: 'OK, bildirishnomalar o‘chirildi.',
+    en: 'OK, notifications are off.',
   },
   needCode: {
     ru: 'Используйте /link <код> — код создаётся в интерфейсе класса.',
     uz: '/link <kod> ishlating — kod sinf interfeysida yaratiladi.',
+    en: 'Use /link <code> — the code is created in the class UI.',
   },
   notAdmin: {
     ru: 'Команду /link может выполнять только администратор группы.',
     uz: '/link buyrug‘ini faqat guruh administratori bajara oladi.',
+    en: 'Only a group administrator can run /link.',
   },
   needPersonal: {
     ru: 'Сначала привяжите личный Telegram в профиле Klass (команда /start из личной ссылки).',
     uz: 'Avval proilda shaxsiy Telegramni boglang (/start shaxsiy havola orqali).',
+    en: 'First link your personal Telegram in the Klass profile (/start via your personal link).',
   },
   badCode: {
     ru: 'Код привязки не найден или истёк. Создайте новый в интерфейсе класса.',
     uz: 'Bog‘lash kodi topilmadi yoki eskirgan. Sinf interfeysida yangisini yarating.',
+    en: 'Link code not found or expired. Create a new one in the class UI.',
   },
   okGroup: {
     ru: 'Группа привязана к классу. Уведомления будут приходить сюда.',
     uz: 'Guruh sinfga bog‘landi. Bildirishnomalar shu yerga keladi.',
+    en: 'The group is linked to the class. Notifications will arrive here.',
   },
 } as const;
 
 type Key = keyof typeof T;
 
-async function localeForUserId(db: DB, userId: string): Promise<'ru' | 'uz'> {
+async function localeForUserId(db: DB, userId: string): Promise<'ru' | 'uz' | 'en'> {
   const [u] = await db.select({ locale: usersTable.locale }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
   return u?.locale ?? 'ru';
 }
 
-const msg = (k: Key, loc: 'ru' | 'uz') => T[k][loc];
+const msg = (k: Key, loc: 'ru' | 'uz' | 'en') => T[k][loc];
 
 /**
  * Pure update handler used by the grammY webhook route. Returns the reply text,
@@ -81,7 +90,7 @@ export async function processUpdate(
     const token = text.split(/\s+/)[1] ?? '';
     if (!token) return { handled: true, reply: msg('usage', 'ru') };
     const ok = await consumeLinkToken(deps.db, token, chatId);
-    let loc: 'ru' | 'uz' = 'ru';
+    let loc: 'ru' | 'uz' | 'en' = 'ru';
     if (ok) {
       const [link] = await deps.db.select({ userId: telegramLinks.userId }).from(telegramLinks)
         .where(eq(telegramLinks.chatId, chatId)).limit(1);

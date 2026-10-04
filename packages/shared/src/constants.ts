@@ -17,7 +17,7 @@ export const TEACHER_QUOTA_GB = 5;
 export const MAX_CLASS_PARTICIPANTS_V1 = 25;
 
 export const DEFAULT_TIMEZONE = 'Asia/Tashkent';
-export const SUPPORTED_LOCALES = ['ru', 'uz'] as const;
+export const SUPPORTED_LOCALES = ['ru', 'uz', 'en'] as const;
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export type UserRole = 'teacher' | 'student';

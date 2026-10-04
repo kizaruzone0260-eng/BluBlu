@@ -4,7 +4,7 @@ import {
 import { sql } from 'drizzle-orm';
 
 export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
-export const localeEnum = pgEnum('app_locale', ['ru', 'uz']);
+export const localeEnum = pgEnum('app_locale', ['ru', 'uz', 'en']);
 export const postKindEnum = pgEnum('post_kind', ['material', 'announcement']);
 export const eventKindEnum = pgEnum('event_kind', ['lesson', 'deadline', 'other']);
 

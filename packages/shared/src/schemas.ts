@@ -46,7 +46,7 @@ export const inviteCreateSchema = z.object({
 
 export const profileUpdateSchema = z.object({
   name,
-  locale: z.enum(['ru', 'uz']),
+  locale: z.enum(['ru', 'uz', 'en']),
   tz: z.string().min(1).max(64).default(DEFAULT_TIMEZONE),
 });
 

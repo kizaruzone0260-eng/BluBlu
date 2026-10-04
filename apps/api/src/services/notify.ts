@@ -45,44 +45,53 @@ export class TelegramTransport implements NotifyTransport {
   }
 }
 
-// ─── texts ru/uz (§3.9: короткие, со ссылкой, без вложений) ───────────────────
+// ─── texts ru/uz/en (§3.9: короткие, со ссылкой, без вложений) ────────────────
 
-const T: Record<NotifyKind, { ru: (p: Record<string, string>) => string; uz: (p: Record<string, string>) => string }> = {
+const T: Record<NotifyKind, { ru: (p: Record<string, string>) => string; uz: (p: Record<string, string>) => string; en: (p: Record<string, string>) => string }> = {
   eventNew: {
     ru: (p) => `Новое событие: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
     uz: (p) => `Yangi tadbir: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
+    en: (p) => `New event: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
   },
   eventChanged: {
     ru: (p) => `Событие изменено: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
     uz: (p) => `Tadbir o'zgardi: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
+    en: (p) => `Event changed: ${p.title} — ${p.when} (${p.class}).\n${p.url}`,
   },
   eventCancelled: {
     ru: (p) => `Событие отменено: ${p.title} (${p.class}).`,
     uz: (p) => `Tadbir bekor qilindi: ${p.title} (${p.class}).`,
+    en: (p) => `Event cancelled: ${p.title} (${p.class}).`,
   },
   reminder24h: {
     ru: (p) => `Напоминание: завтра ${p.time} — ${p.title} (${p.class}).\n${p.url}`,
     uz: (p) => `Eslatma: ertaga ${p.time} — ${p.title} (${p.class}).\n${p.url}`,
+    en: (p) => `Reminder: tomorrow ${p.time} — ${p.title} (${p.class}).\n${p.url}`,
   },
   reminder1h: {
     ru: (p) => `Через час — ${p.title} (${p.class}) в ${p.time}.\n${p.url}`,
     uz: (p) => `Bir soatdan — ${p.title} (${p.class}) ${p.time}.\n${p.url}`,
+    en: (p) => `In an hour — ${p.title} (${p.class}) at ${p.time}.\n${p.url}`,
   },
   reminder10m: {
     ru: (p) => `Через 10 минут — ${p.title} (${p.class}).\n${p.url}`,
     uz: (p) => `10 daqiqadan so'ng — ${p.title} (${p.class}).\n${p.url}`,
+    en: (p) => `In 10 minutes — ${p.title} (${p.class}).\n${p.url}`,
   },
   lessonStarted: {
     ru: (p) => `Урок начался: ${p.title} (${p.class}). Вход: ${p.lessonUrl}`,
     uz: (p) => `Dars boshlandi: ${p.title} (${p.class}). Kirish: ${p.lessonUrl}`,
+    en: (p) => `Lesson started: ${p.title} (${p.class}). Join: ${p.lessonUrl}`,
   },
   materialNew: {
     ru: (p) => `Новый материал: ${p.title} (${p.class}).\n${p.url}`,
     uz: (p) => `Yangi material: ${p.title} (${p.class}).\n${p.url}`,
+    en: (p) => `New material: ${p.title} (${p.class}).\n${p.url}`,
   },
   announcementNew: {
     ru: (p) => `Объявление: ${p.title} (${p.class}).\n${p.url}`,
     uz: (p) => `E'lon: ${p.title} (${p.class}).\n${p.url}`,
+    en: (p) => `Announcement: ${p.title} (${p.class}).\n${p.url}`,
   },
 };
 
@@ -194,7 +203,7 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
 
 async function tryInsert(
   db: DB, a: EnqueueArgs, key: string, userId: string | null, chatId: string,
-  locale: 'ru' | 'uz', sendAt: Date,
+  locale: 'ru' | 'uz' | 'en', sendAt: Date,
 ): Promise<string | null> {
   const text = T[a.kind][locale]({ ...a.params, url: siteUrl(), lessonUrl: a.params.lessonUrl ?? siteUrl(), when: '' });
   const [row] = await db.insert(notifications).values({
