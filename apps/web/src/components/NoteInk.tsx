@@ -193,13 +193,21 @@ export function InkEditor({ ink, onChange }: { ink: InkData | null; onChange: (n
     if (!commit([...strokes, done])) undoStack.current.pop();
   }
 
-  function onWheel(e: React.WheelEvent) {
-    if (!mode) return;
-    e.preventDefault(); // zooming the canvas never scrolls the page
-    const [px, py] = rel(e);
-    const factor = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : Math.exp(-e.deltaY * 0.002);
-    setView((v) => zoomAt(v, size, px, py, factor));
-  }
+  // React attaches wheel listeners passively at the root, where preventDefault()
+  // is ignored — a native non-passive listener is the only way to keep the page
+  // from scrolling under the canvas while zooming (drawing mode only).
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !mode) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const factor = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : Math.exp(-e.deltaY * 0.002);
+      setView((v) => zoomAt(v, { w: r.width, h: r.height }, e.clientX - r.left, e.clientY - r.top, factor));
+    };
+    el.addEventListener('wheel', onWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', onWheelNative);
+  }, [mode, size.w, size.h]);
 
   function zoomButton(factor: number) {
     setView((v) => zoomAt(v, size, size.w / 2, size.h / 2, factor));
@@ -281,7 +289,7 @@ export function InkEditor({ ink, onChange }: { ink: InkData | null; onChange: (n
         style={{ touchAction: mode ? 'none' : 'auto', pointerEvents: mode ? 'auto' : 'none', height: full ? 'calc(100vh - 64px)' : undefined }}
         data-testid="ink-canvas" aria-label={t('notes.draw.mode')}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
-        onPointerCancel={onUp} onWheel={onWheel} onContextMenu={(e) => { if (mode) e.preventDefault(); }}>
+        onPointerCancel={onUp} onContextMenu={(e) => { if (mode) e.preventDefault(); }}>
         {/* a soft origin marker so the borderless field is still orientable */}
         <line x1={view.x - 10000} y1={0} x2={view.x + size.w / view.k + 10000} y2={0} stroke="rgba(128,128,128,.15)" strokeWidth={1 / view.k} />
         <line x1={0} y1={view.y - 10000} x2={0} y2={view.y + size.h / view.k + 10000} stroke="rgba(128,128,128,.15)" strokeWidth={1 / view.k} />
