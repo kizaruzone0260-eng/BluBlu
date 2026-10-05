@@ -215,6 +215,13 @@ export default function ChatRoom() {
     if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = undefined; }
   }
   useEffect(() => () => { pressCancel(); window.clearTimeout(toastTimer.current); }, []);
+  // keyboard: Escape closes the open action menu
+  useEffect(() => {
+    if (!menuFor) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuFor(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuFor]);
 
   return (
     <div className="chat-room">
