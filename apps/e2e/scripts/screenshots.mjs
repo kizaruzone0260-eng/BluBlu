@@ -101,6 +101,10 @@ if (!evs.some((e) => e.title === 'Урок: дроби (showcase)')) {
   });
 }
 const notes = await api('GET', '/api/notes');
+// drop leftovers from ink/name e2e runs so the shot list stays presentable
+for (const n of notes.filter((x) => /^(Зум-тест|probe\d*)/.test(x.title))) {
+  await api('DELETE', `/api/notes/${n.id}`);
+}
 // a small hand-made curve so the notes screenshots show the drawing feature (item 3)
 const inkStrokes = {
   strokes: [
@@ -239,6 +243,18 @@ for (const locale of locales) {
         await page.waitForTimeout(900);
         await page.screenshot({ path: path.join(outDir, `notes-${locale}-${width}-${theme}.png`) });
         count++;
+        // item 6: the drawing editor itself — toolbar row with hand/zoom/fit/fullscreen
+        if (!only || only.includes('notes')) {
+          await page.getByTestId('ink-mode').click();
+          await page.waitForTimeout(400);
+          await page.getByTestId('ink-zoom-in').click();
+          await page.getByTestId('ink-fit').click(); // «Show all»: the drawing fits the canvas in every shot
+          await page.getByTestId('ink-canvas').scrollIntoViewIfNeeded().catch(() => undefined);
+          await page.waitForTimeout(500);
+          await page.screenshot({ path: path.join(outDir, `notes-ink-${locale}-${width}-${theme}.png`) });
+          count++;
+          await page.getByTestId('ink-mode').click(); // off again for later shots
+        }
       }
       await shot('chat', '/chat');
       await shot('chatroom', `/chat/${cls.id}`);

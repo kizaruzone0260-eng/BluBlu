@@ -150,9 +150,18 @@ export default function Notes() {
   }, [notes.data, filter, search]);
 
   const realActive = (notes.data ?? []).find((n) => n.id === activeId) ?? null;
-  const active: Note | null = activeId === DRAFT
+  const draftOrReal: Note | null = activeId === DRAFT
     ? { id: DRAFT, classId: noteClass || null, eventId: noteEvent || null, pinned: false, title, body: composeInk(body, ink), sharedPostId: null, updatedAt: new Date().toISOString() }
     : realActive;
+  // D.3 switch window: between the POST landing (setActiveId(real id)) and the
+  // ['notes'] refetch, the new note is momentarily absent from the list. Returning
+  // null here would unmount the whole editor subtree — losing drawing mode, the
+  // canvas view and any in-flight stroke. Keep showing the last note (under the
+  // fresh id, so PATCH/publish target the real row) until the list catches up.
+  const lastNoteRef = useRef<Note | null>(null);
+  if (draftOrReal) lastNoteRef.current = draftOrReal;
+  const active: Note | null = draftOrReal
+    ?? (activeId && lastNoteRef.current ? { ...lastNoteRef.current, id: activeId } : null);
   const lessonOptions = useMemo(() => {
     const cid = noteClass || active?.classId;
     return (eventsQ.data ?? []).filter((e) => e.kind === 'lesson' && (!cid || e.classId === cid));

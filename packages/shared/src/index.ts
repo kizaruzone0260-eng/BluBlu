@@ -2,3 +2,4 @@ export * from './constants.js';
 export * from './schemas.js';
 export * from './content.js';
 export * from './media.js';
+export * from './inkView.js';

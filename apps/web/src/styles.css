@@ -179,6 +179,9 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .board-frame .default-sidebar-trigger,
 .board-frame .help-icon,
 .board-frame .layer-ui__wrapper__top-right { display: none !important; }
+/* drawing fullscreen (ink task §6) */
+.ink-editor:fullscreen { background: var(--bg); padding: var(--sp-3); overflow: auto; }
+.ink-editor .note-ink.ink-full { width: 100%; }
 
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */
 .topbar {
