@@ -200,8 +200,16 @@
     "micUnavailable": "Микрофон недоступен",
     "micNotFound": "Микрофон не найден",
     "deviceDefault": "По умолчанию",
-    "camNotFound": "Камера не найдена",
-    "micNotFound": "Микрофон не найден"
+    "unmuteAll": "Включить микрофоны всем",
+    "mutedToast": "Микрофоны выключены у %{n} из %{m}",
+    "unmutedToast": "Микрофоны включены у всех",
+    "noStudentsYet": "Пока нет учеников",
+    "peersTitle": "Участники",
+    "muteOne": "Выключить микрофон",
+    "bannerMuted": "Учитель выключил микрофоны",
+    "bannerLecture": "Режим лекции: микрофон отключён",
+    "lectureOn": "Режим лекции: вкл",
+    "waitingPeers": "Ожидаем учеников…"
   },
   "tg": {
     "title": "Telegram-уведомления",

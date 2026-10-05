@@ -157,6 +157,8 @@ export const lessonSessions = pgTable('lesson_sessions', {
   endedAt: timestamp('ended_at', { withTimezone: true }),
   /** «режим лекции»: students cannot unmute/publish until granted */
   lectureMode: boolean('lecture_mode').notNull().default(false),
+  /** moderation feedback (task 3): «mute everyone» state, restored on reconnect */
+  muteAll: boolean('mute_all').notNull().default(false),
   /** layout for everyone: {layout: 'gallery'|'stage'|'teacher'} */
   layoutState: jsonb('layout_state').$type<{ layout: 'gallery' | 'stage' | 'teacher' }>().notNull().default({ layout: 'gallery' }),
   createdBy: uuid('created_by').notNull().references(() => users.id),

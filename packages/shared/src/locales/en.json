@@ -200,8 +200,16 @@
     "micUnavailable": "Microphone unavailable",
     "micNotFound": "Microphone not found",
     "deviceDefault": "Default",
-    "camNotFound": "Camera not found",
-    "micNotFound": "Microphone not found"
+    "unmuteAll": "Unmute everyone",
+    "mutedToast": "Muted %{n} of %{m} students",
+    "unmutedToast": "Everyone unmuted",
+    "noStudentsYet": "No students yet",
+    "peersTitle": "Participants",
+    "muteOne": "Mute microphone",
+    "bannerMuted": "The teacher muted the microphones",
+    "bannerLecture": "Lecture mode: microphone disabled",
+    "lectureOn": "Lecture mode on",
+    "waitingPeers": "Waiting for students…"
   },
   "tg": {
     "title": "Telegram notifications",

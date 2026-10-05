@@ -11,7 +11,7 @@ import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKe
 
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
-  startedAt: string; endedAt: string | null; lectureMode: boolean;
+  startedAt: string; endedAt: string | null; lectureMode: boolean; muteAll: boolean;
   layout: 'gallery' | 'stage' | 'teacher'; wsUrl: string;
 }
 
@@ -81,6 +81,9 @@ export default function Lesson() {
   const [screenOn, setScreenOn] = useState(false);
   const [localCamOn, setLocalCamOn] = useState(false);
   const [localMicOn, setLocalMicOn] = useState(false);
+  const [muteAll, setMuteAll] = useState(false); // task 3: teacher muted everyone
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<number | undefined>(undefined);
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
@@ -135,7 +138,10 @@ export default function Lesson() {
 
   useEffect(() => {
     setSession(status.data?.session ?? null);
-    if (status.data?.session) setLayout(status.data.session.layout);
+    if (status.data?.session) {
+      setLayout(status.data.session.layout);
+      setMuteAll(status.data.session.muteAll); // restored on reload/reconnect
+    }
   }, [status.data]);
 
   useEffect(() => {
@@ -157,7 +163,8 @@ export default function Lesson() {
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
           if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
-          if (msg.type === 'started' && msg.session) setSession(msg.session);
+          if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
+          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); }
         };
         ws.onclose = (ev) => {
           if (disposed) return;
@@ -258,6 +265,48 @@ export default function Lesson() {
     setScreenOn(pubs.some((p) => p.source === Track.Source.ScreenShare && p.track));
   }
 
+  function showToast(msg: string) {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(''), 3_500);
+  }
+
+  /** students obey «mute everyone»: mic off when the teacher mutes, back when not */
+  function applyMuteAll(on: boolean) {
+    const room = roomRef.current;
+    if (!room || isTeacher) return;
+    if (on) {
+      void room.localParticipant.setMicrophoneEnabled(false).then(() => refreshLocal(room)).catch(() => undefined);
+    } else {
+      void room.localParticipant.setMicrophoneEnabled(true).then(() => refreshLocal(room)).catch(() => undefined);
+    }
+  }
+
+  async function toggleMuteAll() {
+    const s = session;
+    if (!s) return;
+    const next = !muteAll;
+    try {
+      const r = await api<{ muted: number; students: number }>(`/api/lessons/${s.id}/mute`, {
+        method: 'POST', body: JSON.stringify({ all: true, kind: 'audio', muted: next }),
+      });
+      setMuteAll(next);
+      showToast(next ? t('lesson.mutedToast', { n: r.muted, m: r.students }) : t('lesson.unmutedToast'));
+    } catch {
+      setError('mediaServerUnavailable');
+    }
+  }
+
+  async function muteOne(identity: string) {
+    const s = session;
+    if (!s) return;
+    try {
+      await api(`/api/lessons/${s.id}/mute`, { method: 'POST', body: JSON.stringify({ identity, kind: 'audio', muted: true }) });
+    } catch {
+      setError('mediaServerUnavailable');
+    }
+  }
+
   const addTile = (tile: Tile, track: LkTrack) => {
     tracksRef.current.set(tile.key, track);
     setTiles((prev) => (prev.some((x) => x.key === tile.key) ? prev : [...prev, tile]));
@@ -324,17 +373,22 @@ export default function Lesson() {
       room.on(RoomEvent.Disconnected, () => setConnected(false));
       await room.connect(wsUrl, token);
       // mic first (camera failures must not swallow the mic), then camera — each
-      // with its own soft→minimal constraint chain and a visible error, never silent
+      // with its own soft→minimal constraint chain and a visible error, never silent.
+      // Task 3: a student joining while lecture mode or «mute everyone» is ON
+      // starts muted — the banner explains why, the state came with the session.
+      const micBlocked = !isTeacher && (lectureMode || s.lectureMode || muteAll || s.muteAll);
       let micKey = '';
       let micE: unknown;
-      for (const c of microphoneAttempts(localStorage.getItem(LS_MIC))) {
-        try {
-          await room.localParticipant.setMicrophoneEnabled(true, c === true ? undefined : (c as MicOpts));
-          break;
-        } catch (e: unknown) {
-          micKey = mediaErrorKey(e, 'microphone');
-          micE = e;
-          if (!isRetryableMediaError((e as { name?: string })?.name)) break;
+      if (!micBlocked) {
+        for (const c of microphoneAttempts(localStorage.getItem(LS_MIC))) {
+          try {
+            await room.localParticipant.setMicrophoneEnabled(true, c === true ? undefined : (c as MicOpts));
+            break;
+          } catch (e: unknown) {
+            micKey = mediaErrorKey(e, 'microphone');
+            micE = e;
+            if (!isRetryableMediaError((e as { name?: string })?.name)) break;
+          }
         }
       }
       setMicErr(micKey ? mediaErrorText(micKey, micE) : '');
@@ -378,6 +432,9 @@ export default function Lesson() {
   async function toggleMicInRoom() {
     const room = roomRef.current;
     if (!room) return;
+    // task 3: while the teacher muted everyone (or lecture mode is on) a student
+    // can mute themselves but NOT talk over the class — the banners say why
+    if (!localMicOn && !isTeacher && (muteAll || lectureMode)) return;
     if (localMicOn) await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
     else {
       try {
@@ -526,15 +583,27 @@ export default function Lesson() {
                 {devicePickers}
                 {isTeacher && (
                   <>
-                    <button className="secondary" style={{ marginTop: 0 }} onClick={() => act.mutate({ path: `/api/lessons/${session.id}/mute`, body: { all: true, kind: 'audio' } })}>
-                      {t('lesson.muteAll')}
+                    <button
+                      className={`secondary${muteAll ? ' chip-active' : ''}`}
+                      style={{ marginTop: 0 }}
+                      data-testid="mute-all"
+                      onClick={() => void toggleMuteAll()}
+                      disabled={peers.length === 0}
+                      title={peers.length === 0 ? t('lesson.noStudentsYet') : undefined}
+                    >
+                      {muteAll ? t('lesson.unmuteAll') : t('lesson.muteAll')}
                     </button>
-                    <button className="secondary" style={{ marginTop: 0 }} onClick={() => {
-                      const on = !lectureMode;
-                      setLectureMode(on);
-                      act.mutate({ path: `/api/lessons/${session.id}/lecture-mode`, body: { on } });
-                    }}>
-                      {t('lesson.lectureMode')} {lectureMode ? '✔' : ''}
+                    <button
+                      className={`secondary${lectureMode ? ' chip-active' : ''}`}
+                      style={{ marginTop: 0 }}
+                      data-testid="lecture-mode"
+                      onClick={() => {
+                        const on = !lectureMode;
+                        setLectureMode(on);
+                        act.mutate({ path: `/api/lessons/${session.id}/lecture-mode`, body: { on } });
+                      }}
+                    >
+                      {lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
                     </button>
                     <select style={{ width: 'auto', marginTop: 0 }} value={layout} onChange={(e) => {
                       const l = e.target.value as Session['layout'];
@@ -545,19 +614,28 @@ export default function Lesson() {
                       <option value="stage">{t('lesson.layoutStage')}</option>
                       <option value="teacher">{t('lesson.layoutTeacher')}</option>
                     </select>
-                    {peers.map((p) => (
-                      <span key={p.identity} className="badge">
-                        {p.name} {p.micOn ? '🎙' : '🔇'}{p.camOn ? ' 📹' : ''}{p.screenOn ? ' 🖥' : ''}
-                        <a href="#" onClick={(e) => {
-                          e.preventDefault();
-                          act.mutate({ path: `/api/lessons/${session.id}/grant-screen`, body: { identity: p.identity, allow: !p.screenOn } });
-                        }}> 🖥+</a>
-                        <a href="#" onClick={(e) => {
-                          e.preventDefault();
-                          act.mutate({ path: `/api/lessons/${session.id}/kick`, body: { identity: p.identity } });
-                        }}> ✕</a>
-                      </span>
-                    ))}
+                    {/* participant list (task 3): mic/cam state + per-student actions */}
+                    <details className="peers" data-testid="peers-panel">
+                      <summary>{t('lesson.peersTitle')} · {peers.length}</summary>
+                      {peers.length === 0 && <p className="muted">{t('lesson.noStudentsYet')}</p>}
+                      {peers.map((p) => (
+                        <div key={p.identity} className="peer-row" data-testid={`peer-${p.identity.slice(0, 8)}`}>
+                          <span className="peer-name">{p.name}</span>
+                          <span title={t('lesson.toggleMic')}>{p.micOn ? '🎙' : '🔇'}</span>
+                          <span title={t('lesson.toggleCamera')}>{p.camOn ? '📹' : '·'}</span>
+                          {p.screenOn && <span>🖥</span>}
+                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.muteOne')}
+                            onClick={() => void muteOne(p.identity)}>🔇
+                          </button>
+                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.shareScreen')}
+                            onClick={() => act.mutate({ path: `/api/lessons/${session.id}/grant-screen`, body: { identity: p.identity, allow: !p.screenOn } })}>🖥+
+                          </button>
+                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.leave')}
+                            onClick={() => act.mutate({ path: `/api/lessons/${session.id}/kick`, body: { identity: p.identity } })}>✕
+                          </button>
+                        </div>
+                      ))}
+                    </details>
                     <div className="spacer" />
                     <button className="secondary" style={{ marginTop: 0 }} onClick={async () => {
                       const room = roomRef.current;
@@ -583,11 +661,16 @@ export default function Lesson() {
               </div>
               {error && <p className="error">{error}</p>}
               {mediaErrors}
+              {/* student banners (task 3): why the mic is off — restored on reconnect */}
+              {!isTeacher && muteAll && <p className="banner" data-testid="banner-muted">{t('lesson.bannerMuted')}</p>}
+              {!isTeacher && lectureMode && !muteAll && <p className="banner" data-testid="banner-lecture">{t('lesson.bannerLecture')}</p>}
               <div className={gridClass} data-testid="video-grid">
                 {tiles.map((tile) => (
                   <VideoTile key={tile.key} tile={tile} track={tracksRef.current.get(tile.key)} />
                 ))}
               </div>
+              {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
+              {toast && <div className="toast" role="status" data-testid="lesson-toast">{toast}</div>}
             </>
           )}
           {/* board is WS-based: visible while a session exists, even before/without RTC */}

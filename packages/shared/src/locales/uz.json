@@ -200,8 +200,16 @@
     "micUnavailable": "Mikrofon mavjud emas",
     "micNotFound": "Mikrofon topilmadi",
     "deviceDefault": "Standart",
-    "camNotFound": "Kamera topilmadi",
-    "micNotFound": "Mikrofon topilmadi"
+    "unmuteAll": "Hammaga mikrofonni yoqish",
+    "mutedToast": "%{m} o'quvchidan %{n} tasining mikrofoni o'chirildi",
+    "unmutedToast": "Hammaning mikrofoni yoqildi",
+    "noStudentsYet": "Hozircha o'quvchi yo'q",
+    "peersTitle": "Ishtirokchilar",
+    "muteOne": "Mikrofonni o'chirish",
+    "bannerMuted": "O'qituvchi mikrofonlarni o'chirdi",
+    "bannerLecture": "Leksiya rejimi: mikrofon o'chiq",
+    "lectureOn": "Leksiya rejimi: yoniq",
+    "waitingPeers": "O'quvchilar kutilmoqda…"
   },
   "tg": {
     "title": "Telegram bildirishnomalari",

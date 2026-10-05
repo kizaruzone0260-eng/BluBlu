@@ -166,7 +166,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   // JSON API response.
   if (env.WEB_DIST) {
     const root = path.resolve(env.WEB_DIST);
-    await app.register(fastifyStatic, { root, wildcard: false });
+    await app.register(fastifyStatic, { root, wildcard: false, index: false });
     let shellHtml: string | null = null;
     const shell = () => {
       shellHtml ??= injectBuildMeta(

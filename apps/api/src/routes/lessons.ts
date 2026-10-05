@@ -18,6 +18,7 @@ import type { WebSocket as WsSocket } from 'ws';
 const withRoom = (s: LessonSession) => ({
   id: s.id, classId: s.classId, eventId: s.eventId, roomName: s.roomName,
   startedAt: s.startedAt, endedAt: s.endedAt, lectureMode: s.lectureMode,
+  muteAll: s.muteAll, // task 3: student banners survive reconnects
   layout: s.layoutState.layout,
 });
 
@@ -157,7 +158,9 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true, liveParticipants: rs.ok ? rs.value.length : 0 };
   });
 
-  // Mute one participant or everybody but the teacher
+  // Mute/unmute one participant or everybody but the teacher (task 3:
+  // «all» also persists the state on the session and broadcasts it, so a
+  // reconnecting student still sees the banner and keeps the mic off).
   app.post('/api/lessons/:id/mute', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const s = await teacherSession(req, reply, id);
@@ -166,6 +169,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       identity: z.string().min(1).optional(),
       all: z.boolean().default(false),
       kind: z.enum(['audio', 'video']).default('audio'),
+      muted: z.boolean().default(true),
     }).safeParse(req.body ?? {});
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const { TrackType } = await import('livekit-server-sdk');
@@ -174,18 +178,25 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!list.ok) return reply.code(502).send({ error: 'mediaServerUnavailable' });
     const rs = getRoomService();
     let n = 0;
+    let students = 0;
     for (const part of list.value) {
       if (part.identity === s.createdBy) continue; // never mute the teacher
+      students++;
       if (p.data.identity && part.identity !== p.data.identity) continue;
       const info = await media(() => rs.getParticipant(s.roomName, part.identity));
       if (!info.ok) continue;
       for (const track of info.value.tracks ?? []) {
         if (track.type !== want || !track.sid) continue;
-        const r = await media(() => rs.mutePublishedTrack(s.roomName, part.identity, track.sid, true));
+        const r = await media(() => rs.mutePublishedTrack(s.roomName, part.identity, track.sid, p.data.muted));
         if (r.ok) n++;
       }
     }
-    return { ok: true, muted: n };
+    if (p.data.all && p.data.kind === 'audio') {
+      const { lessonSessions } = await import('../db/schema.js');
+      await db.update(lessonSessions).set({ muteAll: p.data.muted }).where(eq(lessonSessions.id, id));
+      wsBroadcast(id, { type: 'muteAll', on: p.data.muted });
+    }
+    return { ok: true, muted: n, students };
   });
 
   // Temporarily grant a student the right to share screen
