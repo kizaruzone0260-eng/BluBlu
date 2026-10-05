@@ -135,12 +135,14 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
         rateLimit: { max: 300, timeWindow: '1 minute' },
       };
     }
-    // stricter: login (brute force), register/join (one-time code attempts)
+    // stricter: login (brute force), register/join (one-time code attempts).
+    // The caps are env-overridable (defaults 10 / 8) so the e2e suite, which
+    // logs in far more than a real user, can relax them without touching prod.
     if (url === '/api/auth/login') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: 10, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.RATE_LOGIN_MAX, timeWindow: '1 minute' } };
     }
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: 8, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.RATE_CODE_MAX, timeWindow: '1 minute' } };
     }
   });
   await app.register(rateLimit, { global: false });

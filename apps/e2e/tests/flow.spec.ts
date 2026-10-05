@@ -19,11 +19,25 @@ function readStack() {
 const stack = readStack();
 const BASE = `http://127.0.0.1:${stack.port}`;
 
+// The full suite runs 21 specs through one IP, so a login can hit the shared
+// 300/min rate limiter and return 429 → an undefined token → a later GET yields
+// an error object and `.find` crashes. Back off and retry like the UI login does.
+async function apiLogin(api: any): Promise<string> {
+  for (let i = 0; i < 5; i++) {
+    const r = await api.post('/api/auth/login', { data: { email: stack.teacherEmail, password: stack.teacherPassword } });
+    if (r.status() === 200) {
+      const tok = (await r.json()).accessToken as string;
+      if (tok) return tok;
+    }
+    await new Promise((res) => setTimeout(res, 12_000));
+  }
+  throw new Error('teacher api login failed after retries (rate limit?)');
+}
+
 async function forceRuProfile() {
   // separate context: page.request would share (and race) the browser cookie jar
   const api = await pw.newContext({ baseURL: BASE });
-  const l = await api.post('/api/auth/login', { data: { email: stack.teacherEmail, password: stack.teacherPassword } });
-  const token = (await l.json()).accessToken as string;
+  const token = await apiLogin(api);
   const me = await (await api.get('/api/me', { headers: { authorization: `Bearer ${token}` } })).json();
   await api.patch('/api/me/profile', { headers: { authorization: `Bearer ${token}` }, data: { name: me.name, locale: 'ru', tz: me.tz } });
   await api.dispose();
@@ -103,8 +117,7 @@ test.describe.serial('klass core flows', () => {
   test('lesson start + board + student sheets (API-backed join)', async ({ browser }) => {
     // get classId via API using teacher session
     const api = await pw.newContext({ baseURL: BASE });
-    const r = await api.post('/api/auth/login', { data: { email: stack.teacherEmail, password: stack.teacherPassword } });
-    const token = (await r.json()).accessToken as string;
+    const token = await apiLogin(api);
     const classes = await (await api.get('/api/classes', { headers: { authorization: `Bearer ${token}` } })).json();
     const cls = classes.find((c: { name: string }) => c.name.includes('E2E'));
     expect(cls).toBeTruthy();
@@ -124,7 +137,6 @@ test.describe.serial('klass core flows', () => {
     await registerStudent(page, 'Листок', 'Тест', `e2esheet${Date.now()}@x.io`, 'Secret1234', code);
 
     // open lesson page by classId → session active, board visible to student (view-mode), drawer exists
-    const stLogin = await api.post('/api/auth/login', { data: { email: `e2esheet${''}`, password: '' } }).catch(() => null); void stLogin;
     // task 4: the board must not reach out to excalidraw.com / libraries.excalidraw.com
     const external: string[] = [];
     page.on('request', (r) => {

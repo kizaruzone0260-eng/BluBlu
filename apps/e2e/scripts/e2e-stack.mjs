@@ -67,6 +67,11 @@ const api = spawn('node', ['dist/server.js'], {
     LIVEKIT_INTERNAL_URL: 'http://127.0.0.1:7880',
     TELEGRAM_TRANSPORT: 'log',
     PUBLIC_WEB_ORIGIN: `http://127.0.0.1:${PORT}`,
+    // The suite logs in far more than a real user from one IP (127.0.0.1), so
+    // relax the auth brute-force caps for e2e only. The HTTP rate-limit unit
+    // test builds its own app (default caps) and is unaffected.
+    RATE_LOGIN_MAX: '500',
+    RATE_CODE_MAX: '500',
   },
 });
 
