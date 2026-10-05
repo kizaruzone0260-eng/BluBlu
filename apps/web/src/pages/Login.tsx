@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { login } from '../lib/api';
+import { buildId } from '../lib/build';
 
 export default function Login({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
@@ -35,6 +36,8 @@ export default function Login({ onDone }: { onDone: () => void }) {
         {t('auth.haveCode')} <Link to="/register">{t('common.register')}</Link>
       </p>
       <p className="muted"><Link to="/privacy">{t('privacy.title')}</Link></p>
+      {/* build stamp (task 1) — tiny, interface-only */}
+      <p className="muted build-tag" data-testid="build-tag">build {buildId()}</p>
     </div>
   );
 }

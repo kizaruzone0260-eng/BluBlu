@@ -6,8 +6,10 @@ import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DB } from './db/index.js';
+import { currentBuildId, injectBuildMeta } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
@@ -158,14 +160,27 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(telegramRoutes, { db });
   await app.register(chatRoutes, { db }); // item 8
 
-  // SPA static serving in production (web bundle baked into the image)
+  // SPA static serving in production (web bundle baked into the image).
+  // The build stamp (task 1) is injected into the HTML shell here — Render
+  // provides RENDER_GIT_COMMIT at runtime; the value is NOT exposed in any
+  // JSON API response.
   if (env.WEB_DIST) {
-    await app.register(fastifyStatic, { root: path.resolve(env.WEB_DIST), wildcard: false });
+    const root = path.resolve(env.WEB_DIST);
+    await app.register(fastifyStatic, { root, wildcard: false });
+    let shellHtml: string | null = null;
+    const shell = () => {
+      shellHtml ??= injectBuildMeta(
+        readFileSync(path.join(root, 'index.html'), 'utf8'),
+        currentBuildId(),
+      );
+      return shellHtml;
+    };
+    app.get('/', (_req, reply) => reply.type('text/html').send(shell()));
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith('/api') || req.url.startsWith('/webhook')) {
         return reply.code(404).send({ error: 'notFound' });
       }
-      return reply.sendFile('index.html');
+      return reply.type('text/html').send(shell());
     });
   } else {
     app.setNotFoundHandler((req, reply) => {

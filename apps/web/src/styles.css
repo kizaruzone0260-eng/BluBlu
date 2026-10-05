@@ -152,6 +152,8 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .videos.layout-teacher > div:first-child { grid-column: 1 / -1; }
 /* live camera self-view on the pre-join screen */
 .preview-video { width: 100%; max-width: 320px; aspect-ratio: 16/9; background: #000; border-radius: var(--r-md); margin-top: 8px; }
+/* build stamp (task 1): tiny, unobtrusive */
+.build-tag { font-size: .7rem; opacity: .55; text-align: center; margin-top: var(--sp-4); }
 
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */
 .topbar {

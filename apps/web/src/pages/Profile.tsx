@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { buildId } from '../lib/build';
 import { useAuth } from '../App';
 
 export default function Profile() {
@@ -101,6 +102,8 @@ export default function Profile() {
       <button className="danger" onClick={deleteAccount} disabled={deleting}>
         {t('common.deleteAccount')}
       </button>
+      {/* build stamp (task 1) — tiny, interface-only */}
+      <p className="muted build-tag" data-testid="build-tag">build {buildId()}</p>
     </div>
   );
 }
