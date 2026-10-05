@@ -11,6 +11,7 @@ export interface ClassView {
   teacherName: string;
   archived: boolean;
   chatMode: 'on' | 'off' | 'announce'; // item 8
+  botPublicSchedule: boolean; // bot task §3
   memberCount: number;
   role: 'teacher' | 'student';
 }
@@ -50,6 +51,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
         teacherName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
         archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
         chatMode: classes.chatMode,
+        botPublicSchedule: classes.botPublicSchedule,
         memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
         role: sql<'teacher'>`'teacher'`,
       })
@@ -71,6 +73,7 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
       teacherName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
       archived: sql<boolean>`(classes.archived_at IS NOT NULL)`,
       chatMode: classes.chatMode,
+        botPublicSchedule: classes.botPublicSchedule,
       memberCount: sql<number>`(select count(*)::int from class_members where class_members.class_id = classes.id)`,
       role: sql<'student'>`'student'`,
     })
@@ -81,12 +84,12 @@ export async function listMyClasses(db: DB, userId: string, role: 'teacher' | 's
     .orderBy(desc(classes.createdAt));
 }
 
-export async function createClass(db: DB, teacherId: string, input: { name: string; description: string; color: string }) {
+export async function createClass(db: DB, teacherId: string, input: { name: string; description: string; color: string; botPublicSchedule?: boolean }) {
   const [c] = await db.insert(classes).values({ ...input, teacherId }).returning();
   return c;
 }
 
-export async function updateClass(db: DB, classId: string, input: Partial<{ name: string; description: string; color: string }>) {
+export async function updateClass(db: DB, classId: string, input: Partial<{ name: string; description: string; color: string; botPublicSchedule: boolean }>) {
   const [c] = await db.update(classes).set(input).where(eq(classes.id, classId)).returning();
   return c;
 }

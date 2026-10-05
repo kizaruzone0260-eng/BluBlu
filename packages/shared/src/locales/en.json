@@ -59,6 +59,11 @@
     "archived": "Archived",
     "members": "Students",
     "noMembers": "No one yet. Create an invite code.",
+    "botSchedule": "Bot",
+    "botScheduleTitle": "Schedule via the Telegram bot",
+    "botScheduleHint": "When on, anyone who sends the bot /schedule with the exact class name sees the time and title of upcoming lessons (no links or descriptions).",
+    "botScheduleOn": "Open",
+    "botScheduleOff": "Closed",
     "invite": {
       "title": "Invite codes",
       "create": "Create code",

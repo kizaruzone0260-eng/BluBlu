@@ -12,7 +12,7 @@ interface InviteRow {
   expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
 }
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
-interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce' }
+interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean }
 
 export default function ClassDetail() {
   const { id = '' } = useParams();
@@ -37,6 +37,11 @@ export default function ClassDetail() {
   const archiveClass = useMutation({
     mutationFn: () => api(`/api/classes/${id}/archive`, { method: 'POST' }),
     onSuccess: () => { window.location.href = '/classes'; },
+  });
+  // bot task §3 — public schedule switch
+  const botSchedule = useMutation({
+    mutationFn: (on: boolean) => api(`/api/classes/${id}`, { method: 'PATCH', body: JSON.stringify({ botPublicSchedule: on }) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); },
   });
 
   const invites = useQuery({
@@ -170,6 +175,21 @@ export default function ClassDetail() {
           <div className="card" data-testid="chat-settings">
             <h2>{t('chat.settingsTitle')}</h2>
             <ChatSettings classId={id} initialMode={cls?.chatMode ?? 'on'} />
+          </div>
+          {/* bot task §3 — public schedule switch for the Telegram bot */}
+          <div className="card" data-testid="bot-schedule">
+            <h2>{t('classes.botScheduleTitle')}</h2>
+            <label className="row" style={{ alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                data-testid="bot-schedule-on"
+                checked={Boolean(cls?.botPublicSchedule)}
+                onChange={(e) => botSchedule.mutate(e.target.checked)}
+                disabled={botSchedule.isPending}
+              />
+              <span>{cls?.botPublicSchedule ? t('classes.botScheduleOn') : t('classes.botScheduleOff')}</span>
+            </label>
+            <p className="muted" style={{ fontSize: '.85rem' }}>{t('classes.botScheduleHint')}</p>
           </div>
           {/* C.2 — class settings: rename / description / color / archive */}
           {cls && edit && (

@@ -40,6 +40,8 @@ export const classes = pgTable('classes', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   chatMode: chatModeEnum('chat_mode').notNull().default('on'), // item 8
+  /** bot task §3: unauthenticated /schedule by class name works ONLY when this is on */
+  botPublicSchedule: boolean('bot_public_schedule').notNull().default(false),
 }, (t) => [index('classes_teacher_idx').on(t.teacherId)]);
 
 export const classMembers = pgTable('class_members', {
@@ -238,6 +240,52 @@ export const classNotifyPrefs = pgTable('class_notify_prefs', {
 
 export const notificationStatusEnum = pgEnum('notification_status',
   ['pending', 'sent', 'failed', 'blocked', 'skipped']);
+
+// ─── Telegram bot dialogs (bot task §6) ──────────────────────────────────────
+
+/**
+ * Dialog state lives in Postgres, NOT in memory: the Render service sleeps and
+ * restarts between updates, but an /announce confirmation or a /contact step
+ * must survive that. One row per private chat.
+ */
+export const botSessions = pgTable('bot_sessions', {
+  chatId: text('chat_id').primaryKey(),
+  /** e.g. announce:class | announce:text | announce:confirm | contact:name | contact:class | contact:text | reply:<role> */
+  state: text('state').notNull().default(''),
+  data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Idempotency ledger: a redelivered update_id must never repeat an action. */
+export const botUpdates = pgTable('bot_updates', {
+  updateId: bigint('update_id', { mode: 'number' }).primaryKey(),
+  seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** /contact reports: what the sender typed + delivery/reply bookkeeping. */
+export const contactReports = pgTable('contact_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  senderChatId: text('sender_chat_id').notNull(),
+  senderUserId: uuid('sender_user_id').references(() => users.id, { onDelete: 'set null' }),
+  name: text('name').notNull(),
+  classHint: text('class_hint').notNull(),
+  classId: uuid('class_id').references(() => classes.id, { onDelete: 'set null' }),
+  message: text('message').notNull(),
+  teacherUserId: uuid('teacher_user_id').references(() => users.id, { onDelete: 'set null' }),
+  teacherChatId: text('teacher_chat_id'),
+  delivered: boolean('delivered').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  /** the report↔chat link (reply routing) is kept for 30 days only */
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
+
+/** senders a teacher blocked from /contact; the teacher can unblock in /settings */
+export const contactBlocklist = pgTable('contact_blocklist', {
+  senderChatId: text('sender_chat_id').primaryKey(),
+  blockedBy: uuid('blocked_by').references(() => users.id, { onDelete: 'set null' }),
+  blockedAt: timestamp('blocked_at', { withTimezone: true }).notNull().defaultNow(),
+});
 
 /**
  * One-time WebSocket tickets (30 s TTL, bound to user + lesson session).

@@ -9,14 +9,35 @@ import {
 } from '../services/notify.js';
 import { notificationPrefs, classNotifyPrefs, classTelegramChats, classLinkTokens, users, telegramLinks } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
-import { processUpdate, createBot, type BotDeps } from '../services/telegramBot.js';
+import { createBot } from '../services/telegramBot.js';
+import { handleUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
+import { applyMenu, CapturingApi, grammyApi, removeMenu, type BotApi } from '../services/botApi.js';
 import { randomBytes } from 'node:crypto';
 import { hashToken } from '../services/notify.js';
 
+/**
+ * The bot API in use. With a real token + TELEGRAM_TRANSPORT=telegram it is
+ * grammY; in tests/demo (TELEGRAM_TRANSPORT=log) it is a capturing fake so the
+ * whole dispatcher runs without any Telegram network or token (§7).
+ */
+let botApi: BotApi | null = null;
+export function getBotApi(db: DB, bot: Bot | null): BotApi {
+  botApi ??= bot && env.TELEGRAM_TRANSPORT === 'telegram' ? grammyApi(bot) : new CapturingApi();
+  return botApi;
+}
+/** test helper: the capturing api used by the app under test */
+export function capturingApi(db: DB, bot: Bot | null): CapturingApi {
+  const a = getBotApi(db, bot);
+  if (!(a instanceof CapturingApi)) throw new Error('not in capture mode');
+  return a;
+}
+
 /** Bot dependencies shared by the webhook route and the demo long-polling loop (server.ts). */
 export function botDeps(db: DB, bot: Bot | null): BotDeps {
+  const api = getBotApi(db, bot);
   return {
     db,
+    api,
     isGroupAdmin: async (chatId, tgUserId) => {
       if (!bot) return false;
       try {
@@ -35,19 +56,18 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
 
   const deps: BotDeps = botDeps(db, bot);
 
-  // Webhook from Telegram (behind Caddy). Secret header check per §3.9.
-  app.post('/webhook/telegram', async (req, reply) => {
+  // Webhook from Telegram (§6: answer fast, never throw, redeliveries are
+  // deduped by the bot_updates ledger inside handleUpdate).
+  app.post('/webhook/telegram', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (req, reply) => {
     const secret = req.headers['x-telegram-bot-api-secret-token'];
     if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
       return reply.code(403).send({ error: 'forbidden' });
     }
-    const update = req.body as Parameters<typeof processUpdate>[1];
-    const res = await processUpdate(deps, update);
-    if (res.handled && res.reply && bot) {
-      const chatId = update.message?.chat?.id;
-      if (chatId !== undefined) {
-        try { await bot.api.sendMessage(chatId, res.reply); } catch { /* log-only */ }
-      }
+    const update = req.body as TgUpdate;
+    if (typeof update?.update_id === 'number') {
+      // cold start / handler bugs must not 500 back into Telegram's face
+      await Promise.resolve(handleUpdate(deps, update)).catch((e: Error) =>
+        req.log.warn(`telegram update failed: ${e?.message ?? String(e)}`));
     }
     return reply.send({ ok: true });
   });
@@ -60,7 +80,14 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   });
 
   app.delete('/api/me/telegram-link', { preHandler: app.authenticate }, async (req) => {
+    const [link] = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks)
+      .where(eq(telegramLinks.userId, req.user!.id)).limit(1);
     await unlinkUser(db, req.user!.id);
+    if (link) {
+      // §1: the role menu is revoked with the link
+      await removeMenu(deps.api, link.chatId).catch(() => undefined);
+      await applyMenu(deps.api, 'basic', link.chatId).catch(() => undefined);
+    }
     return { ok: true };
   });
 

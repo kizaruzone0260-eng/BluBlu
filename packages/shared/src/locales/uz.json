@@ -59,6 +59,11 @@
     "archived": "Arxiv",
     "members": "O'quvchilar",
     "noMembers": "Hozircha hech kim yo'q. Taklif kodini yarating.",
+    "botSchedule": "Bot",
+    "botScheduleTitle": "Telegram-bot orqali jadval",
+    "botScheduleHint": "Yoqilgan bo'lsa, botga /schedule buyrug'i va sinf nomini aniq yozgan har bir kishi yaqin darslarning vaqti va nomini ko'radi (havolalar va tavsiflarsiz).",
+    "botScheduleOn": "Ochiq",
+    "botScheduleOff": "Yopiq",
     "invite": {
       "title": "Taklif kodlari",
       "create": "Kod yaratish",

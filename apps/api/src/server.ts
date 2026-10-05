@@ -32,10 +32,11 @@ async function main() {
     ? new TelegramTransport(bot)
     : new LogTransport();
   await initNotifyWorker(db, transport);
-  // housekeeping: expired/used one-time WS tickets (lesson + chat)
+  // housekeeping: expired/used one-time WS tickets (lesson + chat) + bot dialogs
   setInterval(() => {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
     import('./services/chat.js').then((m) => m.sweepChatTickets(db)).catch(() => undefined);
+    import('./services/bot.js').then((m) => m.sweepBotState(db)).catch(() => undefined);
   }, 10 * 60_000).unref?.();
   // Telegram webhook registration (best-effort; server admin does it too).
   // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.
@@ -55,10 +56,15 @@ async function main() {
   } else if (bot && env.TELEGRAM_MODE === 'webhook') {
     console.warn('telegram webhook skipped: set PUBLIC_URL (or DOMAIN) and TELEGRAM_WEBHOOK_SECRET');
   }
+  // bot task §1: default-scope command menu (basic set) refreshed at every boot
+  if (bot && env.TELEGRAM_TRANSPORT === 'telegram') {
+    const { applyMenu, grammyApi } = await import('./services/botApi.js');
+    await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn('setMyCommands failed:', e.message));
+  }
   // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
   if (bot && env.TELEGRAM_MODE === 'polling') {
-    const [{ processUpdate }, { botDeps }] = await Promise.all([
-      import('./services/telegramBot.js'),
+    const [{ handleUpdate }, { botDeps }] = await Promise.all([
+      import('./services/bot.js'),
       import('./routes/telegram.js'),
     ]);
     try {
@@ -66,12 +72,9 @@ async function main() {
     } catch (e) {
       console.warn('deleteWebhook failed:', (e as Error).message);
     }
-    bot.on('message', async (ctx) => {
-      const res = await processUpdate(botDeps(db, bot), ctx.update as Parameters<typeof processUpdate>[1]);
-      if (res.handled && res.reply) {
-        try { await ctx.reply(res.reply); } catch { /* sender blocked the bot */ }
-      }
-    });
+    const deps = botDeps(db, bot);
+    bot.on('message', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
+    bot.on('callback_query', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
     bot.catch((err) => console.warn('telegram polling error:', (err.error as Error)?.message ?? String(err.error)));
     void bot.start().catch((e: Error) => console.warn('telegram polling stopped:', e.message));
   }
