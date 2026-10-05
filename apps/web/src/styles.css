@@ -171,6 +171,14 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .peer-row { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px dashed var(--border); }
 .peer-row:last-child { border-bottom: 0; }
 .peer-name { font-weight: 600; margin-right: auto; }
+/* board chrome (task 4): Excalidraw's own menu, sidebar/library, help and the
+   top-right cluster are removed from the lesson UI — our toolbar owns actions */
+.board-frame .main-menu-trigger,
+.board-frame .main-menu-content,
+.board-frame .default-sidebar,
+.board-frame .default-sidebar-trigger,
+.board-frame .help-icon,
+.board-frame .layer-ui__wrapper__top-right { display: none !important; }
 
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */
 .topbar {

@@ -121,8 +121,17 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
     if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(msg));
   };
 
-  async function publishAs(kind: 'png' | 'svg') {
+  /** task 4: the ONLY menu action we expose — teacher clears the current page.
+   * Elements are soft-deleted so the WS delta sync propagates the wipe to all. */
+  function clearPage() {
     const a = apiRef.current;
+    if (!a || !canEdit) return;
+    if (!window.confirm(t('lesson.boardClearConfirm'))) return;
+    const wiped = (a.getSceneElements() as unknown as RawEl[]).map((e) => ({ ...e, isDeleted: true }));
+    a.updateScene({ elements: wiped as never });
+  }
+
+  async function publishAs(kind: 'png' | 'svg') {    const a = apiRef.current;
     if (!a) return;
     try {
       const blob = await exportToBlob({
@@ -160,20 +169,37 @@ export default function Board({ sessionId, height = '60vh' }: { sessionId: strin
               <button className="danger" style={{ marginTop: 0 }} onClick={() => send({ type: 'delpage', page: current })}>✕</button>
             )}
             <div className="spacer" />
+            <button className="secondary" style={{ marginTop: 0 }} data-testid="board-clear" onClick={clearPage}>
+              🗑 {t('lesson.boardClear')}
+            </button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => void publishAs('png')}>→ PNG</button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => void publishAs('svg')}>→ SVG</button>
           </>
         ) : <span className="muted">👁 {t('lesson.readonly')}</span>}
       </div>
       {error && <p className="error">{error}</p>}
-      <div style={{ height }}>
+      <div style={{ height }} className="board-frame">
         <Excalidraw
           viewModeEnabled={!canEdit}
           zenModeEnabled={!canEdit}
           gridModeEnabled={false}
+          // task 4: strip everything the lesson UI does not need — no Open/Save/
+          // Export dialog, no theme switch, no library, no image tool (v1.1).
+          UIOptions={{
+            canvasActions: {
+              changeViewBackgroundColor: false,
+              clearCanvas: false,
+              loadScene: false,
+              saveToActiveFile: false,
+              toggleTheme: false,
+              saveAsImage: false,
+              export: false,
+            },
+            tools: { image: false },
+          }}
           excalidrawAPI={(a) => { apiRef.current = a; }}
           onChange={(elements) => onChange(elements as unknown as RawEl[])}
-          initialData={{ elements: [], appState: { viewModeEnabled: !canEdit }, scrollToContent: false }}
+          initialData={{ elements: [], appState: { viewModeEnabled: !canEdit, showWelcomeScreen: false }, scrollToContent: false }}
         />
       </div>
     </div>

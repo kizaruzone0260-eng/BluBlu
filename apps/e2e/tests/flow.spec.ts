@@ -125,6 +125,12 @@ test.describe.serial('klass core flows', () => {
 
     // open lesson page by classId → session active, board visible to student (view-mode), drawer exists
     const stLogin = await api.post('/api/auth/login', { data: { email: `e2esheet${''}`, password: '' } }).catch(() => null); void stLogin;
+    // task 4: the board must not reach out to excalidraw.com / libraries.excalidraw.com
+    const external: string[] = [];
+    page.on('request', (r) => {
+      const h = new URL(r.url()).host;
+      if (/excalidraw\.com$/i.test(h)) external.push(r.url());
+    });
     await page.goto(`/lesson?classId=${cls.id}`);
     await expect(page.getByTestId('board')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('sheet-fab')).toBeVisible();
@@ -144,6 +150,9 @@ test.describe.serial('klass core flows', () => {
     const join = await api.post(`/api/lessons/${session.id}/join`, { headers: { authorization: `Bearer ${token}` } });
     expect(join.status()).toBe(200);
     expect((await join.json()).token).toBeTruthy();
+
+    // task 4: nothing in the board UI may call excalidraw.com / libraries.excalidraw.com
+    expect(external, `external excalidraw requests: ${external.join(', ')}`).toEqual([]);
 
     await ctx.close();
     await api.dispose();
