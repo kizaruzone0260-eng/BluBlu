@@ -128,7 +128,11 @@
       "color": "Rang",
       "thickness": "Qalinlik",
       "clear": "Tozalash",
-      "toobig": "Chizma juda katta (maksimum 500 KB) — tozalang yoki chiziklarni o‘chiring"
+      "toobig": "Chizma juda katta (maksimum 500 KB) — tozalang yoki chiziklarni o‘chiring",
+      "hand": "Qo'l",
+      "zoom": "Masshtab",
+      "fit": "Hammasini ko'rsatish",
+      "full": "Butun ekranga"
     }
   },
   "cal": {
@@ -166,7 +170,12 @@
     "icsExplain": "Obuna havolasi: Google/Apple kalendari darslarni avtomatik yangilaydi.",
     "icsCopied": "Havola nusxalandi",
     "icsHint": "Maxfiy havola — bilanmang.",
-    "dtFormatHint": "Maydon formati brauzerga mos; pastdagi matn sizning tilingizda ko‘rsatiladi"
+    "dtFormatHint": "Maydon formati brauzerga mos; pastdagi matn sizning tilingizda ko‘rsatiladi",
+    "icsApple": "Apple / iPhone",
+    "icsCopy": "Havolani nusxalash",
+    "icsSecret": "Havola sirli: uni bilgan har kim jadvalingizni ko‘radi. Google bunday kalendarlarni bir zumda yangilamaydi (kuniga bir marta).",
+    "evGoogle": "Google Calendar’ga qo‘shish",
+    "evIcs": ".ics yuklab olish"
   },
   "lesson": {
     "title": "Video-dars",

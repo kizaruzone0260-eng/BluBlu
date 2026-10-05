@@ -165,4 +165,26 @@ suite('stage 3: calendar, repeats, edit scopes, ICS', () => {
     expect(bad.statusCode).toBe(404);
     await app.close();
   });
+
+  it('single-event .ics download: member gets VEVENT+RRULE, outsider 404, anon 401', async () => {
+    const app = await fresh();
+    const created = await app.inject({ method: 'POST', url: `/api/classes/${classId}/events`, headers: auth(teacher.token), payload: lesson });
+    expect(created.statusCode).toBe(201);
+    const evId = created.json().id as string;
+    const ics = await app.inject({ method: 'GET', url: `/api/events/${evId}/ics`, headers: auth(studentToken) });
+    expect(ics.statusCode).toBe(200);
+    expect(ics.headers['content-type']).toContain('text/calendar');
+    expect(String(ics.headers['content-disposition'])).toContain('attachment');
+    expect(ics.body).toContain('BEGIN:VEVENT');
+    expect(ics.body).toContain('RRULE:FREQ=WEEKLY;BYDAY=MO,WE');
+    expect(ics.body).toContain('DTSTART:20261005T140000Z');
+    expect(ics.body).toContain('Math weekly (Cal class)');
+    const other = await makeTeacher(t.sql, `calo${Date.now()}@x.io`);
+    const ol = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: other.email, password: other.password } });
+    const bad = await app.inject({ method: 'GET', url: `/api/events/${evId}/ics`, headers: auth(ol.json().accessToken) });
+    expect(bad.statusCode).toBe(404);
+    const anon = await app.inject({ method: 'GET', url: `/api/events/${evId}/ics` });
+    expect(anon.statusCode).toBe(401);
+    await app.close();
+  });
 });

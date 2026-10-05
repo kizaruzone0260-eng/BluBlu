@@ -7,7 +7,8 @@ import listPlugin from '@fullcalendar/list';
 import interactionPlugin from '@fullcalendar/interaction';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, getToken } from '../lib/api';
+import { APP_NAME } from '../lib/brand';
 import { useAuth } from '../App';
 
 interface Occ {
@@ -56,6 +57,40 @@ export default function Calendar() {
   // secret — revealed only on demand, never rendered in lists.
   const [icsUrl, setIcsUrl] = useState('');
   const [icsCopied, setIcsCopied] = useState(false);
+  // calendar task §5: per-event export buttons + a small actions card
+  const [formOcc, setFormOcc] = useState<Occ | null>(null);
+  const [actions, setActions] = useState<Occ | null>(null);
+
+  const webcalUrl = icsUrl.replace(/^https:/, 'webcal:');
+  function googleTemplate(o: Pick<Occ, 'title' | 'className' | 'description' | 'startsAt' | 'endsAt'>) {
+    const fmt = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: `${o.title} (${o.className})`,
+      dates: `${fmt(o.startsAt)}/${fmt(o.endsAt)}`, // UTC per the Google template spec
+      details: `${o.description}\n${window.location.origin}/calendar`,
+    });
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  }
+  async function downloadIcs(eventId: string) {
+    const token = getToken();
+    const r = await fetch(`/api/events/${eventId}/ics`, { headers: token ? { authorization: `Bearer ${token}` } : {}, credentials: 'include' });
+    if (!r.ok) return;
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `event-${eventId.slice(0, 8)}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+  async function copyIcs() {
+    try {
+      await navigator.clipboard.writeText(icsUrl);
+      setIcsCopied(true);
+    } catch { /* field stays manually selectable */ }
+  }
 
   async function getIcs() {
     const { token } = await api<{ token: string }>('/api/me/ical-token', { method: 'POST' });
@@ -180,20 +215,50 @@ export default function Calendar() {
         )}
       </div>
 
-      {/* item 4 — «Добавить в мой календарь» with a short explanation, 3 languages */}
+      {/* calendar task §5 — «Добавить в мой календарь»: Google / Apple / Outlook / copy */}
       <div className="row card" style={{ alignItems: 'center' }}>
         <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-add" onClick={() => void getIcs()} disabled={!me}>
           📅 {t('cal.icsAdd')}
         </button>
         <span className="muted" style={{ fontSize: 13 }}>{t('cal.icsExplain')}</span>
         {icsUrl && (
-          <div className="row" style={{ width: '100%', alignItems: 'center' }}>
+          <div className="row" style={{ width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+            <a href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`} target="_blank" rel="noreferrer">
+              <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-google">Google Calendar</button>
+            </a>
+            <a href={webcalUrl}>
+              <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-apple">🍎 {t('cal.icsApple')}</button>
+            </a>
+            <a href={`https://outlook.live.com/calendar/0/addfromweb?url=${encodeURIComponent(icsUrl)}&name=${encodeURIComponent(APP_NAME)}`} target="_blank" rel="noreferrer">
+              <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-outlook">Outlook</button>
+            </a>
+            <button className="secondary" style={{ marginTop: 0 }} data-testid="ics-copy" onClick={() => void copyIcs()}>
+              🔗 {icsCopied ? t('cal.icsCopied') : t('cal.icsCopy')}
+            </button>
             <input readOnly value={icsUrl} onFocus={(e) => e.target.select()} data-testid="ics-url"
               style={{ flex: 1, minWidth: 200, fontFamily: 'ui-monospace, monospace', fontSize: '.8rem', margin: 0 }} />
-            <span className={icsCopied ? 'ok' : 'muted'} style={{ fontSize: 13 }}>{icsCopied ? t('cal.icsCopied') : t('cal.icsHint')}</span>
+            <p className="muted" style={{ fontSize: 13, width: '100%', margin: '4px 0 0' }}>{t('cal.icsSecret')}</p>
           </div>
         )}
       </div>
+
+      {/* per-event actions card (students & non-lesson clicks): join + export */}
+      {actions && (
+        <div className="card" data-testid="event-actions">
+          <h2>{actions.title} <span className="muted">({actions.className})</span></h2>
+          <p className="muted">{new Date(actions.startsAt).toLocaleString()} · {actions.description || t('cal.noEvents')}</p>
+          <div className="row">
+            {actions.kind === 'lesson' && (
+              <a href={`/lesson?eventId=${actions.eventId}`} data-testid="act-join"><button style={{ marginTop: 0 }}>{t('cal.joinLesson')}</button></a>
+            )}
+            <a href={googleTemplate(actions)} target="_blank" rel="noreferrer">
+              <button className="secondary" style={{ marginTop: 0 }} data-testid="act-google">📅 {t('cal.evGoogle')}</button>
+            </a>
+            <button className="secondary" style={{ marginTop: 0 }} data-testid="act-ics" onClick={() => void downloadIcs(actions.eventId)}>⬇ {t('cal.evIcs')}</button>
+            <button className="ghost" style={{ marginTop: 0 }} onClick={() => setActions(null)}>{t('common.cancel')}</button>
+          </div>
+        </div>
+      )}
 
       {form && (
         <div className="card">
@@ -267,6 +332,15 @@ export default function Calendar() {
             {form.kind === 'lesson' && form.id && (
               <a href={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></a>
             )}
+            {/* calendar task §5: per-event export buttons for the teacher too */}
+            {form.id && formOcc && (
+              <>
+                <a href={googleTemplate(formOcc)} target="_blank" rel="noreferrer">
+                  <button type="button" className="secondary" data-testid="ev-google">📅 {t('cal.evGoogle')}</button>
+                </a>
+                <button type="button" className="secondary" data-testid="ev-ics" onClick={() => void downloadIcs(form.id!)}>⬇ {t('cal.evIcs')}</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -291,20 +365,24 @@ export default function Calendar() {
           eventClick={(info) => {
             const o = openOcc(info.event.id);
             if (!o) return;
+            setActions(null);
             if (o.kind === 'lesson' && me?.role !== 'teacher') {
               const openAt = +new Date(o.startsAt) - 10 * 60_000; // §3.6: активна за 10 минут
-              if (Date.now() >= openAt) window.location.href = `/lesson?eventId=${o.eventId}`;
-              else window.alert(t('cal.joinTooEarly'));
+              if (Date.now() >= openAt) { window.location.href = `/lesson?eventId=${o.eventId}`; return; }
+              setActions(o); // too early → the actions card explains and still offers exports
               return;
             }
             if (me?.role === 'teacher') {
+              setFormOcc(o);
               setForm({
                 id: o.eventId, kind: o.kind, title: o.title, description: o.description,
                 startLocal: toLocalInput(o.startsAt, o.tz), durationMin: Math.round((+new Date(o.endsAt) - +new Date(o.startsAt)) / 60000),
                 tz: o.tz, repeatWeekdays: [], repeatUntil: '', occurrenceStart: o.recurring ? o.startsAt : undefined,
               });
               setScopeChoice(o.recurring ? 'this' : 'all');
+              return;
             }
+            setActions(o); // student viewing a deadline/other event
           }}
           datesSet={onDatesSet}
           editable={me?.role === 'teacher'}

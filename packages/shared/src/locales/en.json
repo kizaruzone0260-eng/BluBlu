@@ -128,7 +128,11 @@
       "color": "Color",
       "thickness": "Thickness",
       "clear": "Clear",
-      "toobig": "Drawing is too large (max 500 KB) — clear it or remove strokes"
+      "toobig": "Drawing is too large (max 500 KB) — clear it or remove strokes",
+      "hand": "Hand",
+      "zoom": "Zoom",
+      "fit": "Show all",
+      "full": "Fullscreen"
     }
   },
   "cal": {
@@ -166,7 +170,12 @@
     "icsExplain": "Subscription link: Google/Apple Calendar refreshes lessons automatically.",
     "icsCopied": "Link copied",
     "icsHint": "Secret link — do not share it.",
-    "dtFormatHint": "The field format follows your browser; the line below shows it in your language"
+    "dtFormatHint": "The field format follows your browser; the line below shows it in your language",
+    "icsApple": "Apple / iPhone",
+    "icsCopy": "Copy link",
+    "icsSecret": "The link is secret: anyone who has it sees your schedule. Google refreshes such calendars not instantly (about once a day).",
+    "evGoogle": "Add to Google Calendar",
+    "evIcs": "Download .ics"
   },
   "lesson": {
     "title": "Video lesson",

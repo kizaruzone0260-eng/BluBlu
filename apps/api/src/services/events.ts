@@ -270,3 +270,32 @@ export function buildIcs(occurrences: Occurrence[], prodId: string): string {
   lines.push('END:VCALENDAR');
   return lines.join('\r\n') + '\r\n';
 }
+
+/**
+ * Calendar task §5: ONE event as a downloadable .ics — recurring series carry
+ * their RRULE and the known EXDATEs, so the imported calendar matches the site.
+ */
+export function buildSingleEventIcs(
+  e: { id: string; title: string; description: string; startsAt: Date; endsAt: Date; rrule: string | null; exdates: string[] },
+  className: string, siteLink: string, prodId: string,
+): string {
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', `PRODID:-//${prodId}//EN`,
+    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `UID:${icsEsc(e.id)}@klass`,
+    `DTSTAMP:${icsUtc(new Date().toISOString())}`,
+    `DTSTART:${icsUtc(e.startsAt.toISOString())}`,
+    `DTEND:${icsUtc(e.endsAt.toISOString())}`,
+    `SUMMARY:${icsEsc(`${e.title} (${className})`)}`,
+    `DESCRIPTION:${icsEsc(`${e.description}\n${siteLink}`)}`,
+  ];
+  // RRULE/EXDATE are RFC-5545 COMPONENTS (server-generated) — unlike SUMMARY or
+  // DESCRIPTION they must NOT be text-escaped, or clients ignore the repeat.
+  if (e.rrule) lines.push(`RRULE:${e.rrule}`);
+  if (e.exdates.length) {
+    lines.push(`EXDATE:${e.exdates.map((x) => icsUtc(new Date(x).toISOString())).join(',')}`);
+  }
+  lines.push('STATUS:CONFIRMED', 'END:VEVENT', 'END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}

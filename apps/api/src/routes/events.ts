@@ -2,10 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DB } from '../db/index.js';
 import { resolveClass } from '../services/classes.js';
-import { createEvent, listEventsInRange, editEvent, deleteEventOccurrence, rotateIcsToken, userByIcsToken, buildIcs } from '../services/events.js';
+import { createEvent, listEventsInRange, editEvent, deleteEventOccurrence, rotateIcsToken, userByIcsToken, buildIcs, buildSingleEventIcs } from '../services/events.js';
 import { events } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
-import { enqueueNotification } from '../services/notify.js';
+import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { APP_NAME } from '@klass/shared';
 import { classTitle } from '../services/notifyQueue.js';
 
@@ -122,5 +122,25 @@ export async function eventRoutes(app: FastifyInstance, opts: { db: DB }) {
     reply.header('content-type', 'text/calendar; charset=utf-8');
     reply.header('content-disposition', 'inline; filename="klass.ics"');
     return buildIcs(all, APP_NAME);
+  });
+
+  // Calendar task §5: one event as a downloadable .ics (recurring → RRULE+EXDATE).
+  // Rights: only members of the event's class (foreign/unknown → 404, §7).
+  app.get('/api/events/:id/ics', { preHandler: app.authenticate }, async (req, reply) => {
+    const p = z.object({ id: z.string().uuid() }).safeParse(req.params);
+    if (!p.success) return reply.code(404).send({ error: 'notFound' });
+    const [e] = await db.select().from(events).where(eq(events.id, p.data.id)).limit(1);
+    if (!e) return reply.code(404).send({ error: 'notFound' });
+    const cls = await resolveClass(db, req.user!.id, req.user!.role, e.classId);
+    if (!cls) return reply.code(404).send({ error: 'notFound' });
+    reply.header('content-type', 'text/calendar; charset=utf-8');
+    reply.header('content-disposition', `attachment; filename="event-${e.id.slice(0, 8)}.ics"`);
+    return buildSingleEventIcs(
+      {
+        id: e.id, title: e.title, description: e.description, startsAt: e.startsAt, endsAt: e.endsAt,
+        rrule: e.rrule, exdates: e.exdates ?? [],
+      },
+      cls.name, `${siteUrl()}/calendar`, APP_NAME,
+    );
   });
 }
