@@ -157,7 +157,9 @@ suite('stage 3: calendar, repeats, edit scopes, ICS', () => {
     expect(ics.statusCode).toBe(200);
     expect(ics.headers['content-type']).toContain('text/calendar');
     expect(ics.body).toContain('BEGIN:VCALENDAR');
-    expect(ics.body).toContain('DTSTART:20261005T140000Z');
+    // time-of-day is deterministic (19:00 +05 = 14:00Z); the DATE of the first
+    // occurrence depends on when the suite runs (past repeats are skipped)
+    expect(ics.body).toMatch(/DTSTART:\d{8}T140000Z/);
     expect(ics.body).toContain('Math weekly');
     const bad = await app.inject({ method: 'GET', url: '/api/ical/wrongtoken' });
     expect(bad.statusCode).toBe(404);

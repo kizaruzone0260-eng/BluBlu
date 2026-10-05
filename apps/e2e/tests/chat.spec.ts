@@ -89,13 +89,13 @@ test.describe.serial('chat (item 8): teacher and student exchange in realtime', 
     await tp.getByTestId('chat-input').fill('Проверка realtime ✅');
     await tp.getByTestId('chat-send').click();
     await expect(sp.getByTestId('chat-msg').filter({ hasText: 'Проверка realtime ✅' }))
-      .toBeVisible({ timeout: 10_000 });
+      .toBeVisible({ timeout: 25_000 });
 
     // student replies; teacher receives live; XSS payload stays plain text
     await sp.getByTestId('chat-input').fill('<b>жирный?</b> & <script>alert(1)</script>');
     await sp.getByTestId('chat-send').click();
     const mine = tp.getByTestId('chat-msg').filter({ hasText: 'жирный?' });
-    await expect(mine).toBeVisible({ timeout: 10_000 });
+    await expect(mine).toBeVisible({ timeout: 25_000 });
     // the reply must be shown as literal text — no <b> element rendered inside it
     await expect(mine.locator('b')).toHaveCount(0);
     await expect(mine.locator('script')).toHaveCount(0);

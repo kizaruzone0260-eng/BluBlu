@@ -96,7 +96,7 @@ await admin.unsafe(`
          ('teacher', 'Shot', '', 'shot@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now()),
          ('student', 'Старый', '', 'old@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now()),
          ('student', 'Луп', '', 'loop@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now())
-  on conflict (email) do nothing`);
+  on conflict (email) do update set last_name = '', profile_completed_at = null`);
 // persistent e2edata across runs: the main teacher must ALWAYS be name-complete
 // (every other spec logs in as them and expects the app, not the gate)
 await admin.unsafe(`
