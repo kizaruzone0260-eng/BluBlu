@@ -102,7 +102,7 @@ if (!evs.some((e) => e.title === 'Урок: дроби (showcase)')) {
 }
 const notes = await api('GET', '/api/notes');
 // drop leftovers from ink/name e2e runs so the shot list stays presentable
-for (const n of notes.filter((x) => /^(Зум-тест|probe\d*)/.test(x.title))) {
+for (const n of notes.filter((x) => /^(Зум-тест|probe\d*|wheel probe)/.test(x.title))) {
   await api('DELETE', `/api/notes/${n.id}`);
 }
 // a small hand-made curve so the notes screenshots show the drawing feature (item 3)
@@ -236,6 +236,19 @@ for (const locale of locales) {
       await shot('home');
       await shot('class', `/classes/${cls.id}`);
       await shot('calendar', '/calendar');
+      // item 5: per-event actions — teacher's edit form footer carries the
+      // «Add to Google» and «.ics» buttons
+      if (!only || only.includes('calendar')) {
+        await page.goto(`${BASE}/calendar`);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+        const ev = page.locator('.fc-event', { hasText: 'Урок: дроби (showcase)' }).first();
+        if (await ev.count()) {
+          await ev.click();
+          await page.waitForTimeout(700);
+          await page.screenshot({ path: path.join(outDir, `calendar-event-${locale}-${width}-${theme}.png`) });
+          count++;
+        }
+      }
       // notes: OPEN the showcase note so the editor + drawing (item 3) are visible
       await shot('notes', '/notes');
       {
@@ -258,10 +271,29 @@ for (const locale of locales) {
       }
       await shot('chat', '/chat');
       await shot('chatroom', `/chat/${cls.id}`);
+      // item 7: the «⋯» action menu open on one of the teacher's own messages
+      if (!only || only.includes('chatroom')) {
+        await page.goto(`${BASE}/chat/${cls.id}`);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+        await page.waitForTimeout(900);
+        const mine = page.locator('.chat-msg.mine').first();
+        if (await mine.count()) {
+          await mine.hover();
+          const more = mine.getByTestId('chat-more');
+          if (await more.count()) {
+            await more.click().catch(() => undefined);
+            await page.waitForTimeout(300);
+            await page.screenshot({ path: path.join(outDir, `chat-menu-${locale}-${width}-${theme}.png`) });
+            count++;
+            await page.keyboard.press('Escape');
+            await page.getByTestId('chat-menu-backdrop').click({ position: { x: 2, y: 2 } }).catch(() => undefined);
+          }
+        }
+      }
       await shot('profile', '/profile');
       await ctx.close();
       // name-gate screen (task 2): fresh context, incomplete account, no save
-      {
+      if (!only || only.includes('name')) {
         const gctx = await browser.newContext({
           viewport: { width, height: width === 390 ? 844 : 900 },
           colorScheme: theme === 'dark' ? 'dark' : 'light',
