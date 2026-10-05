@@ -83,7 +83,10 @@ test.describe.serial('chat (item 8): teacher and student exchange in realtime', 
 
     await tp.goto(`/chat/${classId}`);
     await sp.goto(`/chat/${classId}`);
+    // BOTH sockets must be in the room before the first send, else the push is
+    // missed and we'd wait on the 30 s poll fallback (past the 25 s assertion)
     await expect(tp.getByTestId('chat-conn')).toContainText(/в сети|online|onlayn/, { timeout: 15_000 });
+    await expect(sp.getByTestId('chat-conn')).toContainText(/в сети|online|onlayn/, { timeout: 15_000 });
 
     // teacher → student WITHOUT reload on the student side (realtime push)
     await tp.getByTestId('chat-input').fill('Проверка realtime ✅');
@@ -99,6 +102,60 @@ test.describe.serial('chat (item 8): teacher and student exchange in realtime', 
     // the reply must be shown as literal text — no <b> element rendered inside it
     await expect(mine.locator('b')).toHaveCount(0);
     await expect(mine.locator('script')).toHaveCount(0);
+
+    await tCtx.close(); await sCtx.close();
+  });
+
+  test('menu item 7: edit own message → «изменено» live on the peer; copy toast; delete via menu', async ({ browser }) => {
+    const tCtx = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+    const sCtx = await browser.newContext();
+    const tp = await tCtx.newPage();
+    await tp.goto('/login');
+    await tp.getByTestId('email').fill(stack.teacherEmail);
+    await tp.getByTestId('password').fill(stack.teacherPassword);
+    await tp.getByTestId('login-submit').click();
+    await expect(tp.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    const sp = await sCtx.newPage();
+    await sp.goto('/login');
+    await sp.getByTestId('email').fill(stuEmail);
+    await sp.getByTestId('password').fill('Secret1234');
+    await sp.getByTestId('login-submit').click();
+    await expect(sp.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    await tp.goto(`/chat/${classId}`);
+    await sp.goto(`/chat/${classId}`);
+    await expect(tp.getByTestId('chat-conn')).toContainText(/в сети|online|onlayn/, { timeout: 15_000 });
+    await expect(sp.getByTestId('chat-conn')).toContainText(/в сети|online|onlayn/, { timeout: 15_000 });
+
+    const marker = `Точка ${stamp}`;
+    await tp.getByTestId('chat-input').fill(marker);
+    await tp.getByTestId('chat-send').click();
+    const bubble = tp.getByTestId('chat-msg').filter({ hasText: marker });
+    await expect(sp.getByTestId('chat-msg').filter({ hasText: marker })).toBeVisible({ timeout: 25_000 });
+
+    // the old in-bubble «×» is gone — actions live behind «⋯»
+    await expect(tp.getByTestId('chat-del')).toHaveCount(0);
+    await bubble.getByTestId('chat-more').click();
+    await expect(bubble.getByTestId('chat-menu')).toBeVisible();
+    await bubble.getByTestId('chat-act-edit').click();
+    await bubble.getByTestId('chat-edit-input').fill(`${marker} — правка`);
+    await bubble.getByTestId('chat-edit-save').click();
+    // author sees the «изменено» tag; the peer gets the new text over the socket, no reload
+    await expect(bubble.getByTestId('chat-edited')).toBeVisible();
+    const peer = sp.getByTestId('chat-msg').filter({ hasText: 'правка' });
+    await expect(peer).toBeVisible({ timeout: 25_000 });
+    await expect(peer.getByTestId('chat-edited')).toBeVisible({ timeout: 25_000 });
+
+    // copy → toast «Скопировано»
+    await bubble.getByTestId('chat-more').click();
+    await bubble.getByTestId('chat-act-copy').click();
+    await expect(tp.getByTestId('chat-toast')).toBeVisible();
+
+    // delete asks for a confirm, then the message is gone on both sides
+    tp.once('dialog', (d) => void d.accept());
+    await bubble.getByTestId('chat-more').click();
+    await bubble.getByTestId('chat-act-del').click();
+    await expect(tp.getByTestId('chat-msg').filter({ hasText: marker })).toHaveCount(0, { timeout: 25_000 });
+    await expect(sp.getByTestId('chat-msg').filter({ hasText: marker })).toHaveCount(0, { timeout: 25_000 });
 
     await tCtx.close(); await sCtx.close();
   });

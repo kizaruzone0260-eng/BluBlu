@@ -7,7 +7,7 @@ import { useChatUnread } from '../lib/chat';
 import { fmtDateTime } from '../lib/format';
 import { useAuth } from '../App';
 
-interface Msg { id: string; authorId: string; authorName: string; text: string; createdAt: string }
+interface Msg { id: string; authorId: string; authorName: string; text: string; createdAt: string; editedAt: string | null }
 
 /** item 8 — «Чат»: one shared thread per class, members only. */
 
@@ -53,6 +53,13 @@ export default function ChatRoom() {
   const [before, setBefore] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
+  // item 7 — per-message action menu (⋯), inline editor and the copy toast
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<number | undefined>(undefined);
+  const pressTimer = useRef<number | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const pagesRef = useRef<{ messages: Msg[]; hasMore: boolean }>({ messages: [], hasMore: false });
   const [older, setOlder] = useState<{ messages: Msg[]; hasMore: boolean }[]>([]);
@@ -84,6 +91,15 @@ export default function ChatRoom() {
     },
   });
 
+  const mapErr = (code?: string) => {
+    const map: Record<string, string> = {
+      chatEmpty: t('chat.errorEmpty'), chatDisabled: t('chat.errorDisabled'),
+      chatAnnounceOnly: t('chat.errorAnnounce'), chatMuted: t('chat.errorMuted'),
+      chatRateLimited: t('chat.errorRate'), invalidInput: t('chat.errorTooLong'),
+    };
+    return map[code ?? ''] ?? t('common.errorGeneric');
+  };
+
   const send = useMutation({
     mutationFn: (text: string) => api<Msg>(`/api/classes/${id}/chat/messages`, { method: 'POST', body: JSON.stringify({ text }) }),
     onSuccess: () => {
@@ -91,14 +107,14 @@ export default function ChatRoom() {
       void qc.invalidateQueries({ queryKey: ['chat-latest', id] });
       void qc.invalidateQueries({ queryKey: ['chat-summary'] });
     },
-    onError: (e: { code?: string }) => {
-      const map: Record<string, string> = {
-        chatEmpty: t('chat.errorEmpty'), chatDisabled: t('chat.errorDisabled'),
-        chatAnnounceOnly: t('chat.errorAnnounce'), chatMuted: t('chat.errorMuted'),
-        chatRateLimited: t('chat.errorRate'), invalidInput: t('chat.errorTooLong'),
-      };
-      setError(map[e.code ?? ''] ?? t('common.errorGeneric'));
-    },
+    onError: (e: { code?: string }) => setError(mapErr(e.code)),
+  });
+
+  const edit = useMutation({
+    mutationFn: (p: { msgId: string; text: string }) =>
+      api<Msg>(`/api/classes/${id}/chat/messages/${p.msgId}`, { method: 'PATCH', body: JSON.stringify({ text: p.text }) }),
+    onSuccess: () => { setEditingId(null); setError(''); void qc.invalidateQueries({ queryKey: ['chat-latest', id] }); },
+    onError: (e: { code?: string }) => setError(mapErr(e.code)),
   });
 
   const del = useMutation({
@@ -128,15 +144,19 @@ export default function ChatRoom() {
         if (disposed) return;
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         ws = new WebSocket(`${proto}://${location.host}/api/ws/chat/${id}?ticket=${encodeURIComponent(ticket)}`);
-        ws.onopen = () => { attempt = 0; setConnected(true); };
+        // «в сети» only after the server's ready frame: the hub joins the room
+        // before sending it, so a green badge really means broadcasts will reach us
+        ws.onopen = () => { attempt = 0; };
         ws.onmessage = (ev) => {
           try {
             const msg = JSON.parse(ev.data as string) as { type: string; message?: Msg; messageId?: string };
+            if (msg.type === 'ready') setConnected(true);
             if (msg.type === 'message' && msg.message) {
               void qc.invalidateQueries({ queryKey: ['chat-latest', id] });
               void qc.invalidateQueries({ queryKey: ['chat-summary'] });
             }
             if (msg.type === 'deleted') void qc.invalidateQueries({ queryKey: ['chat-latest', id] });
+            if (msg.type === 'edited') void qc.invalidateQueries({ queryKey: ['chat-latest', id] });
           } catch { /* ignore malformed frames */ }
         };
         ws.onclose = (ev) => {
@@ -169,6 +189,33 @@ export default function ChatRoom() {
   const isTeacher = me?.role === 'teacher';
   const canPost = isTeacher ? meta?.chatMode !== 'off' : meta?.chatMode === 'on';
 
+  function showToast(msg: string) {
+    setToast(msg);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(''), 2_000);
+  }
+  async function copyText(txt: string) {
+    try { await navigator.clipboard.writeText(txt); } catch {
+      // http/old-browser fallback: a throwaway textarea + execCommand
+      const ta = document.createElement('textarea');
+      ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch { /* nothing else to try */ }
+      ta.remove();
+    }
+    setMenuFor(null);
+    showToast(t('chat.copied'));
+  }
+  // Telegram-style long-press (touch) opens the same menu; any move cancels it
+  function pressStart(msgId: string) {
+    pressCancel();
+    pressTimer.current = window.setTimeout(() => setMenuFor(msgId), 500);
+  }
+  function pressCancel() {
+    if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = undefined; }
+  }
+  useEffect(() => () => { pressCancel(); window.clearTimeout(toastTimer.current); }, []);
+
   return (
     <div className="chat-room">
       <div className="row" style={{ alignItems: 'center' }}>
@@ -186,17 +233,21 @@ export default function ChatRoom() {
         {messages.length === 0 && !latest.isPending && <p className="muted" style={{ textAlign: 'center' }}>{t('chat.empty')}</p>}
         {messages.map((m) => {
           const mine = m.authorId === me?.id;
+          const canAct = mine || isTeacher; // author edits own; teacher moderates (copy/delete)
+          const editing = editingId === m.id;
           return (
-            <div key={m.id} className={mine ? 'chat-msg mine' : 'chat-msg'} data-testid="chat-msg">
+            <div key={m.id} className={mine ? 'chat-msg mine' : 'chat-msg'} data-testid="chat-msg"
+              onContextMenu={(e) => { if (canAct) { e.preventDefault(); setMenuFor(m.id); } }}>
               <div className="chat-msg-head">
                 <strong>{mine ? t('chat.you') : m.authorName}</strong>
                 <span className="muted">{fmtDateTime(m.createdAt, i18n.language)}</span>
-                {(mine || isTeacher) && (
-                  <button className="ghost danger-text" style={{ marginTop: 0, padding: 2 }} data-testid="chat-del"
-                    aria-label={t('common.delete')}
-                    onClick={() => { if (window.confirm(t('chat.deleteConfirm'))) del.mutate(m.id); }}>✕</button>
+                {m.editedAt && (
+                  <span className="muted chat-edited-tag" data-testid="chat-edited">
+                    {t('chat.edited')} · {fmtDateTime(m.editedAt, i18n.language)}
+                  </span>
                 )}
-                {isTeacher && !mine && (
+                <div className="spacer" />
+                {isTeacher && !mine && !editing && (
                   <button className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="chat-mute"
                     aria-label={t('chat.mute')}
                     onClick={() => {
@@ -210,14 +261,59 @@ export default function ChatRoom() {
                       mute.mutate({ userId: m.authorId, until });
                     }}>🔇</button>
                 )}
+                {canAct && !editing && (
+                  <button className="ghost chat-more" style={{ marginTop: 0, padding: 2 }} data-testid="chat-more"
+                    aria-label={t('chat.menu')} aria-haspopup="menu" aria-expanded={menuFor === m.id}
+                    onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>⋯</button>
+                )}
               </div>
-              {/* plain text — React escapes; chat never renders HTML (XSS-safe by construction) */}
-              <div className="chat-msg-text">{m.text}</div>
+              {editing ? (
+                <div className="chat-edit">
+                  <label className="sr-only" htmlFor={`chat-edit-${m.id}`}>{t('chat.edit')}</label>
+                  <textarea id={`chat-edit-${m.id}`} data-testid="chat-edit-input" rows={3} value={editText} maxLength={2000}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') { setEditingId(null); return; }
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (editText.trim()) edit.mutate({ msgId: m.id, text: editText.trim() }); }
+                    }}
+                    style={{ width: '100%', resize: 'vertical' }} />
+                  <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                    <button type="button" data-testid="chat-edit-save" style={{ marginTop: 0 }}
+                      disabled={!editText.trim() || edit.isPending}
+                      onClick={() => edit.mutate({ msgId: m.id, text: editText.trim() })}>{t('common.save')}</button>
+                    <button type="button" className="secondary" data-testid="chat-edit-cancel" style={{ marginTop: 0 }}
+                      onClick={() => setEditingId(null)}>{t('common.cancel')}</button>
+                  </div>
+                </div>
+              ) : (
+                /* plain text — React escapes; chat never renders HTML (XSS-safe by construction) */
+                <div className="chat-msg-text" data-testid="chat-text"
+                  onPointerDown={() => canAct && pressStart(m.id)}
+                  onPointerUp={pressCancel} onPointerLeave={pressCancel} onPointerMove={pressCancel}
+                  onPointerCancel={pressCancel}>{m.text}</div>
+              )}
+              {menuFor === m.id && !editing && (
+                <div className="chat-menu card" role="menu" aria-label={t('chat.menu')} data-testid="chat-menu">
+                  <button type="button" role="menuitem" data-testid="chat-act-copy" style={{ marginTop: 0 }}
+                    onClick={() => void copyText(m.text)}>{t('chat.copy')}</button>
+                  {mine && (
+                    <button type="button" role="menuitem" data-testid="chat-act-edit" style={{ marginTop: 0 }}
+                      onClick={() => { setMenuFor(null); setEditingId(m.id); setEditText(m.text); }}>{t('chat.edit')}</button>
+                  )}
+                  <button type="button" role="menuitem" className="danger-text" data-testid="chat-act-del" style={{ marginTop: 0 }}
+                    onClick={() => {
+                      setMenuFor(null);
+                      if (window.confirm(t('chat.deleteConfirm'))) del.mutate(m.id);
+                    }}>{t('common.delete')}</button>
+                </div>
+              )}
             </div>
           );
         })}
         <div ref={bottomRef} />
       </div>
+      {menuFor && <div className="chat-menu-backdrop" data-testid="chat-menu-backdrop" onClick={() => setMenuFor(null)} />}
+      {toast && <div className="toast" role="status" data-testid="chat-toast">{toast}</div>}
 
       {error && <p className="error" data-testid="chat-error">{error}</p>}
       {meta && !canPost && (

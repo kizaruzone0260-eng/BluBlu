@@ -351,12 +351,25 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .tabbar a { position: relative; }
 .chat-room { display: flex; flex-direction: column; gap: 8px; min-height: 60vh; }
 .chat-thread { flex: 1; overflow-y: auto; max-height: 62vh; display: flex; flex-direction: column; gap: 10px; }
-.chat-msg { max-width: min(85%, 560px); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 10px; background: var(--surface-2); }
+.chat-msg { position: relative; max-width: min(85%, 560px); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 10px; background: var(--surface-2); }
 .chat-msg.mine { align-self: flex-end; background: var(--accent-soft); border-color: var(--accent); }
 .chat-msg:not(.mine) { align-self: flex-start; }
 .chat-msg-head { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--text-muted); }
 .chat-msg-head strong { color: var(--text); }
-.chat-msg-text { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+/* item 7: the message text is selectable (copy works with mouse/long-press too) */
+.chat-msg-text { white-space: pre-wrap; word-break: break-word; margin-top: 2px; user-select: text; -webkit-user-select: text; }
+/* item 7: Telegram-style «⋯» — appears on hover/focus on desktop, always on touch */
+.chat-more { opacity: 0; transition: opacity .12s; font-weight: 700; min-width: 32px; }
+.chat-msg:hover .chat-more, .chat-msg:focus-within .chat-more { opacity: 1; }
+@media (hover: none) { .chat-more { opacity: 1; } }
+.chat-menu {
+  position: absolute; right: 8px; top: calc(100% - 4px); z-index: 30; min-width: 160px;
+  display: flex; flex-direction: column; gap: 2px; padding: 6px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+}
+.chat-menu button { width: 100%; margin: 0; text-align: left; justify-content: flex-start; }
+.chat-menu-backdrop { position: fixed; inset: 0; z-index: 20; }
+.chat-edited-tag { font-style: italic; }
 .chat-unread { background: var(--accent); color: var(--accent-text); }
 button.danger-text { color: var(--danger); }
 

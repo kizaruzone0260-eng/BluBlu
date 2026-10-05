@@ -180,12 +180,107 @@ suite('chat (item 8)', () => {
     expect(rows.length).toBeGreaterThanOrEqual(2);
   });
 
+  // ── item 7: editing own messages ────────────────────────────────────────────
+  const patch = (tok: string, url: string, body: unknown) =>
+    app.inject({ method: 'PATCH', url, headers: a(tok), payload: body as object });
+
+  it('edit: author updates own text (editedAt set); teacher/peer get 404; XSS stays plain', async () => {
+    const pw = await hashPassword('Passw0rd123');
+    const [ed] = await t.db.insert(users).values({ role: 'student', name: 'Редактор', email: 'edt@x.io', passwordHash: pw, locale: 'ru', tz: 'UTC' }).returning();
+    await t.db.insert(classMembers).values({ classId, userId: ed!.id });
+    const tok = `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'edt@x.io', password: 'Passw0rd123' } })).json().accessToken}`;
+
+    const msg = await post(tok, `/api/classes/${classId}/chat/messages`, { text: '<b>черновик</b>' });
+    expect(msg.statusCode).toBe(201);
+    const mid = msg.json().id as string;
+    expect(msg.json().editedAt).toBeNull();
+
+    const ok = await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: '<script>alert(1)</script> финал' });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().text).toBe('<script>alert(1)</script> финал'); // stored verbatim — the client renders as text
+    expect(ok.json().editedAt).toBeTruthy();
+    const list = await get(tok, `/api/classes/${classId}/chat/messages`);
+    const row = (list.json().messages as { id: string; editedAt: string | null }[]).find((m) => m.id === mid);
+    expect(row?.editedAt).toBeTruthy();
+
+    // the teacher may delete but NEVER edit someone else's message
+    const byTeacher = await patch(teacherTok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'руками учителя' });
+    expect(byTeacher.statusCode).toBe(404);
+    // a peer student likewise
+    const byPeer = await patch(studentATok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'сосед' });
+    expect(byPeer.statusCode).toBe(404);
+    // outsider → no access to the class at all
+    const outTok = `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'out@x.io', password: 'Passw0rd123' } })).json().accessToken}`;
+    expect((await patch(outTok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'чужак' })).statusCode).toBe(404);
+
+    // limits: empty / whitespace / >2000
+    expect((await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: '' })).statusCode).toBe(400);
+    expect((await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: '   ' })).statusCode).toBe(400);
+    expect((await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'x'.repeat(2001) })).statusCode).toBe(400);
+    // the failed attempts above did NOT touch the message
+    expect((await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'всё ещё можно' })).statusCode).toBe(200);
+    // editing a deleted message → 404
+    await app.inject({ method: 'DELETE', url: `/api/classes/${classId}/chat/messages/${mid}`, headers: a(tok) });
+    expect((await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'нет строки' })).statusCode).toBe(404);
+  });
+
+  it('edit: muted student cannot edit own message (403 chatMuted)', async () => {
+    const pw = await hashPassword('Passw0rd123');
+    const [mu] = await t.db.insert(users).values({ role: 'student', name: 'Заглуш', email: 'mut@x.io', passwordHash: pw, locale: 'ru', tz: 'UTC' }).returning();
+    await t.db.insert(classMembers).values({ classId, userId: mu!.id });
+    const tok = `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'mut@x.io', password: 'Passw0rd123' } })).json().accessToken}`;
+    const msg = await post(tok, `/api/classes/${classId}/chat/messages`, { text: 'до заглушения' });
+    const mid = msg.json().id as string;
+    await post(teacherTok, `/api/classes/${classId}/chat/mutes`, { userId: mu!.id, until: null });
+    const denied = await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'после' });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().error).toBe('chatMuted');
+  });
+
+  it('edit: edits share the send rate limit (6th action in 10 s → 429)', async () => {
+    const pw = await hashPassword('Passw0rd123');
+    const [fl] = await t.db.insert(users).values({ role: 'student', name: 'Лимитчик', email: 'lim@x.io', passwordHash: pw, locale: 'ru', tz: 'UTC' }).returning();
+    await t.db.insert(classMembers).values({ classId, userId: fl!.id });
+    const tok = `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'lim@x.io', password: 'Passw0rd123' } })).json().accessToken}`;
+    const first = await post(tok, `/api/classes/${classId}/chat/messages`, { text: 'раз' });
+    for (let i = 0; i < 4; i++) expect((await post(tok, `/api/classes/${classId}/chat/messages`, { text: `ещё${i}` })).statusCode).toBe(201);
+    // 5 sends used; the 6th action — an EDIT — is refused with the same 429
+    const six = await patch(tok, `/api/classes/${classId}/chat/messages/${first.json().id}`, { text: 'шесть' });
+    expect(six.statusCode).toBe(429);
+    expect(Number(six.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('edit: WS broadcasts an «edited» frame to connected sockets', async () => {
+    const pw = await hashPassword('Passw0rd123');
+    const [ob] = await t.db.insert(users).values({ role: 'student', name: 'Смотритель', email: 'obs@x.io', passwordHash: pw, locale: 'ru', tz: 'UTC' }).returning();
+    await t.db.insert(classMembers).values({ classId, userId: ob!.id });
+    const tok = `Bearer ${(await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'obs@x.io', password: 'Passw0rd123' } })).json().accessToken}`;
+    const msg = await post(tok, `/api/classes/${classId}/chat/messages`, { text: 'в эфир' });
+    const mid = msg.json().id as string;
+    const tr = await post(tok, `/api/classes/${classId}/chat/ticket`, {});
+    const ticket = tr.json().ticket as string;
+    if (!app.server.listening) await app.listen({ port: 0, host: '127.0.0.1' }); // first WS test in the file opens the port
+    const addr = app.server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    const frame = new Promise<string>((res) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/chat/${classId}?ticket=${encodeURIComponent(ticket)}`);
+      ws.on('message', (d) => { const s = String(d); if (s.includes('"edited"')) { ws.close(); res(s); } });
+      setTimeout(() => { try { ws.close(); } catch { /* */ } res(''); }, 6000);
+    });
+    await new Promise((r) => setTimeout(r, 300)); // let the socket join the room
+    const edited = await patch(tok, `/api/classes/${classId}/chat/messages/${mid}`, { text: 'обновлено в эфире' });
+    expect(edited.statusCode).toBe(200);
+    const got = await frame;
+    expect(got).toContain('"edited"');
+    expect(got).toContain('обновлено в эфире');
+  });
+
   it('WS: ticket is one-time; second socket with the same ticket closes 4401; summary shows last+unread', async () => {
     const tr = await post(teacherTok, `/api/classes/${classId}/chat/ticket`, {});
     expect(tr.statusCode).toBe(200);
     const ticket = tr.json().ticket as string;
     // start the fastify HTTP server on an ephemeral port so real sockets can connect
-    await app.listen({ port: 0, host: '127.0.0.1' });
+    if (!app.server.listening) await app.listen({ port: 0, host: '127.0.0.1' }); // an earlier WS test may have opened it
     const addr = app.server.address();
     const port = typeof addr === 'object' && addr ? addr.port : 0;
     const codeOf = (tk: string) => new Promise<number>((res) => {

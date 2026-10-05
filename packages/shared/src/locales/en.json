@@ -339,6 +339,11 @@
       "on": "On",
       "off": "Off",
       "announce": "Teacher only"
-    }
+    },
+    "menu": "Message actions",
+    "copy": "Copy",
+    "copied": "Copied",
+    "edit": "Edit",
+    "edited": "edited"
   }
 }

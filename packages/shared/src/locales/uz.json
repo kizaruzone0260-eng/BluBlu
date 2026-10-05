@@ -339,6 +339,11 @@
       "on": "Yoniq",
       "off": "Oʻchiq",
       "announce": "Faqat ustoz yozadi"
-    }
+    },
+    "menu": "Xabar amallari",
+    "copy": "Nusxalash",
+    "copied": "Nusxalandi",
+    "edit": "Tahrirlash",
+    "edited": "tahrirlangan"
   }
 }

@@ -7,7 +7,7 @@ import { users } from '../db/schema.js';
 import { audit } from '../services/audit.js';
 import {
   chatAccess, clearMute, consumeChatTicket, createChatTicket, deleteMessage, deleteMessageAny,
-  isMuted, listMessages, markRead, postMessage, setMute, chatSummary, type ChatMessageRow,
+  editMessage, isMuted, listMessages, markRead, postMessage, setMute, chatSummary, type ChatMessageRow,
 } from '../services/chat.js';
 
 /**
@@ -98,6 +98,32 @@ export async function chatRoutes(app: FastifyInstance, opts: { db: DB }) {
     const msg = await postMessage(db, p.data.id, req.user!.id, w.name, text);
     broadcast(p.data.id, { type: 'message', message: msg });
     return reply.code(201).send(msg);
+  });
+
+  // item 7 — author-only edit. A teacher editing someone else's message gets 404
+  // (editMessage's WHERE carries author_id). Muted students cannot edit; deleted
+  // messages are gone so the row simply won't match.
+  app.patch('/api/classes/:id/chat/messages/:messageId', { preHandler: app.authenticate }, async (req, reply) => {
+    const p = uuidP.safeParse(req.params);
+    if (!p.success || !p.data.messageId) return reply.code(404).send({ error: 'notFound' });
+    const access = await chatAccess(db, req.user!.id, req.user!.role, p.data.id);
+    if (!access) return reply.code(404).send({ error: 'notFound' });
+    const isTeacher = req.user!.role === 'teacher';
+    if (access.chatMode === 'off') return reply.code(403).send({ error: 'chatDisabled' });
+    if (access.chatMode === 'announce' && !isTeacher) return reply.code(403).send({ error: 'chatAnnounceOnly' });
+    if (!isTeacher && await isMuted(db, p.data.id, req.user!.id)) return reply.code(403).send({ error: 'chatMuted' });
+    const parsed = bodySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.code === 'too_small' ? 'chatEmpty' : 'invalidInput' });
+    const text = parsed.data.text.trim();
+    if (!text) return reply.code(400).send({ error: 'chatEmpty' });
+    const rate = chatRateCheck(req.user!.id);
+    if (!rate.allowed) return reply.code(429).header('retry-after', String(rate.retryAfterSec)).send({ error: 'chatRateLimited' });
+    const w = await who(req.user!.id);
+    const edited = await editMessage(db, p.data.id, p.data.messageId, req.user!.id, text);
+    if (!edited) return reply.code(404).send({ error: 'notFound' });
+    audit(db, req.user!.id, 'chat_edit', { classId: p.data.id, messageId: p.data.messageId });
+    broadcast(p.data.id, { type: 'edited', message: { ...edited, authorName: w.name } });
+    return edited;
   });
 
   app.delete('/api/classes/:id/chat/messages/:messageId', { preHandler: app.authenticate }, async (req, reply) => {

@@ -327,6 +327,7 @@ export const chatMessages = pgTable('chat_messages', {
   authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   text: text('text').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  editedAt: timestamp('edited_at', { withTimezone: true }),
 }, (t) => [index('chat_messages_class_time_idx').on(t.classId, t.createdAt)]);
 
 export const chatMutes = pgTable('chat_mutes', {
