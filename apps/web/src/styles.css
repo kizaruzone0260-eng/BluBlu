@@ -150,6 +150,8 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .videos.layout-stage { grid-template-columns: 2fr 1fr; }
 .videos.layout-teacher { grid-template-columns: 1fr; }
 .videos.layout-teacher > div:first-child { grid-column: 1 / -1; }
+/* live camera self-view on the pre-join screen */
+.preview-video { width: 100%; max-width: 320px; aspect-ratio: 16/9; background: #000; border-radius: var(--r-md); margin-top: 8px; }
 
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */
 .topbar {

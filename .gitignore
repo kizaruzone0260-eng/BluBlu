@@ -23,3 +23,6 @@ playwright-report/
 *.log
 .DS_Store
 deploy/turn-certs/*.pem
+
+# Excalidraw fonts copied at build time (scripts/copy-excalidraw-fonts.mjs)
+apps/web/public/excalidraw-assets/

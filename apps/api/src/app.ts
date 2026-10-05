@@ -57,9 +57,16 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   // CSP: connect-src names ONLY concrete origins — same-origin API/WS via 'self'
   // (CSP treats https:'self' as matching its wss counterpart) plus the LiveKit
   // address taken from the environment (LIVEKIT_URL wins over LIVEKIT_WS_URL).
-  // No bare ws:/wss: wildcards.
-  const livekitConnectOrigin = (() => {
-    try { return [new URL(livekitPublicWsUrl()).origin]; } catch { return []; }
+  // No bare ws:/wss: wildcards. The client also fetches https://<host>/settings/
+  // regions over REGULAR HTTP (livekit-client region discovery) — the wss://
+  // origin alone did NOT authorize it and CSP broke that call on every lesson,
+  // so both schemes of the same host are named.
+  const livekitConnectOrigins = (() => {
+    try {
+      const u = new URL(livekitPublicWsUrl());
+      const http = u.protocol === 'wss:' ? `https://${u.host}` : u.protocol === 'ws:' ? `http://${u.host}` : u.origin;
+      return [u.origin, http];
+    } catch { return []; }
   })();
   await app.register(helmet, {
     global: true,
@@ -72,7 +79,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
         imgSrc: ["'self'", 'data:', 'blob:'],
         mediaSrc: ["'self'", 'blob:', 'data:'],
         fontSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", 'blob:', ...livekitConnectOrigin],
+        connectSrc: ["'self'", 'blob:', ...livekitConnectOrigins],
         workerSrc: ["'self'", 'blob:'],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
@@ -82,6 +89,14 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     },
     crossOriginResourcePolicy: { policy: 'same-origin' },
     referrerPolicy: { policy: 'same-origin' },
+  });
+  // video lesson: camera/mic/screen-share must be allowed for OUR OWN origin.
+  // helmet v8 dropped its Permissions-Policy middleware, so the header is set
+  // here. Without it a restrictive embedder/default policy could silently kill
+  // getUserMedia — the SPA would then show the localized «нет разрешения» error.
+  app.addHook('onSend', (_req, reply, payload, done) => {
+    reply.header('permissions-policy', 'camera=(self), microphone=(self), display-capture=(self), autoplay=(self)');
+    done(null, payload);
   });
 
   const corsOrigins = env.NODE_ENV === 'production'

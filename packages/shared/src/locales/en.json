@@ -184,7 +184,22 @@
     "notesNew": "New sheet",
     "board": "Board",
     "page": "p.",
-    "readonly": "view only"
+    "readonly": "view only",
+    "toggleCamera": "Camera",
+    "you": "You",
+    "camEnable": "Turn camera on",
+    "camDisable": "Turn camera off",
+    "camDenied": "No permission for the camera",
+    "camBusy": "Camera is busy — another app is using it",
+    "camUnavailable": "Camera unavailable",
+    "camNotFound": "Camera not found",
+    "micDenied": "No permission for the microphone",
+    "micBusy": "Microphone is busy — another app is using it",
+    "micUnavailable": "Microphone unavailable",
+    "micNotFound": "Microphone not found",
+    "deviceDefault": "Default",
+    "camNotFound": "Camera not found",
+    "micNotFound": "Microphone not found"
   },
   "tg": {
     "title": "Telegram notifications",

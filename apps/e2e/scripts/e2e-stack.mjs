@@ -57,9 +57,13 @@ const api = spawn('node', ['dist/server.js'], {
     WEB_DIST: path.join(ROOT, 'apps/web/dist'),
     STORAGE_DIR: path.join(ROOT, 'apps/e2e/files'),
     JWT_SECRET: 'e2e-secret-e2e-secret-e2e-secret-0123456789',
-    LIVEKIT_API_KEY: 'e2ekey',
-    LIVEKIT_API_SECRET: 'e2esecrete2esecrete2esecrete2esecret',
-    LIVEKIT_WS_URL: 'ws://127.0.0.1:7880',
+    // RTC e2e (camera.spec): when a real media server is available it is passed
+    // via env (LIVEKIT_URL/API_KEY/API_SECRET/WS_URL); the defaults stay inert so
+    // every other test only needs the token-issuing API, never a live room.
+    LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY ?? 'e2ekey',
+    LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET ?? 'e2esecrete2esecrete2esecrete2esecret',
+    LIVEKIT_WS_URL: process.env.LIVEKIT_WS_URL ?? 'ws://127.0.0.1:7880',
+    ...(process.env.LIVEKIT_URL ? { LIVEKIT_URL: process.env.LIVEKIT_URL } : {}),
     LIVEKIT_INTERNAL_URL: 'http://127.0.0.1:7880',
     TELEGRAM_TRANSPORT: 'log',
     PUBLIC_WEB_ORIGIN: `http://127.0.0.1:${PORT}`,

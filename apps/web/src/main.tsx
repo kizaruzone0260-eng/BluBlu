@@ -10,6 +10,11 @@ import App from './App';
 
 applyTheme(getThemeChoice());
 
+// Excalidraw pulls its handwriting fonts from this base path; default is the
+// esm.sh CDN which our CSP (font-src 'self' data:) correctly blocks. The web
+// build copies the fonts into public/excalidraw-assets (scripts/copy-excalidraw-fonts.mjs).
+(window as unknown as { EXCALIDRAW_ASSET_PATH?: string }).EXCALIDRAW_ASSET_PATH = '/excalidraw-assets';
+
 // service-worker registration lives in the module bundle: an inline <script> in
 // index.html would violate our own CSP (script-src 'self') on served builds.
 if ('serviceWorker' in navigator) {

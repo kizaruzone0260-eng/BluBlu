@@ -72,10 +72,18 @@ suite('stage 7: security hardening', () => {
       const csp = String(r.headers['content-security-policy']);
       const connect = /connect-src([^;]*)/.exec(csp)?.[1] ?? '';
       expect(connect).toContain('wss://lv-test.livekit.cloud');
+      // livekit-client fetches https://<host>/settings/regions — wss:// alone did NOT
+      // authorize it in CSP and every lesson entry logged a violation (camera task)
+      expect(connect).toContain('https://lv-test.livekit.cloud');
       expect(connect).not.toMatch(/(^|\s)ws:(\s|$)/);
       expect(connect).not.toMatch(/(^|\s)wss:(\s|$)/);
       const script = /script-src([^;]*)/.exec(csp)?.[1] ?? '';
       expect(script).not.toContain('unsafe-inline'); // SW registration lives in the bundle now
+      // video lesson permissions: camera + microphone allowed for our own origin
+      const pp = String(r.headers['permissions-policy'] ?? '');
+      expect(pp).toContain('camera=(self)');
+      expect(pp).toContain('microphone=(self)');
+      expect(pp).toContain('display-capture=(self)');
       await app.close();
     } finally { env.LIVEKIT_URL = prev; }
   });

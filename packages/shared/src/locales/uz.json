@@ -184,7 +184,22 @@
     "notesNew": "Yangi varaq",
     "board": "Doska",
     "page": "bet",
-    "readonly": "faqat ko'rish"
+    "readonly": "faqat ko'rish",
+    "toggleCamera": "Kamera",
+    "you": "Siz",
+    "camEnable": "Kamerani yoqish",
+    "camDisable": "Kamerani o'chirish",
+    "camDenied": "Kameraga ruxsat berilmagan",
+    "camBusy": "Kamera boshqa ilova tomonidan band",
+    "camUnavailable": "Kamera mavjud emas",
+    "camNotFound": "Kamera topilmadi",
+    "micDenied": "Mikrofonga ruxsat berilmagan",
+    "micBusy": "Mikrofon boshqa ilova tomonidan band",
+    "micUnavailable": "Mikrofon mavjud emas",
+    "micNotFound": "Mikrofon topilmadi",
+    "deviceDefault": "Standart",
+    "camNotFound": "Kamera topilmadi",
+    "micNotFound": "Mikrofon topilmadi"
   },
   "tg": {
     "title": "Telegram bildirishnomalari",
