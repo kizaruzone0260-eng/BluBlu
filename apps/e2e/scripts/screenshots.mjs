@@ -59,6 +59,19 @@ const api = async (method, p, body) => {
   return r.json().catch(() => null);
 };
 const classes = await api('GET', '/api/classes');
+// task 2 — the «Имя и фамилия» gate shots use a NEVER-completed account
+const gateLogin = await (await fetch(`${BASE}/api/auth/login`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ email: 'shot@e2e.io', password: 'Passw0rd123' }),
+})).json();
+const apiGate = async (method, p, body) => {
+  const r = await fetch(`${BASE}${p}`, {
+    method,
+    headers: { authorization: `Bearer ${gateLogin.accessToken}`, ...(method === 'GET' ? {} : { 'content-type': 'application/json' }) },
+    body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
+  });
+  return r.json().catch(() => null);
+};
 let cls = classes.find((c) => c.name === 'Демо-класс 7B (showcase)');
 if (!cls) {
   cls = await api('POST', '/api/classes', { name: 'Демо-класс 7B (showcase)', description: 'Демонстрационный класс для скриншотов интерфейса.', color: '#4f46e5' });
@@ -144,6 +157,9 @@ let count = 0;
 for (const locale of locales) {
   const me = await api('GET', '/api/me');
   await api('PATCH', '/api/me/profile', { name: me.name, locale, tz: me.tz });
+  // the name-gate account (task 2) must answer in the same language: a PATCH
+  // with an EMPTY family name never completes the profile → the gate stays
+  await apiGate('PATCH', '/api/me/profile', { name: 'Shot', lastName: '', locale, tz: 'Asia/Tashkent' });
   for (const theme of themes) {
     for (const width of widths) {
       // unauthenticated login shot
@@ -228,6 +244,28 @@ for (const locale of locales) {
       await shot('chatroom', `/chat/${cls.id}`);
       await shot('profile', '/profile');
       await ctx.close();
+      // name-gate screen (task 2): fresh context, incomplete account, no save
+      {
+        const gctx = await browser.newContext({
+          viewport: { width, height: width === 390 ? 844 : 900 },
+          colorScheme: theme === 'dark' ? 'dark' : 'light',
+          locale: locale === 'ru' ? 'ru-RU' : locale === 'uz' ? 'uz-UZ' : 'en-GB',
+        });
+        await gctx.addInitScript(([lng, th]) => {
+          localStorage.setItem('klass_locale', lng);
+          localStorage.setItem('klass_theme', th);
+        }, [locale, theme]);
+        const gp = await gctx.newPage();
+        await gp.goto(`${BASE}/login`);
+        await gp.getByTestId('email').fill('shot@e2e.io');
+        await gp.getByTestId('password').fill('Passw0rd123');
+        await gp.getByTestId('login-submit').click();
+        await gp.getByTestId('name-gate').waitFor({ timeout: 20_000 });
+        await gp.waitForTimeout(400);
+        await gp.screenshot({ path: path.join(outDir, `name-${locale}-${width}-${theme}.png`) });
+        count++;
+        await gctx.close();
+      }
       }
     }
   }

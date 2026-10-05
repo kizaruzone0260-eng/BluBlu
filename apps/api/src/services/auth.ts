@@ -21,10 +21,15 @@ export interface PublicUser {
   email: string;
   locale: string;
   tz: string;
+  /** name screen (task 2): false → the «Имя и фамилия» gate must be shown. */
+  profileCompleted: boolean;
 }
 
 function toPublic(u: typeof users.$inferSelect): PublicUser {
-  return { id: u.id, role: u.role, name: u.name, lastName: u.lastName, email: u.email, locale: u.locale, tz: u.tz };
+  return {
+    id: u.id, role: u.role, name: u.name, lastName: u.lastName, email: u.email,
+    locale: u.locale, tz: u.tz, profileCompleted: u.profileCompletedAt != null,
+  };
 }
 
 /**
@@ -44,7 +49,11 @@ export async function registerStudentByCode(
     const user = await db.transaction(async (tx) => {
       const [u] = await tx
         .insert(users)
-        .values({ role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash })
+        .values({
+          role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash,
+          // registration step 2 already collected BOTH names → no gate later
+          profileCompletedAt: new Date(),
+        })
         .returning();
       if (!u) throw new InvalidCodeError();
       const redeem = await redeemInviteCode(tx as unknown as DB, input.code, u.id);

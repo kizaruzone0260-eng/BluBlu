@@ -44,7 +44,9 @@
     "continue": "Continue",
     "back": "Back",
     "firstName": "First name",
-    "lastName": "Last name"
+    "lastName": "Last name",
+    "nameGateTitle": "First and last name",
+    "nameGateHint": "This is how your teacher and classmates will see you. Both fields are required — you can't continue without them."
   },
   "classes": {
     "title": "My classes",

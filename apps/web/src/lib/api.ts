@@ -83,6 +83,8 @@ export interface Me {
   email: string;
   locale: 'ru' | 'uz' | 'en';
   tz: string;
+  /** name screen (task 2): false → show «Имя и фамилия» before the app */
+  profileCompleted: boolean;
 }
 
 /**

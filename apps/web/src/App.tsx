@@ -10,6 +10,7 @@ import Register from './pages/Register';
 import Classes from './pages/Classes';
 import ClassDetail from './pages/ClassDetail';
 import Calendar from './pages/Calendar';
+import CompleteName from './pages/CompleteName';
 import Lesson from './pages/Lesson';
 import Profile from './pages/Profile';
 import Notes from './pages/Notes';
@@ -70,6 +71,14 @@ export default function App() {
   return (
     <AuthCtx.Provider value={{ me, refresh }}>
       {me ? (
+        me.profileCompleted === false ? (
+          // name screen (task 2): replaces the whole app until saved — no route
+          // to navigate around, so no redirect loop; logout stays reachable.
+          <div className="container">
+            <AuthHeader />
+            <CompleteName me={me} onDone={refresh} />
+          </div>
+        ) : (
         <Shell me={me}>
           <Routes>
             <Route path="/" element={<Home me={me} />} />
@@ -87,6 +96,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Shell>
+        )
       ) : (
         <div className="container">
           <AuthHeader />

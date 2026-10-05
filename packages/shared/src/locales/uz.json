@@ -44,7 +44,9 @@
     "continue": "Davom etish",
     "back": "Orqaga",
     "firstName": "Ism",
-    "lastName": "Familiya"
+    "lastName": "Familiya",
+    "nameGateTitle": "Ism va familiya",
+    "nameGateHint": "O'qituvchi va sinfdoshlar sizni shunday ko'radi. Ikkala maydon ham majburiy — davom etib bo'lmaydi."
   },
   "classes": {
     "title": "Mening sinflarim",

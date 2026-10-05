@@ -16,6 +16,13 @@ export const users = pgTable('users', {
   name: text('name').notNull(),
   /** item 9 — family name, stored apart from the given name; '' for old accounts. */
   lastName: text('last_name').notNull().default(''),
+  /**
+   * Name screen (task 2): set when BOTH given and family names are known —
+   * at registration (step 2) or when the profile was completed later. NULL on
+   * accounts whose name or family name is empty → the «Имя и фамилия» gate is
+   * shown right after login until it is saved.
+   */
+  profileCompletedAt: timestamp('profile_completed_at', { withTimezone: true }),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   locale: localeEnum('locale').notNull().default('ru'),

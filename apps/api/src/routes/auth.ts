@@ -137,20 +137,31 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
-        locale: user.locale, tz: user.tz,
+        locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
       };
     });
 
     app.patch('/api/me/profile', { preHandler: app.authenticate }, async (req, reply) => {
       const parsed = profileUpdateSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
-      const [user] = await db
+      let [user] = await db
         .update(users)
         .set(parsed.data)
         .where(eq(users.id, req.user!.id))
         .returning();
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
-      return { id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email, locale: user.locale, tz: user.tz };
+      // name screen (task 2): the flag flips to complete exactly once, when both
+      // names are non-empty — and is never taken back (an empty lastName in a
+      // later PATCH does not re-open the gate).
+      if (user.profileCompletedAt == null && user.name.trim() !== '' && user.lastName.trim() !== '') {
+        const [done] = await db.update(users).set({ profileCompletedAt: new Date() })
+          .where(eq(users.id, req.user!.id)).returning();
+        if (done) user = done;
+      }
+      return {
+        id: user.id, role: user.role, name: user.name, lastName: user.lastName,
+        email: user.email, locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
+      };
     });
 
     // Full account removal (§3.1 privacy). Cascade removes memberships; refresh tokens revoked.

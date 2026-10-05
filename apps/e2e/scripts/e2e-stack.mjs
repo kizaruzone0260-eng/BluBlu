@@ -84,10 +84,24 @@ if (!up) { console.error('api did not become healthy'); process.exit(1); }
 const [t0] = await admin`select id from users limit 1`;
 if (!t0) {
   await admin.unsafe(`
-    insert into users (id, role, name, email, password_hash, locale, tz, created_at)
-    values ('${teacherId}', 'teacher', 'E2E Teacher', 'owner@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now())
+    insert into users (id, role, name, last_name, email, password_hash, locale, tz, created_at, profile_completed_at)
+    values ('${teacherId}', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now(), now())
     on conflict do nothing`);
 }
+// name-screen spec (task 2): accounts WITHOUT a completed name pair — they must
+// hit the «Имя и фамилия» gate on first login. profile_completed_at stays NULL.
+await admin.unsafe(`
+  insert into users (role, name, last_name, email, password_hash, locale, tz, created_at)
+  values ('teacher', 'Teacher', '', 'gate@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now()),
+         ('teacher', 'Shot', '', 'shot@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now()),
+         ('student', 'Старый', '', 'old@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now()),
+         ('student', 'Луп', '', 'loop@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now())
+  on conflict (email) do nothing`);
+// persistent e2edata across runs: the main teacher must ALWAYS be name-complete
+// (every other spec logs in as them and expects the app, not the gate)
+await admin.unsafe(`
+  update users set last_name = 'E2E', profile_completed_at = coalesce(profile_completed_at, now())
+  where email = 'owner@e2e.io'`);
 writeFileSync(path.join(ROOT, 'apps/e2e/.stack.json'), JSON.stringify({
   port: PORT, teacherEmail: 'owner@e2e.io', teacherPassword: 'Passw0rd123',
 }));
