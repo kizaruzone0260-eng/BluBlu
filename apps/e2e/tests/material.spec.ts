@@ -168,7 +168,14 @@ test.describe.serial('material form (task A)', () => {
     await tp.getByTestId('material-title').fill(`По расписанию ${stamp}`);
     await tp.getByTestId('publish-menu').click();
     await tp.getByTestId('pub-schedule').click();
-    const when = new Date(Date.now() + 45_000);
+    // Round UP to the next whole minute: `datetime-local` here has minute
+    // granularity, so a naive now+45s truncated to HH:MM could land at/before now
+    // (when the current second is 0–14) and the client would (correctly) refuse to
+    // publish a non-future time. The next minute boundary is always 1–59 s ahead
+    // and still well inside the 80 s visibility wait below.
+    const when = new Date();
+    when.setSeconds(0, 0);
+    when.setMinutes(when.getMinutes() + 1);
     const local = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}T${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
     await tp.getByTestId('material-when').fill(local);
     await tp.getByTestId('material-publish').click();
@@ -184,7 +191,9 @@ test.describe.serial('material form (task A)', () => {
     await expect(sp.getByTestId('feed-item').filter({ hasText: `По расписанию ${stamp}` })).toHaveCount(0);
 
     // after the scheduled time (+ heartbeat/publish margin) it appears on reload
-    await sp.waitForTimeout(80_000);
+    // (the next-minute boundary is ≤ 60 s ahead, so 100 s guarantees the schedule
+    // has fired even at the slowest poll interval)
+    await sp.waitForTimeout(100_000);
     await sp.reload();
     await expect(sp.getByTestId('feed-item').filter({ hasText: `По расписанию ${stamp}` })).toBeVisible({ timeout: 20_000 });
     // the draft stays private
