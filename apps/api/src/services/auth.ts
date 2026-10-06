@@ -1,5 +1,5 @@
 import { eq, and, isNull } from 'drizzle-orm';
-import { users, classMembers, refreshTokens } from '../db/schema.js';
+import { users, classMembers, refreshTokens, loginAttempts } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
@@ -70,17 +70,59 @@ export async function registerStudentByCode(
   }
 }
 
+/**
+ * Progressive, per-account brute-force lockout (Hardening part 2). Postgres-
+ * backed so it survives restarts and applies across every client IP. The delay
+ * grows exponentially after 5 consecutive failures (30 s, 60 s, …) and is
+ * CAPPED at 15 minutes, so no account — owner or teacher included — is ever
+ * locked out permanently. `email` arrives normalized (the login schema
+ * lowercases/trims it).
+ */
+const LOCK_THRESHOLD = 5;
+const LOCK_BASE_MS = 30_000;
+const LOCK_MAX_MS = 900_000; // 15 minutes
+
+async function lockState(db: DB, email: string): Promise<{ locked: boolean }> {
+  const [row] = await db.select().from(loginAttempts).where(eq(loginAttempts.email, email)).limit(1);
+  if (row?.lockedUntil && row.lockedUntil.getTime() > Date.now()) return { locked: true };
+  return { locked: false };
+}
+
+async function recordFailure(db: DB, email: string): Promise<void> {
+  const [row] = await db.select().from(loginAttempts).where(eq(loginAttempts.email, email)).limit(1);
+  const failCount = (row?.failCount ?? 0) + 1;
+  const lockedUntil = failCount >= LOCK_THRESHOLD
+    ? new Date(Date.now() + Math.min(LOCK_BASE_MS * 2 ** (failCount - LOCK_THRESHOLD), LOCK_MAX_MS))
+    : null;
+  await db.insert(loginAttempts)
+    .values({ email, failCount, lockedUntil, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: loginAttempts.email, set: { failCount, lockedUntil, updatedAt: new Date() } });
+}
+
 export async function login(db: DB, email: string, password: string): Promise<AuthResult> {
+  // Locked out? Record the attempt anyway (so continued hammering GROWS the
+  // window, up to the cap) but return the SAME generic failure as a bad
+  // password — the response never reveals whether the account exists or is
+  // merely throttled. A dummy verify keeps the timing uniform.
+  if ((await lockState(db, email)).locked) {
+    await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', password);
+    await recordFailure(db, email);
+    return { ok: false, error: 'invalidCredentials' };
+  }
   const [user] = await db.select().from(users)
     .where(and(eq(users.email, email), isNull(users.deletedAt)))
     .limit(1);
   if (!user) {
     await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', password); // constant-ish time on missing user
+    await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
   if (!(await verifyPassword(user.passwordHash, password))) {
+    await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
+  // success clears the counter for this account
+  await db.delete(loginAttempts).where(eq(loginAttempts.email, email));
   const accessToken = await signAccessToken({ sub: user.id, role: user.role, locale: user.locale });
   return { ok: true, accessToken, user: toPublic(user) };
 }

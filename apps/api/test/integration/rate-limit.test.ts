@@ -11,7 +11,7 @@
  * so each case builds its own app with env.TRUST_PROXY toggled.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { preparedDb, makeTeacher, type TestDB } from './util.js';
+import { preparedDb, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import type { FastifyInstance } from 'fastify';
@@ -21,12 +21,10 @@ const suite = process.env.DATABASE_URL_TEST ? describe : describe.skip;
 suite('rate limit: static excluded + trustProxy semantics', () => {
   let t: TestDB;
   const apps: FastifyInstance[] = [];
-  let email = '';
 
   async function appWith(trustProxy: boolean): Promise<FastifyInstance> {
     if (!t) {
       t = await preparedDb(process.env.DATABASE_URL_TEST!);
-      email = (await makeTeacher(t.sql, `rl${Date.now()}@x.io`)).email;
     }
     env.TRUST_PROXY = trustProxy;
     const app = await buildApp(t.db);
@@ -39,10 +37,15 @@ suite('rate limit: static excluded + trustProxy semantics', () => {
     await t?.sql.end();
   });
 
+  // The per-IP HTTP limiter is what this suite exercises. Give every attempt a
+  // DISTINCT email so the per-ACCOUNT brute-force lockout (part 2) never arms
+  // (each address sees a single failure) — the IP-bucket assertions below are
+  // unchanged. All addresses are wrong-password/non-existent → identical 401.
+  let attempt = 0;
   const login = (app: FastifyInstance, xff?: string) => app.inject({
     method: 'POST', url: '/api/auth/login',
     headers: xff ? { 'x-forwarded-for': xff } : {},
-    payload: { email, password: 'WrongPass123' },
+    payload: { email: `rl-${Date.now()}-${attempt++}@x.io`, password: 'WrongPass123' },
   });
 
   it('static (non-/api) requests are not limited', async () => {

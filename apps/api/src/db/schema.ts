@@ -78,6 +78,22 @@ export const refreshTokens = pgTable('refresh_tokens', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('refresh_user_idx').on(t.userId), index('refresh_family_idx').on(t.familyId)]);
 
+/**
+ * Login brute-force lockout (Hardening follow-up, part 2): one row per
+ * NORMALIZED email tracking consecutive failed attempts and the moment the
+ * account stops rejecting further tries. Postgres-backed so the counter
+ * survives an API restart and applies across every client IP — closing the
+ * "rotate IPs to brute one account" gap the per-IP HTTP limiter leaves. The
+ * delay is bounded (≤ 15 min) so no account — including the owner or a teacher
+ * — is ever locked out permanently. Successful login deletes the row.
+ */
+export const loginAttempts = pgTable('login_attempts', {
+  email: text('email').primaryKey(),
+  failCount: integer('fail_count').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const auditLog = pgTable('audit_log', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   actorId: uuid('actor_id').references(() => users.id),
