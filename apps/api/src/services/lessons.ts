@@ -58,7 +58,7 @@ export async function buildJoinToken(opts: {
   isTeacher: boolean; lectureMode: boolean;
 }): Promise<string> {
   const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
-    identity: opts.identity, name: opts.name, ttl: '3h',
+    identity: opts.identity, name: opts.name, ttl: env.RTC_TOKEN_TTL,
   });
   if (opts.isTeacher) {
     // camera + mic + screen with audio + room moderation

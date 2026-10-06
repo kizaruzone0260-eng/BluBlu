@@ -99,6 +99,8 @@ export default function Lesson() {
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
   const roomRef = useRef<Room | null>(null);
+  // Part 4а: heartbeat that keeps the LiveKit join-token fresh during a long lesson.
+  const tokenRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── tiles are React state, NOT imperative DOM: publish/subscribe events can
   // fire BEFORE `connected` renders the grid — with DOM insertion they were
@@ -196,7 +198,10 @@ export default function Lesson() {
     return () => { disposed = true; window.clearTimeout(retryTimer); ws?.close(); };
   }, [session?.id]);
 
-  useEffect(() => () => { void roomRef.current?.disconnect(); }, []);
+  useEffect(() => () => {
+    if (tokenRefreshRef.current) clearInterval(tokenRefreshRef.current);
+    void roomRef.current?.disconnect();
+  }, []);
 
   /** getUserMedia over the constraint chain: saved device → default → bare true. */
   async function gumCamera(deviceId: string): Promise<{ stream: MediaStream | null; errKey: string; err: unknown }> {
@@ -388,7 +393,27 @@ export default function Lesson() {
         const top = speakers.find((s) => s.sid !== room.localParticipant.sid);
         setActiveSid(top?.sid ?? null);
       });
-      room.on(RoomEvent.Disconnected, () => setConnected(false));
+      room.on(RoomEvent.Disconnected, () => { setConnected(false); if (tokenRefreshRef.current) { clearInterval(tokenRefreshRef.current); tokenRefreshRef.current = null; } });
+      // Part 4а: a lesson may run LONGER than the join-token TTL. The LiveKit SDK
+      // heals this itself (the server pushes a `refreshToken` and reconnects with
+      // it), but that only holds for servers that send the push. To be safe for
+      // self-hosted LiveKit too, we re-mint a token from OUR backend on every
+      // (re)connect AND on a proactive heartbeat, handing it to the room when the
+      // client exposes updateToken(). A failure is swallowed: the SDK's own path
+      // still carries the session. The production TTL is floored at 2 h, so a
+      // 30-min heartbeat stays comfortably ahead of expiry.
+      const rejoin = async () => {
+        try {
+          const { token: fresh } = await api<{ token: string }>(`/api/lessons/${s.id}/join`, { method: 'POST' });
+          const r = roomRef.current;
+          const up = r as unknown as { updateToken?: (t: string) => void } | null;
+          if (r && typeof up?.updateToken === 'function') up.updateToken(fresh);
+        } catch { /* ignore — the SDK's server-pushed refresh covers it */ }
+      };
+      room.on(RoomEvent.Reconnecting, () => { void rejoin(); });
+      room.on(RoomEvent.Reconnected, () => { void rejoin(); });
+      if (tokenRefreshRef.current) clearInterval(tokenRefreshRef.current);
+      tokenRefreshRef.current = setInterval(() => { void rejoin(); }, 30 * 60_000);
       await room.connect(wsUrl, token);
       // mic first (camera failures must not swallow the mic), then camera — each
       // with its own soft→minimal constraint chain and a visible error, never silent.

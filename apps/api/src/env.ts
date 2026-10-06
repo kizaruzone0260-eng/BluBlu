@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { effectiveTokenTtl } from './lib/tokenTtl.js';
 
 const DEV_SECRET = 'dev-only-secret-change-me-0123456789abcdefgh';
 
@@ -27,6 +28,10 @@ const envSchema = z
   // Demo (docs/DEMO.md): external LiveKit address (e.g. LiveKit Cloud wss://…).
   // When set it overrides LIVEKIT_WS_URL (client) and LIVEKIT_INTERNAL_URL (RoomService API).
   LIVEKIT_URL: z.string().default(''),
+  // Part 4а: LiveKit LESSON join-token TTL. A lesson may run longer than the
+  // token, so this is env-tunable; in PRODUCTION it is floored at 2 h (see the
+  // clamp below). Format: '<n><smhd>' ('6h','90m') or a bare number of seconds.
+  RTC_TOKEN_TTL: z.string().default('6h'),
   // Demo: public origin of this deployment (e.g. https://xxxx.trycloudflare.com).
   // Used for notification links and same-origin checks. Empty ⇒ production logic (DOMAIN).
   PUBLIC_URL: z.string().default(''),
@@ -76,13 +81,20 @@ const envSchema = z
 
 export const env = envSchema.parse(process.env);
 
-// Hardening (Phase 1б): in PRODUCTION narrow the refresh-reuse grace window to
-// ≤2 s — long enough to absorb one aborted-rotation replay, short enough to
-// shrink the replay-theft blast radius. Non-prod keeps the configured value
-// (tests exercise rotation timing; e2e/StrictMode double-refresh needs slack).
-if (env.NODE_ENV === 'production' && env.REFRESH_REUSE_GRACE_MS > 2000) {
-  env.REFRESH_REUSE_GRACE_MS = 2000;
+// Hardening (Phase 1б) + Part 4б: the refresh-reuse grace window. A browser that
+// aborts a rotation response (instant reload mid-boot) replays the now-stale
+// token; without a grace window that trips the reuse-theft kill and logs the
+// user out. The e2e/integration tests prove that at the old 2 s production value
+// a slow refresh response (delay up to 3 s) DID kill the session, so per the task
+// the production window is reverted to 5 s — still bounded (≤5 s) to keep the
+// replay-theft blast radius small, but enough to survive a 3-s stalled rotation.
+if (env.NODE_ENV === 'production' && env.REFRESH_REUSE_GRACE_MS > 5000) {
+  env.REFRESH_REUSE_GRACE_MS = 5000;
 }
+
+// Part 4а: floor the LiveKit lesson-token TTL at 2 h in production, so a
+// mistyped small value can never drop a mid-lesson participant.
+env.RTC_TOKEN_TTL = String(effectiveTokenTtl(env.RTC_TOKEN_TTL, env.NODE_ENV));
 
 export type Env = typeof env;
 
