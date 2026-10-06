@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-migrations.mjs",
     "start": "node dist/server.js",
     "db:generate": "drizzle-kit generate",
+    "reset-teacher": "node scripts/reset-teacher.mjs",
     "db:migrate": "drizzle-kit migrate",
     "db:secure": "node scripts/secure-db.mjs",
     "seed:teacher": "tsx --env-file=../../.env src/scripts/seed-teacher.ts",

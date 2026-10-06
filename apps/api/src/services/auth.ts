@@ -23,12 +23,15 @@ export interface PublicUser {
   tz: string;
   /** name screen (task 2): false → the «Имя и фамилия» gate must be shown. */
   profileCompleted: boolean;
+  /** part 3: a temporary password was issued — force a change before use. */
+  mustChangePassword: boolean;
 }
 
 function toPublic(u: typeof users.$inferSelect): PublicUser {
   return {
     id: u.id, role: u.role, name: u.name, lastName: u.lastName, email: u.email,
     locale: u.locale, tz: u.tz, profileCompleted: u.profileCompletedAt != null,
+    mustChangePassword: u.mustChangePassword,
   };
 }
 
@@ -196,8 +199,38 @@ export async function logout(db: DB, token: string): Promise<void> {
 }
 
 export async function setTempPassword(db: DB, userId: string, newPassword: string): Promise<void> {
-  await db.update(users).set({ passwordHash: await hashPassword(newPassword) }).where(eq(users.id, userId));
+  await db.update(users)
+    .set({ passwordHash: await hashPassword(newPassword), mustChangePassword: true })
+    .where(eq(users.id, userId));
   await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+}
+
+/** Revoke every refresh session for a user (logout-all / on password change). */
+export async function revokeAllSessions(db: DB, userId: string): Promise<void> {
+  await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+}
+
+/**
+ * Part 3: change one's own password. Verifies the current password, applies the
+ * registration policy to the new one, clears the must-change flag, and revokes
+ * ALL other refresh sessions (the caller re-issues a fresh session for the
+ * current device so the user is not kicked out where they just acted).
+ * Returns false when the current password is wrong or the new one is invalid.
+ */
+export async function changePassword(
+  db: DB, userId: string, current: string, next: string,
+): Promise<{ ok: true } | { ok: false; reason: 'wrongCurrent' | 'weak' }> {
+  const [u] = await db.select().from(users)
+    .where(and(eq(users.id, userId), isNull(users.deletedAt))).limit(1);
+  if (!u || !(await verifyPassword(u.passwordHash, current))) return { ok: false, reason: 'wrongCurrent' };
+  // same policy as registration (≥10, letters, no spaces, not a common password)
+  const { passwordPolicy } = await import('@klass/shared');
+  if (!passwordPolicy.safeParse(next).success) return { ok: false, reason: 'weak' };
+  await db.update(users)
+    .set({ passwordHash: await hashPassword(next), mustChangePassword: false })
+    .where(eq(users.id, userId));
+  await revokeAllSessions(db, userId);
+  return { ok: true };
 }
 
 export function signAccessTokenForUser(u: typeof users.$inferSelect): Promise<string> {

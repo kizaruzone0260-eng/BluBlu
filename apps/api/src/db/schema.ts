@@ -29,6 +29,12 @@ export const users = pgTable('users', {
   profileCompletedAt: timestamp('profile_completed_at', { withTimezone: true }),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
+  /**
+   * Part 3: set when a temporary password was issued (teacher reset / owner
+   * script). The SPA must force a password change before the app unlocks; a
+   * successful change or self-set password clears it.
+   */
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
   locale: localeEnum('locale').notNull().default('ru'),
   tz: text('tz').notNull().default('Asia/Tashkent'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

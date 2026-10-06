@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { api } from '../lib/api';
+import { api, logoutAll } from '../lib/api';
 import { buildId } from '../lib/build';
 import { useAuth } from '../App';
+import ChangePasswordForm from '../components/ChangePasswordForm';
 
 export default function Profile() {
   const { t, i18n } = useTranslation();
@@ -13,6 +14,7 @@ export default function Profile() {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [outAll, setOutAll] = useState(false);
   const [tg, setTg] = useState<{ linked: boolean; blocked: boolean; configured?: boolean } | null>(null);
   const [tgUrl, setTgUrl] = useState('');
   const [tgErr, setTgErr] = useState('');
@@ -67,6 +69,16 @@ export default function Profile() {
     await logout();
   }
 
+  // Part 3: revoke every refresh session — all devices INCLUDING this one, so
+  // the user lands back on the login screen (the button literally says «выйти со
+  // всех устройств»). logoutAll() nulls the access token, which fires the
+  // onAuthChange listener App uses to re-fetch /api/me and unmount the Shell.
+  async function signOutEverywhere() {
+    if (!confirm(t('auth.logoutAllConfirm'))) return;
+    setOutAll(true);
+    await logoutAll();
+  }
+
   return (
     <div className="card" style={{ maxWidth: 480 }}>
       <h1>{t('auth.profile')}</h1>
@@ -85,6 +97,11 @@ export default function Profile() {
       {/* item 4: timezone is detected automatically (Intl) — no manual field */}
       <button onClick={save} disabled={saving}>{t('common.save')}</button>
       {saved && <span className="ok"> ✓</span>}
+      <hr />
+      {/* Part 3: change your own password (verifies the current one server-side,
+          revokes every other session and keeps this device signed in). */}
+      <h2>{t('auth.changePassword')}</h2>
+      <ChangePasswordForm />
       <hr />
       <h2>{t('tg.title')}</h2>
       {tg?.linked ? (
@@ -106,6 +123,9 @@ export default function Profile() {
       )}
       {/* item 4: ICS subscription moved to the Calendar page (the link stays secret) */}
       <hr />
+      <button className="ghost" onClick={signOutEverywhere} disabled={outAll} data-testid="logout-all">
+        {t('auth.logoutAll')}
+      </button>
       <button className="danger" onClick={deleteAccount} disabled={deleting}>
         {t('common.deleteAccount')}
       </button>

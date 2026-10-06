@@ -90,11 +90,24 @@ export interface Me {
   profileCompleted: boolean;
   /** legal (Phase 2): false → the accept-Privacy-and-Terms gate is shown */
   policyAccepted: boolean;
+  /** part 3: a temporary password was issued — must change before use */
+  mustChangePassword: boolean;
 }
 
 /** Accept the current privacy+terms bundle (version is sent for validation). */
 export async function acceptPolicy(version: string): Promise<void> {
   await api('/api/me/accept-policy', { method: 'POST', body: JSON.stringify({ version }) });
+}
+
+/** Part 3: change your own password (verifies the current one server-side). */
+export async function changePassword(current: string, next: string): Promise<void> {
+  await api('/api/me/change-password', { method: 'POST', body: JSON.stringify({ current, next }) });
+}
+
+/** Part 3: sign out of every device (revoke all refresh sessions). */
+export async function logoutAll(): Promise<void> {
+  await fetch('/api/auth/logout-all', { method: 'POST', credentials: 'include' }).catch(() => {});
+  setAccessToken(null);
 }
 
 /**

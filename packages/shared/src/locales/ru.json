@@ -48,7 +48,19 @@
     "nameGateTitle": "Имя и фамилия",
     "nameGateHint": "Так вас увидят учитель и одноклассники. Оба поля обязательны — без них нельзя продолжить.",
     "passwordTooSimple": "Нужны буквы и без пробелов",
-    "passwordTooCommon": "Пароль слишком распространён, выберите другой"
+    "passwordTooCommon": "Пароль слишком распространён, выберите другой",
+    "changePassword": "Смена пароля",
+    "currentPassword": "Текущий пароль",
+    "newPassword": "Новый пароль",
+    "confirmPassword": "Повторите новый пароль",
+    "passwordsMismatch": "Пароли не совпадают",
+    "wrongPassword": "Неверный текущий пароль",
+    "passwordTooWeak": "Новый пароль слишком простой (минимум 10 символов, буквы, без пробелов)",
+    "passwordChanged": "Пароль изменён",
+    "changePasswordGateTitle": "Смените пароль",
+    "changePasswordGateHint": "Вам выдали временный пароль. Задайте собственный, чтобы продолжить.",
+    "logoutAll": "Выйти со всех устройств",
+    "logoutAllConfirm": "Выйти из аккаунта на всех устройствах?"
   },
   "classes": {
     "title": "Мои классы",

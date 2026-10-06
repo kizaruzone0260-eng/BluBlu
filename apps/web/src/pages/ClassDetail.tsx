@@ -152,6 +152,7 @@ export default function ClassDetail() {
                     <td className="muted">{fmtDate(m.joinedAt, i18n.language)}</td>
                     <td>
                       <button className="secondary" style={{ marginTop: 0, marginRight: 6 }}
+                        data-testid="member-reset-pw"
                         onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending}>
                         {t('classes.resetPw')}
                       </button>
@@ -159,7 +160,7 @@ export default function ClassDetail() {
                         {t('classes.removeMember')}
                       </button>
                       {resetPw.data && resetPw.variables === m.userId && (
-                        <span className="ok" style={{ marginLeft: 8 }}>{resetPw.data.tempPassword}</span>
+                        <span className="ok" data-testid="member-temp-pw" style={{ marginLeft: 8 }}>{resetPw.data.tempPassword}</span>
                       )}
                     </td>
                   </tr>

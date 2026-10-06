@@ -48,7 +48,19 @@
     "nameGateTitle": "Ism va familiya",
     "nameGateHint": "O'qituvchi va sinfdoshlar sizni shunday ko'radi. Ikkala maydon ham majburiy — davom etib bo'lmaydi.",
     "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",
-    "passwordTooCommon": "Parol juda keng tarqalgan, boshqasini tanlang"
+    "passwordTooCommon": "Parol juda keng tarqalgan, boshqasini tanlang",
+    "changePassword": "Parolni o'zgartirish",
+    "currentPassword": "Joriy parol",
+    "newPassword": "Yangi parol",
+    "confirmPassword": "Yangi parolni takrorlang",
+    "passwordsMismatch": "Parollar mos kelmadi",
+    "wrongPassword": "Joriy parol noto'g'ri",
+    "passwordTooWeak": "Yangi parol juda sodda (kamida 10 belgi, harflar, bo'shliqsiz)",
+    "passwordChanged": "Parol o'zgartirildi",
+    "changePasswordGateTitle": "Parolni o'zgartiring",
+    "changePasswordGateHint": "Sizga vaqtinchalik parol berildi. Davom etish uchun o'z parolingizni belgilang.",
+    "logoutAll": "Barcha qurilmalardan chiqish",
+    "logoutAllConfirm": "Barcha qurilmalardan akkauntdan chiqasizmi?"
   },
   "classes": {
     "title": "Mening sinflarim",

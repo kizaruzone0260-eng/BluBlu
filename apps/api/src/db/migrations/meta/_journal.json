@@ -127,6 +127,13 @@
       "when": 1791285052366,
       "tag": "0017_tricky_black_widow",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791285897226,
+      "tag": "0018_legal_fantastic_four",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import CompleteName from './pages/CompleteName';
 import AcceptPolicies from './pages/AcceptPolicies';
+import ChangePasswordGate from './pages/ChangePassword';
 import Classes from './pages/Classes';
 import Profile from './pages/Profile';
 import ChatRoom, { ChatList } from './pages/Chat';import Spike from './pages/Spike';
@@ -115,6 +116,15 @@ export default function App() {
           <div className="container">
             <AuthHeader />
             <CompleteName me={me} onDone={refresh} />
+          </div>
+        ) : me.mustChangePassword ? (
+          // Part 3: a temporary password is still in force (teacher reset the
+          // student, or the owner reset a teacher). The app stays locked until
+          // the user sets their own — the change clears the flag + revokes the
+          // other sessions, then refresh() unlocks the Shell.
+          <div className="container">
+            <AuthHeader />
+            <ChangePasswordGate onDone={refresh} />
           </div>
         ) : (
         <Shell me={me}>

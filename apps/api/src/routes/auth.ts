@@ -161,9 +161,39 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
         locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
+        mustChangePassword: user.mustChangePassword,
         // Legal (Phase 2): the SPA shows the accept gate when this is false.
         policyAccepted: acc?.version === POLICY_VERSION,
       };
+    });
+
+    // Part 3: change your own password. Verifies the current one, applies the
+    // registration policy to the new one, clears the must-change flag, revokes
+    // every other session, and re-issues a fresh session for THIS device so the
+    // user stays signed in where they just acted.
+    app.post('/api/me/change-password', { preHandler: app.authenticate }, async (req, reply) => {
+      if (!checkSameOrigin(req, reply)) return;
+      const b = z.object({ current: z.string().min(1).max(128), next: z.string().min(1).max(128) }).safeParse(req.body);
+      if (!b.success) return reply.code(400).send({ error: 'invalidInput' });
+      const { changePassword } = await import('../services/auth.js');
+      const res = await changePassword(db, req.user!.id, b.data.current, b.data.next);
+      if (!res.ok) return reply.code(res.reason === 'wrongCurrent' ? 403 : 400).send({ error: res.reason === 'wrongCurrent' ? 'wrongPassword' : 'passwordTooWeak' });
+      const session = await issueRefreshSession(db, req.user!.id);
+      reply.setCookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOpts(session.expiresAt.getTime() - Date.now()));
+      const { audit } = await import('../services/audit.js');
+      audit(db, req.user!.id, 'password_changed', { userId: req.user!.id });
+      return { ok: true };
+    });
+
+    // Part 3: sign out of every device — revoke all refresh sessions.
+    app.post('/api/auth/logout-all', { preHandler: app.authenticate }, async (req, reply) => {
+      if (!checkSameOrigin(req, reply)) return;
+      const { revokeAllSessions } = await import('../services/auth.js');
+      await revokeAllSessions(db, req.user!.id);
+      reply.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
+      const { audit } = await import('../services/audit.js');
+      audit(db, req.user!.id, 'logout_all', { userId: req.user!.id });
+      return { ok: true };
     });
 
     // Legal (Phase 2): record acceptance of the current privacy+terms bundle.

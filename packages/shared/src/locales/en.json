@@ -48,7 +48,19 @@
     "nameGateTitle": "First and last name",
     "nameGateHint": "This is how your teacher and classmates will see you. Both fields are required — you can't continue without them.",
     "passwordTooSimple": "Letters required, no spaces",
-    "passwordTooCommon": "This password is too common, please choose another"
+    "passwordTooCommon": "This password is too common, please choose another",
+    "changePassword": "Change password",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "passwordsMismatch": "Passwords do not match",
+    "wrongPassword": "Current password is incorrect",
+    "passwordTooWeak": "New password is too weak (at least 10 characters, letters, no spaces)",
+    "passwordChanged": "Password changed",
+    "changePasswordGateTitle": "Change your password",
+    "changePasswordGateHint": "A temporary password was issued to you. Set your own password to continue.",
+    "logoutAll": "Sign out of all devices",
+    "logoutAllConfirm": "Sign out of your account on all devices?"
   },
   "classes": {
     "title": "My classes",

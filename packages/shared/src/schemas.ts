@@ -20,7 +20,7 @@ const COMMON_PASSWORDS: ReadonlySet<string> = new Set([
 ]);
 
 /** Password POLICY — applied when a password is CREATED (registration). */
-const passwordPolicy = z
+export const passwordPolicy = z
   .string()
   .min(10, 'passwordTooShort')
   .max(128)
