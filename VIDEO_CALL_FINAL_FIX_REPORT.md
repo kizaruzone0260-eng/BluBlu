@@ -196,6 +196,7 @@ and with the fix applied the same files are green.
 | API suite (`with-postgres.mjs vitest run`) | **285 passed / 48 files (0 failed, 0 skipped)** — baseline was 272/46, so +13 tests and +2 files; nothing deleted, skipped or weakened |
 | e2e with real RTC (`npx playwright test`, LiveKit Cloud env loaded) | **41 passed, 0 skipped (4.2 m)** — includes `zz-camera` (both participants see each other with fake devices), `zz2-moderation`, `zz4-layout`, i.e. the full `join → ticket → WS → room.connect() → media` chain |
 | e2e without RTC env (same command, no LiveKit vars) | 38 passed, 3 skipped — the RTC specs self-skip by design when the media server is unreachable; the 3 are the RTC ones |
+| Real-RTC re-check after the final gate hardening + fresh `dist` | `zz-camera` (both participants see each other), `zz2-moderation`, `zz4-layout` → **3 passed (1.1 m)** — this is the `join → ticket → WS upgrade → room.connect() → camera/mic` chain |
 | `pnpm -r build` | green; `apps/api/dist` contains `lib/origin.js` and `0020_rls_app_policies.sql`, web bundle rebuilt |
 | Adjacent CSRF/WS suites re-run after the gate was hardened | `origin-gate` + `video-lesson-origin-drift` + `stage7` + `phase1-hardening` + `phase1-adversarial` = **43 passed / 5 files** |
 | Security half of the flow | cross-site refresh/logout 403, cross-site WS upgrade 4403, anonymous `/api/me` 401, forged bearer 401, revoked-cookie refresh 401 — all asserted |
@@ -235,7 +236,56 @@ again, which is exactly what this commit removes.
 Branch `overnight`, on top of `075e8a6` (history not squashed, no force-push):
 
 ```
-fix: resolve video lesson production regression
+896d355431e34d3d68bb3f2971b8ad2fdee38c0b  fix: resolve video lesson production regression
 ```
 
-SHA and CI run id are reported in the final response after push.
+Files in that commit: `apps/api/src/lib/origin.ts` (new), `apps/api/src/routes/auth.ts`,
+`apps/api/src/lib/wsOrigin.ts`, `apps/api/test/unit/origin-gate.test.ts` (new),
+`apps/api/test/integration/video-lesson-origin-drift.test.ts` (new), `render.yaml`,
+`docs/HARDENING.md`, this report. Pushed as `075e8a6..896d355 → origin/overnight`.
+GitHub Actions run for the push: **37509813667** — `completed / success`
+(`build-test` success, `e2e` success), 2026-10-06.
+
+## 12. Post-deploy confirmation (20 seconds, then the full flow)
+
+After the owner starts the manual Render deploy of `overnight`:
+
+```
+curl -i -s -X POST https://blublu-api.onrender.com/api/auth/refresh \
+     -H "Origin: https://blublu-api.onrender.com" | head -1
+```
+
+* `403` → the fix is not live yet (old build still serving).
+* `401` with `{"error":"unauthorized"}` → **the Origin gate now accepts the deployed
+  page**, which was the single point of failure. No cookie was sent, so 401 is the
+  correct, expected answer for an anonymous request.
+
+Then the real user flow, teacher + student with fake media against the live service:
+
+```
+node apps/e2e/scripts/cloud-call-repro.mjs <path-to-cloud.env>
+```
+
+Expected in its collected log: `POST /api/auth/refresh 200`, the `start-lesson` /
+`join-lesson` buttons found, `POST /api/lessons/:id/join 200`, `ws OPEN`, requests to
+the LiveKit host, and **no** `401 /api/me` / no Sign In. The script ends the session and
+archives its class; `node apps/api/scripts/cloud-fixtures.mjs <cloud.env> --delete`
+removes what is left. (The run that produced §3 left one archived test class and 3
+refresh tokens behind; both were listed and then deleted — `AFTER DELETE: my classes
+left=0, my students left=0`.)
+
+Same-host trust does not depend on the Render `Host` header being anything unusual: the
+`fe50ec8` production fix relied on the identical `Origin.host === req.headers.host`
+comparison against Render and worked live, and `TRUST_PROXY=1` is only used for the
+client IP, not for this header.
+
+Optional belt-and-braces config step (not required by the code any more): in the Render
+dashboard set `PUBLIC_URL` and `PUBLIC_WEB_ORIGIN` to `https://blublu-api.onrender.com`,
+so the explicit allowlist also matches even if the fallback is ever revisited.
+
+## 13. Status
+
+`FIXED LOCALLY / PRODUCTION NOT VERIFIED` — every local check in §9 is green, including
+the real-RTC e2e specs against a fresh `dist`, but the deployed service still runs the
+broken `075e8a6` build until the owner starts the manual deploy, so the production flow
+has not been re-measured after the fix.
