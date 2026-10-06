@@ -210,4 +210,22 @@ Excalidraw, FullCalendar, LiveKit, Tiptap и рисование вынесены
 Транспортное сжатие ассетов (brotli) теперь делает источник, поэтому edge-настройки не обязательны.
 
 ## Фаза 5 — формы и финал
-Все формы: клиент+сервер валидация, защита от двойной отправки, сообщения на 3 яз.; полный набор проверок + скриншоты 390/768/1280 × 3 × 2 темы; сравнение с базой; итоговая таблица.
+Обзор всех форм: клиент+сервер валидация, двойная отправка, сообщения на 3 языка.
+
+| Форма | Клиент | Сервер (zod) | Двойная отправка | Сообщения 3 языка |
+| --- | --- | --- | --- | --- |
+| Вход | required email/password | loginSchema (пароль слабая строка) | `busy` guard (добавлен в фазе 5) | auth.* + коды пароля |
+| Регистрация шаг 1 | код min4 | checkCodeSchema (без enumeration) | — (не пишет) | auth.invalidCode/codeRateLimited |
+| Регистрация шаг 2 | имя/фамилия min2 + **чекбокс согласия** | registerByCodeSchema (пароль ≥10 + denylist) | `busy` + согласие обязательно | auth.* / consent.* |
+| Экран имени | оба min2 | profileUpdateSchema | `!ok||busy` | auth.* |
+| Профиль | имя | profileUpdateSchema | `saving` guard (добавлен в фазе 5) | common.* |
+| Класс (создать/вступить) | имя min2, код ≥8 | classCreateSchema | isPending | classes.* |
+| Материал | title обязателен, URL safeExternalUrl (клиент-зеркало) | zod + MaterialRejected/titleRequired/invalidLink | `busy||isPending` | material.* |
+| Событие | title + дата | zod событий + повтор | `!title||!start||isPending` | cal.* |
+| Заметка | непустое содержимое | запрет пустых на сервере | create/publish isPending | notes.* |
+| Чат | непусто, ≤2000 | bodySchema + chatRate 5/10с | send/edit isPending | chat.* |
+| Бот | — (Telegram) | права перепроверяются, подписанные callback, /announce подтверждение | ledger update_id, подтверждение | 3 языка |
+
+**Итог по формам:** у двух форм (вход, сохранение профиля) не было защиты от двойной
+отправки — добавлены guard'ы в этой фазе. Остальные уже имели. Все сообщения
+переведены на ru/uz/en; валидация продублирована на клиенте и сервере.

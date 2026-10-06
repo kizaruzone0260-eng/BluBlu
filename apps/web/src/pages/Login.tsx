@@ -9,15 +9,19 @@ export default function Login({ onDone }: { onDone: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setErr('');
+    setBusy(true);
     try {
       await login(email, password);
       onDone();
     } catch (e: unknown) {
       setErr((e as { code?: string }).code ?? 'errorGeneric');
+      setBusy(false);
     }
   }
 
@@ -30,7 +34,7 @@ export default function Login({ onDone }: { onDone: () => void }) {
         <label htmlFor="login-password">{t('common.password')}</label>
         <input id="login-password" data-testid="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
         {err && <p className="error" role="alert">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
-        <button data-testid="login-submit" type="submit">{t('common.login')}</button>
+        <button data-testid="login-submit" type="submit" disabled={busy}>{t('common.login')}</button>
       </form>
       <p className="muted">
         {t('auth.haveCode')} <Link to="/register">{t('common.register')}</Link>

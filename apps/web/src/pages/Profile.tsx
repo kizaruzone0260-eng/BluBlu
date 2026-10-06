@@ -11,6 +11,7 @@ export default function Profile() {
   const [lastName, setLastName] = useState(me?.lastName ?? '');
   const [locale, setLocale] = useState<'ru' | 'uz' | 'en'>(me?.locale ?? 'ru');
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [tg, setTg] = useState<{ linked: boolean; blocked: boolean; configured?: boolean } | null>(null);
   const [tgUrl, setTgUrl] = useState('');
@@ -43,13 +44,19 @@ export default function Profile() {
   if (!me) return null;
 
   async function save() {
+    if (saving) return;
+    setSaving(true);
     setSaved(false);
-    // item 4: no manual timezone — App syncs it from the device automatically
-    const dev = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tashkent';
-    await api('/api/me/profile', { method: 'PATCH', body: JSON.stringify({ name, lastName, locale, tz: dev }) });
-    await i18n.changeLanguage(locale);
-    refresh();
-    setSaved(true);
+    try {
+      // item 4: no manual timezone — App syncs it from the device automatically
+      const dev = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tashkent';
+      await api('/api/me/profile', { method: 'PATCH', body: JSON.stringify({ name, lastName, locale, tz: dev }) });
+      await i18n.changeLanguage(locale);
+      refresh();
+      setSaved(true);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function deleteAccount() {
@@ -76,7 +83,7 @@ export default function Profile() {
         <option value="en">English</option>
       </select>
       {/* item 4: timezone is detected automatically (Intl) — no manual field */}
-      <button onClick={save}>{t('common.save')}</button>
+      <button onClick={save} disabled={saving}>{t('common.save')}</button>
       {saved && <span className="ok"> ✓</span>}
       <hr />
       <h2>{t('tg.title')}</h2>
