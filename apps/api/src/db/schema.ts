@@ -6,6 +6,10 @@ import { sql } from 'drizzle-orm';
 export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
 export const localeEnum = pgEnum('app_locale', ['ru', 'uz', 'en']);
 export const postKindEnum = pgEnum('post_kind', ['material', 'announcement']);
+/** Material task A: a post is a draft, scheduled for later, or visible. */
+export const postStatusEnum = pgEnum('post_status', ['draft', 'scheduled', 'published']);
+/** Material task A: unified attachment kinds (files keep their rows in `files`). */
+export const attachmentKindEnum = pgEnum('attachment_kind', ['file', 'link', 'youtube', 'drive']);
 export const eventKindEnum = pgEnum('event_kind', ['lesson', 'deadline', 'other']);
 /** item 8 — per-class chat state: open / closed / announcements only. */
 export const chatModeEnum = pgEnum('chat_mode', ['on', 'off', 'announce']);
@@ -90,10 +94,42 @@ export const posts = pgTable('posts', {
   title: text('title').notNull().default(''),
   body: text('body').notNull().default(''),
   pinned: boolean('pinned').notNull().default(false),
+  // legacy free-text topic (pre-material-form posts); new posts use topicId
   topic: text('topic'),
+  // ── material form (task A) ──
+  status: postStatusEnum('status').notNull().default('published'),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }),
+  topicId: uuid('topic_id').references(() => topics.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('posts_class_idx').on(t.classId, t.createdAt)]);
+
+/** Material task A: Google-Classroom-style topics, ordered per class. */
+export const topics = pgTable('topics', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  position: integer('position').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('topics_class_idx').on(t.classId, t.position)]);
+
+/** Material task A: unified attachments. kind=file ⇒ fileId set, url null. */
+export const postAttachments = pgTable('post_attachments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  kind: attachmentKindEnum('kind').notNull(),
+  url: text('url'),
+  title: text('title').notNull().default(''),
+  fileId: uuid('file_id').references(() => files.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('post_attachments_post_idx').on(t.postId, t.position)]);
+
+/** Material task A: selected-student audience. No rows ⇒ the whole class. */
+export const postAudience = pgTable('post_audience', {
+  postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+}, (t) => [primaryKey({ columns: [t.postId, t.userId] }), index('post_audience_user_idx').on(t.userId)]);
 
 /** Files: storage_key is an opaque UUID; original name never touches the disk path. */
 export const files = pgTable('files', {

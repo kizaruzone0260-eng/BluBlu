@@ -156,6 +156,12 @@ export interface EnqueueArgs {
   dedupeBase: string;
   /** exclude the actor from personal notices (teacher made the post) */
   excludeUserId?: string;
+  /**
+   * Material task A: restrict personal notices to a selected audience. When
+   * set, the group-chat fan-out is skipped entirely — a notice for three
+   * students must not appear in the class group.
+   */
+  onlyUserIds?: string[];
 }
 
 /**
@@ -178,15 +184,18 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
   const inserted: string[] = [];
 
   if (channel === 'group' || channel === 'both') {
-    const chats = await db.select().from(classTelegramChats).where(eq(classTelegramChats.classId, a.classId));
-    for (const chat of chats) {
-      const key = `${a.dedupeBase}|g:${chat.chatId}`;
-      const did = await tryInsert(db, a, key, null, chat.chatId, 'ru', a.when);
-      if (did) inserted.push(did);
+    if (!a.onlyUserIds) {
+      const chats = await db.select().from(classTelegramChats).where(eq(classTelegramChats.classId, a.classId));
+      for (const chat of chats) {
+        const key = `${a.dedupeBase}|g:${chat.chatId}`;
+        const did = await tryInsert(db, a, key, null, chat.chatId, 'ru', a.when);
+        if (did) inserted.push(did);
+      }
     }
   }
   if (channel === 'private' || channel === 'both') {
-    for (const u of locales) {
+    const audience = a.onlyUserIds ? locales.filter((l) => a.onlyUserIds!.includes(l.id)) : locales;
+    for (const u of audience) {
       const prefs = await getPrefs(db, u.id);
       if (prefs.kinds[a.kind] === false) continue;
       const link = await db.select().from(telegramLinks)

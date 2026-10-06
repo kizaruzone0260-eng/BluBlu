@@ -90,8 +90,8 @@ suite('stage 2: materials, files, teacher notes', () => {
     const feed = await app.inject({ method: 'GET', url: `/api/classes/${classId}/feed`, headers: auth(studentToken) });
     expect(feed.statusCode).toBe(200);
     const item = feed.json()[0];
-    expect(item.files).toHaveLength(1);
-    const fileId = item.files[0].id as string;
+    expect(item.attachments).toHaveLength(1); // task A: unified attachment list
+    const fileId = item.attachments[0].file.id as string;
 
     const dl = await app.inject({ method: 'GET', url: `/api/files/${fileId}`, headers: auth(studentToken) });
     expect(dl.statusCode).toBe(200);
@@ -174,7 +174,7 @@ suite('stage 2: materials, files, teacher notes', () => {
     });
     expect(up.statusCode).toBe(201);
     const feed = await app.inject({ method: 'GET', url: `/api/classes/${classId}/feed`, headers: auth(studentToken) });
-    const fileId = feed.json().find((f: { title: string }) => f.title === 'Lesson clip').files[0].id;
+    const fileId = feed.json().find((f: { title: string }) => f.title === 'Lesson clip').attachments[0].file.id;
     const rng = await app.inject({
       method: 'GET', url: `/api/files/${fileId}/inline`,
       headers: { ...auth(studentToken), range: 'bytes=0-99' },

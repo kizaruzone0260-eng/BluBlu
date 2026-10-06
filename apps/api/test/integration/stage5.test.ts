@@ -179,8 +179,8 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
     });
     expect(pub2.statusCode).toBe(201);
     const f2 = await app.inject({ method: 'GET', url: `/api/classes/${classId}/feed`, headers: { authorization: `Bearer ${studentToken}` } });
-    const item = (f2.json() as { title: string; files: { id: string; mime: string }[] }).find((x) => x.title === 'Board svg');
-    const fileId = item!.files[0]!.id;
+    const item = (f2.json() as { title: string; attachments: { kind: string; file: { id: string } | null }[] }).find((x) => x.title === 'Board svg');
+    const fileId = item!.attachments[0]!.file!.id;
     const inline = await app.inject({ method: 'GET', url: `/api/files/${fileId}/inline`, headers: { authorization: `Bearer ${studentToken}` } });
     expect(inline.statusCode).toBe(400); // SVG never inline (XSS)
   });

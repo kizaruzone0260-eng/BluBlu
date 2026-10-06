@@ -22,11 +22,14 @@ export class ApiError extends Error {
 }
 
 async function rawFetch(path: string, init: RequestInit): Promise<Response> {
+  // FormData must NOT get the JSON content-type — fetch has to set
+  // multipart/form-data with its own boundary (material uploads, task A).
+  const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData;
   return fetch(path, {
     credentials: 'include',
     ...init,
     headers: {
-      ...(init.body ? { 'content-type': 'application/json' } : {}),
+      ...(init.body && !isForm ? { 'content-type': 'application/json' } : {}),
       ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
       ...init.headers,
     },

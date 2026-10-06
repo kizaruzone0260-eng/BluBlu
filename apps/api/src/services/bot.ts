@@ -479,7 +479,9 @@ async function renderMaterials(deps: BotDeps, chatId: string, id: Identity, clas
   const mine = cls.find((c) => c.id === classId);
   if (!mine) { await send(deps, chatId, 'classNotFound', {}, id.lang); return; }
   const rows = await deps.db.select({ id: posts.id, title: posts.title, createdAt: posts.createdAt }).from(posts)
-    .where(and(eq(posts.classId, classId), eq(posts.kind, 'material'))).orderBy(desc(posts.createdAt)).limit(5);
+    // material task A: the bot never leaks drafts or scheduled posts
+    .where(and(eq(posts.classId, classId), eq(posts.kind, 'material'), eq(posts.status, 'published')))
+    .orderBy(desc(posts.createdAt)).limit(5);
   if (!rows.length) { await send(deps, chatId, 'noMaterials', {}, id.lang); return; }
   const lines = rows.map((p) => `• ${new Intl.DateTimeFormat('en-GB', { timeZone: id.tz, day: '2-digit', month: '2-digit' }).format(p.createdAt)} — ${esc(p.title || '(—)')}`);
   await deps.api.sendMessage(chatId, `${t('materialsOf', id.lang, { c: mine.name })}\n${lines.join('\n')}`, { html: true, buttons: [row(btn(t('open', id.lang), undefined, `${siteUrl()}/classes/${classId}`))] });

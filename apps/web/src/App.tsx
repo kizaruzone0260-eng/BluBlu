@@ -9,6 +9,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Classes from './pages/Classes';
 import ClassDetail from './pages/ClassDetail';
+import MaterialNew from './pages/MaterialNew';
 import Calendar from './pages/Calendar';
 import CompleteName from './pages/CompleteName';
 import Lesson from './pages/Lesson';
@@ -86,6 +87,8 @@ export default function App() {
             <Route path="/notes" element={me.role === 'teacher' ? <Notes /> : <Navigate to="/" />} />
             <Route path="/classes" element={<Classes />} />
             <Route path="/classes/:id" element={<ClassDetail />} />
+            {/* material task A — the create form is a separate page, teacher only */}
+            <Route path="/classes/:id/material/new" element={me.role === 'teacher' ? <MaterialNew /> : <Navigate to="/" />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/lesson" element={<Lesson />} />
             <Route path="/sheets" element={me.role === 'student' ? <Sheets /> : <Navigate to="/" />} />

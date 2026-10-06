@@ -76,7 +76,7 @@ suite('§7 rights audit', () => {
     postA = mat.json().id;
     if (mat.statusCode !== 201) throw new Error(`material upload failed ${mat.statusCode} ${mat.body.slice(0, 200)} tok=${String(tok.teacherA).slice(0, 18)}…`);
     const feed = await app.inject({ method: 'GET', url: `/api/classes/${classA}/feed`, headers: { authorization: `Bearer ${tok.studentA}` } });
-    fileA = feed.json().find((p: { id: string }) => p.id === postA).files[0].id;
+    fileA = feed.json().find((p: { id: string }) => p.id === postA).attachments[0].file.id;
 
     const note = await app.inject({ method: 'POST', url: '/api/notes', headers: { authorization: `Bearer ${tok.teacherA}` }, payload: { classId: classA, title: 'N', body: 'secret plan' } });
     noteA = note.json().id;

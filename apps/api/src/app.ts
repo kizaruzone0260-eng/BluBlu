@@ -82,6 +82,10 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
         mediaSrc: ["'self'", 'blob:', 'data:'],
         fontSrc: ["'self'", 'data:'],
         connectSrc: ["'self'", 'blob:', ...livekitConnectOrigins],
+        // Material task A: YouTube attachments embed ONLY through the privacy-
+        // enhanced domain, and only after the user clicks the card. No other
+        // frame source exists; blob: stays for our own PDF/text previews.
+        frameSrc: ["'self'", 'blob:', 'https://www.youtube-nocookie.com'],
         workerSrc: ["'self'", 'blob:'],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],

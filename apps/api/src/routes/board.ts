@@ -155,7 +155,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     const b64 = p.data.dataUrl.slice(p.data.dataUrl.indexOf(',') + 1);
     const buffer = Buffer.from(b64, 'base64');
     const post = await createMaterial(db, req.user!.id, cls.id,
-      { title: p.data.title, description: '' },
+      { title: p.data.title, description: '', topicId: null, newTopic: null, status: 'published', scheduledAt: null, audience: [], links: [] },
       [{ buffer, filename: `${p.data.title || 'board'}.${p.data.kind === 'png' ? 'png' : 'svg'}` }]);
     void mime;
     return reply.code(201).send({ postId: post.id });

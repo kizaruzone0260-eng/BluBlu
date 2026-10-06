@@ -382,3 +382,43 @@ button.danger-text { color: var(--danger); }
 /* item 6: let the calendar toolbar wrap at narrow widths (the view-switcher
    chunk used to clip «Список» at 390 px) */
 .fc .fc-header-toolbar { flex-wrap: wrap; row-gap: var(--sp-2); }
+
+/* ── material form (task A) ─────────────────────────────────────────────────── */
+.material-page { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-4); align-items: start; }
+.material-side { position: sticky; top: var(--sp-4); }
+/* mobile: the form becomes a single fullscreen column (panel below the text) */
+@media (max-width: 900px) {
+  .material-page { grid-template-columns: 1fr; }
+  .material-side { position: static; }
+}
+.att-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.att-card {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 10px; background: var(--surface-2);
+}
+.att-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.pub-row { position: relative; display: flex; gap: 6px; margin-top: 16px; }
+.pub-menu {
+  position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 210px;
+  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / .18);
+}
+.pub-menu button { width: 100%; margin: 0; text-align: left; }
+.topic-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer;
+  background: none; border: 0; border-bottom: 1px solid var(--border);
+  padding: 8px 0; margin-top: 10px; color: var(--text); font-size: 1rem; min-height: var(--tap);
+}
+.topic-caret { width: 14px; color: var(--text-muted); }
+.feed-post { border-top: 1px solid var(--border); padding: 10px 0; }
+.feed-post:first-of-type { border-top: 0; }
+.feed-unpublished {
+  border: 1px dashed var(--border-strong, var(--border)); border-radius: var(--r-md);
+  padding: 10px; margin: 6px 0;
+}
+.chip-label { display: inline-flex; align-items: center; gap: 6px; margin: 0; cursor: pointer; }
+.aud-list {
+  max-height: 220px; overflow-y: auto; margin-top: 6px;
+  border: 1px solid var(--border); border-radius: var(--r-md); padding: 6px 8px;
+}
+.material-edit { background: var(--surface-2); }
