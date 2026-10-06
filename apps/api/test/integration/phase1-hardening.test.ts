@@ -64,6 +64,17 @@ suite('Phase 1а: security response headers', () => {
     expect(['gzip', 'br']).toContain(enc as string);
   });
 
+  it('Phase 4в: /api/auth/* is NOT compressed (no secret-in-response compression)', async () => {
+    // a bad login still returns a JSON body; it must arrive uncompressed
+    const r = await app.inject({
+      method: 'POST', url: '/api/auth/login',
+      headers: { 'accept-encoding': 'gzip, br', 'content-type': 'application/json' },
+      payload: { email: 'nobody@x.io', password: 'whatever12345' },
+    });
+    expect(r.statusCode).toBe(401);
+    expect(r.headers['content-encoding']).toBeUndefined();
+  });
+
   it('5xx never leaks an internal message (generic, version-free body)', async () => {
     // force an unhandled error by hitting a route that reads a deleted session
     const r = await app.inject({ method: 'GET', url: '/__boom' });

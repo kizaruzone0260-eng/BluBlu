@@ -160,11 +160,6 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
-  // Performance (Phase 4): transparently gzip/brotli text-like responses (the SPA
-  // shell, hashed JS/CSS chunks, JSON API, ICS, SVG). @fastify/compress only
-  // touches its default-compressible MIME set, so media/PDF range streams served
-  // by serveFile are left untouched (no broken byte-range seeking).
-  await app.register(compress, { encodings: ['br', 'gzip'], threshold: 0 });
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
 
   // File uploads (§3.3): 100 MB per file, ≤4 files per request
@@ -189,6 +184,23 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
         rateLimit: { max: 300, timeWindow: '1 minute' },
       };
     }
+    // Hardening (Phase 4в): never compress responses that carry secrets — the
+    // auth endpoints (login/refresh/register issue access+refresh tokens) and
+    // every ticket/token issuer. Compressing attacker-influenced plaintext
+    // alongside a secret (BREACH/CRIME class) is exactly what to avoid, so these
+    // opt out of @fastify/compress via the plugin's per-route `compress:false`.
+    if (
+      url.startsWith('/api/auth')
+      || url === '/api/ws/ticket'
+      || /^\/api\/[^/]+\/[^/]+\/(chat\/ticket|link-token|telegram-link|ical-token)$/.test(url)
+      || /^\/api\/(classes|lessons)\/[^/]+\/(chat\/ticket|link-token)$/.test(url)
+      || url === '/api/rtc/token'
+      || /ticket|token/.test(url)
+    ) {
+      // @fastify/compress reads the per-route `compress` option (route-level,
+      // not config). Setting it false opts this route out of compression.
+      routeOptions.compress = false;
+    }
     // stricter: login (brute force), register/join (one-time code attempts).
     // The caps are env-overridable (defaults 10 / 8) so the e2e suite, which
     // logs in far more than a real user, can relax them without touching prod.
@@ -204,6 +216,14 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     }
   });
   await app.register(rateLimit, { global: false });
+
+  // Performance (Phase 4): transparently gzip/brotli text-like responses (the SPA
+  // shell, hashed JS/CSS chunks, JSON API, ICS, SVG). Registered AFTER the onRoute
+  // hook above so that hook's per-route `compress:false` (Phase 4в — never
+  // compress auth/token/ticket responses) is already applied when the plugin's
+  // own onRoute captures each route. @fastify/compress only touches its default
+  // compressible MIME set, so media/PDF range streams stay untouched.
+  await app.register(compress, { encodings: ['br', 'gzip'], threshold: 0 });
 
   await app.register(authPlugin, { db });
 
