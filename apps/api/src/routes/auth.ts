@@ -12,6 +12,7 @@ import {
 } from '../services/auth.js';
 import { peekInviteCode } from '../services/invites.js';
 import { normalizeInviteCode } from '../lib/invite.js';
+import { requestOriginAllowed } from '../lib/origin.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
 
 const REFRESH_COOKIE = 'klass_rt';
@@ -26,32 +27,20 @@ function refreshCookieOpts(ttlMs: number) {
   };
 }
 
-/** §3.9/§4 + Hardening (Phase 1в): refresh/logout must reject cross-origin POSTs.
- * When we KNOW our public origin (PUBLIC_URL or DOMAIN is configured — i.e. any
- * real deploy) the Origin must match that allowlist EXACTLY; the request `Host`
- * is never trusted, so a Host-header-injecting client cannot widen the door.
- * Only in local dev/e2e (no PUBLIC_URL/DOMAIN) do we fall back to the request's
- * own Host, which lets a same-origin page on an ephemeral port refresh without
- * env config. The configured origins always include the dev vite origin. */
+/** §3.9/§4 + Hardening (Phase 1в) + production regression fix: refresh/logout must
+ * reject cross-origin POSTs. The rule lives in lib/origin.ts so the WebSocket gate
+ * uses exactly the same decision: a configured Origin (PUBLIC_WEB_ORIGIN / PUBLIC_URL
+ * / https://DOMAIN) passes, and so does an Origin equal to the host the request
+ * arrived on — a genuinely same-origin call from the deployed page, which a browser
+ * cannot be made to fake. Without that fallback any drift between the configured
+ * address and the address the UI is really served from (PUBLIC_URL left pointing at
+ * a tunnel, PUBLIC_WEB_ORIGIN never set) made POST /api/auth/refresh answer 403,
+ * the SPA dropped the access token and Video Lesson bounced to Sign In — the exact
+ * live incident behind this task. Cross-site origins are still rejected. */
 function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return true; // curl / same-origin navigations
-  const allowed = new Set<string>([
-    env.PUBLIC_WEB_ORIGIN, 'http://localhost:5173',
-    ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : []),
-    ...(env.DOMAIN ? [`https://${env.DOMAIN}`] : []),
-  ]);
-  const known = Boolean(env.PUBLIC_URL || env.DOMAIN);
-  let ok = allowed.has(origin);
-  if (!ok && !known) {
-    // dev/e2e only: a same-origin page whose Host we could not know from env.
-    try { ok = new URL(origin).host === (req.headers.host ?? ''); } catch { /* malformed ⇒ not same host */ }
-  }
-  if (!ok) {
-    reply.code(403).send({ error: 'forbidden' });
-    return false;
-  }
-  return true;
+  if (requestOriginAllowed(req)) return true;
+  reply.code(403).send({ error: 'forbidden' });
+  return false;
 }
 
 export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {

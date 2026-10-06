@@ -63,7 +63,8 @@
 ### в) CSRF / Origin
 | # | Пункт | Изменено | Доказательство | Статус |
 | --- | --- | --- | --- | --- |
-| 1в-1 | При PUBLIC_URL/DOMAIN — только он, Host не доверяется | `routes/auth.ts` checkSameOrigin | phase1-hardening «trust configured Origin, not Host» (403 при Host=наш/Origin=evil) | ✅ |
+| 1в-1 | configured Origin (PUBLIC_WEB_ORIGIN/PUBLIC_URL/https://DOMAIN) **или** Origin == собственный Host запроса; чужой Origin → 403 | `routes/auth.ts` checkSameOrigin → общий `lib/origin.ts` | phase1-hardening «trust configured Origin, not Host» (403 при Origin=evil) + video-lesson-origin-drift / unit «origin gate» | ✅ |
+| 1в-1a | ⚠️ Инцидент: вариант «только allowlist, Host не доверяется» (9573faa) снова сломал облачный прод — страница своего же хоста получала 403 на `/api/auth/refresh`, SPA ронял токен и Video Lesson выбрасывал на Sign In (тот же инцидент уже чинился в fe50ec8). Причина: allowlist не совпал с фактическим адресом UI. Итог: same-Host Origin принимается, кросс-сайт по-прежнему 403 | `lib/origin.ts`, `lib/wsOrigin.ts`, `render.yaml` (`PUBLIC_WEB_ORIGIN`) | `video-lesson-origin-drift.test.ts` (падает на старом коде), unit `origin-gate.test.ts` | ✅ |
 | 1в-2 | Строгий CORS allowlist | — | baseline | ✅ |
 
 ### г) Rate limits

@@ -26,6 +26,11 @@ services:
         value: "1"    # Render's edge is a reverse proxy → real client IP comes from X-Forwarded-For
       - key: PUBLIC_URL
         sync: false   # https://<service>.onrender.com — set after the FIRST deploy, then redeploy
+      - key: PUBLIC_WEB_ORIGIN
+        sync: false   # the origin the UI is actually opened from, e.g. https://<service>.onrender.com
+                      # (the SPA is served by this same service, so it equals PUBLIC_URL). Used for
+                      # notification links and the CSRF/WS Origin allowlist; a same-origin request is
+                      # always accepted even if this drifts — see apps/api/src/lib/origin.ts.
       - key: STORAGE_DIR
         value: /tmp/blublu-files  # free tier has NO persistent disk: uploads vanish on redeploy
       - key: MAX_FILE_MB
