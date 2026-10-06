@@ -203,7 +203,7 @@ export default function Calendar() {
       <div className="row">
         <h1 style={{ margin: 0 }}>{t('cal.title')}</h1>
         <div className="spacer" />
-        <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} style={{ width: 'auto' }}>
+        <select value={classFilter} aria-label={t('cal.allClasses')} onChange={(e) => setClassFilter(e.target.value)} style={{ width: 'auto' }}>
           <option value="">{t('cal.allClasses')}</option>
           {(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
@@ -264,7 +264,7 @@ export default function Calendar() {
         <div className="card">
           <h2>{form.id ? t('cal.editEvent') : t('cal.newEvent')}</h2>
           <div className="row">
-            <select style={{ width: 'auto' }} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as EventForm['kind'] })}>
+            <select style={{ width: 'auto' }} aria-label={t('cal.kind')} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value as EventForm['kind'] })}>
               <option value="lesson">{t('cal.lesson')}</option>
               <option value="deadline">{t('cal.deadline')}</option>
               <option value="other">{t('cal.other')}</option>
@@ -351,6 +351,9 @@ export default function Calendar() {
           locale={fcLocale}
           initialView="dayGridMonth"
           headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }}
+          // A11y (Phase 3): render the localized buttonText instead of role="img"
+          // icon glyphs — the icon spans had no text alternative (axe role-img-alt).
+          buttonIcons={false}
           views={{ listWeek: { listDayFormat: { year: 'numeric', month: 'long', day: 'numeric' } } }}
           events={fcEvents}
           height="auto"

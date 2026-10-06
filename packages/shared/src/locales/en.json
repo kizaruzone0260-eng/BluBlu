@@ -567,5 +567,34 @@
     "privacy": "Privacy",
     "terms": "Terms",
     "back": "← Back"
+  },
+  "titles": {
+    "app": "BluBlu",
+    "login": "Sign in",
+    "register": "Register",
+    "home": "Home",
+    "classes": "My classes",
+    "class": "Class",
+    "materialNew": "New material",
+    "calendar": "Calendar",
+    "lesson": "Lesson",
+    "sheets": "Sheets",
+    "chat": "Chat",
+    "notes": "Notes",
+    "profile": "Profile",
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service",
+    "notFound": "Page not found",
+    "forbidden": "Access denied",
+    "serverError": "Something went wrong",
+    "offline": "No connection"
+  },
+  "errors": {
+    "notFoundBody": "This page does not exist or has moved.",
+    "forbiddenBody": "You do not have permission to view this section.",
+    "serverErrorBody": "An error occurred. Please try reloading the page.",
+    "offlineBody": "The connection to the server seems lost. Check your internet and try again.",
+    "home": "Go home",
+    "retry": "Retry"
   }
 }

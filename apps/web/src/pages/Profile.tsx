@@ -64,13 +64,13 @@ export default function Profile() {
     <div className="card" style={{ maxWidth: 480 }}>
       <h1>{t('auth.profile')}</h1>
       <p className="muted">{me.email} · {me.role === 'teacher' ? t('common.roleTeacher') : t('common.roleStudent')}</p>
-      <label>{t('common.name')}</label>
-      <input data-testid="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
+      <label htmlFor="profile-name">{t('common.name')}</label>
+      <input id="profile-name" data-testid="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
       {/* item 9 — family name, separate and editable; display is «Имя Фамилия» */}
       <label htmlFor="profile-last">{t('auth.lastName')}</label>
       <input id="profile-last" data-testid="profile-last-name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
-      <label>{t('common.language')}</label>
-      <select value={locale} onChange={(e) => setLocale(e.target.value as 'ru' | 'uz' | 'en')}>
+      <label htmlFor="profile-locale">{t('common.language')}</label>
+      <select id="profile-locale" value={locale} onChange={(e) => setLocale(e.target.value as 'ru' | 'uz' | 'en')}>
         <option value="ru">Русский</option>
         <option value="uz">Oʻzbekcha</option>
         <option value="en">English</option>

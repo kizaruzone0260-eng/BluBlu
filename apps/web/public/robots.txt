@@ -1,0 +1,4 @@
+# BluBlu is a private, login-gated lesson platform — it must not be indexed.
+# X-Robots-Tag and <meta name="robots"> reinforce this on every response.
+User-agent: *
+Disallow: /

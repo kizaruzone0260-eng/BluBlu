@@ -25,11 +25,11 @@ export default function Login({ onDone }: { onDone: () => void }) {
     <div className="card" style={{ maxWidth: 420, margin: '40px auto' }}>
       <h1>{t('common.login')}</h1>
       <form onSubmit={submit}>
-        <label>{t('common.email')}</label>
-        <input data-testid="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
-        <label>{t('common.password')}</label>
-        <input data-testid="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
-        {err && <p className="error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
+        <label htmlFor="login-email">{t('common.email')}</label>
+        <input id="login-email" data-testid="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+        <label htmlFor="login-password">{t('common.password')}</label>
+        <input id="login-password" data-testid="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
+        {err && <p className="error" role="alert">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
         <button data-testid="login-submit" type="submit">{t('common.login')}</button>
       </form>
       <p className="muted">

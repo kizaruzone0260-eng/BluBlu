@@ -281,9 +281,9 @@ export default function Notes() {
       </div>
 
       <div className="row" style={{ marginTop: 12 }}>
-        <input placeholder={t('sheets.search')} value={search} onChange={(e) => setSearch(e.target.value)}
+        <input placeholder={t('sheets.search')} aria-label={t('sheets.search')} value={search} onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: 260 }} data-testid="notes-search" />
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 'auto' }} data-testid="notes-filter">
+        <select value={filter} aria-label={t('notes.filterAll')} onChange={(e) => setFilter(e.target.value)} style={{ width: 'auto' }} data-testid="notes-filter">
           <option value="">{t('notes.filterAll')}</option>
           {(classes.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           <option value="noclass">{t('notes.filterNoLesson')}</option>

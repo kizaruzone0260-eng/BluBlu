@@ -471,3 +471,8 @@ button.danger-text { color: var(--danger); }
 .legal-gate h1 { font-size: 1.3rem; }
 .consent-row { margin: .6em 0; }
 .consent-row a { text-decoration: underline; }
+
+/* A11y (Phase 3): links inside running text need a non-color cue (axe
+   link-in-text-block). Underline content links; nav/brand links live outside
+   .card/.muted so they keep their own styling. */
+.card a, .muted a, .error-screen a, .consent-row a { text-decoration: underline; }

@@ -567,5 +567,34 @@
     "privacy": "Siyosat",
     "terms": "Shartlar",
     "back": "← Orqaga"
+  },
+  "titles": {
+    "app": "BluBlu",
+    "login": "Kirish",
+    "register": "Ro‘yxatdan o‘tish",
+    "home": "Bosh sahifa",
+    "classes": "Sinflarim",
+    "class": "Sinf",
+    "materialNew": "Yangi material",
+    "calendar": "Taqvim",
+    "lesson": "Dars",
+    "sheets": "Varaqalar",
+    "chat": "Chat",
+    "notes": "Eslatmalar",
+    "profile": "Profil",
+    "privacy": "Maxfiylik siyosati",
+    "terms": "Foydalanish shartlari",
+    "notFound": "Sahifa topilmadi",
+    "forbidden": "Ruxsat yo‘q",
+    "serverError": "Nimadir xato ketdi",
+    "offline": "Aloqa yo‘q"
+  },
+  "errors": {
+    "notFoundBody": "Bunday sahifa yo‘q yoki ko‘chirilgan.",
+    "forbiddenBody": "Bu bo‘limga kirish huquqingiz yo‘q.",
+    "serverErrorBody": "Xato yuz berdi. Sahifani yangilab ko‘ring.",
+    "offlineBody": "Server bilan aloqa uzilganga o‘xshaydi. Internetni tekshiring va qayta urinib ko‘ring.",
+    "home": "Bosh sahifaga",
+    "retry": "Qayta urinish"
   }
 }

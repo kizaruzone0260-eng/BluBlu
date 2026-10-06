@@ -64,14 +64,14 @@ export default function Register({ onDone }: { onDone: () => void }) {
       </p>
       {step === 1 ? (
         <form onSubmit={submitStep1}>
-          <label>{t('auth.classCode')}</label>
-          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required maxLength={9} data-testid="reg-code"
+          <label htmlFor="reg-code">{t('auth.classCode')}</label>
+          <input id="reg-code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required maxLength={9} data-testid="reg-code"
             style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 2 }} autoComplete="one-time-code" />
-          <label>{t('common.email')}</label>
-          <input type="email" data-testid="reg-email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
-          <label>{t('common.password')}</label>
-          <input data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} autoComplete="new-password" />
-          {err && <p className="error" data-testid="reg-error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
+          <label htmlFor="reg-email">{t('common.email')}</label>
+          <input id="reg-email" type="email" data-testid="reg-email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
+          <label htmlFor="reg-password">{t('common.password')}</label>
+          <input id="reg-password" data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} autoComplete="new-password" />
+          {err && <p className="error" role="alert" data-testid="reg-error">{err === 'mustAccept' ? t('consent.mustAccept') : t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
           <button data-testid="register-step1" type="submit" disabled={busy}>{t('auth.continue')}</button>
         </form>
       ) : (

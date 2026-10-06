@@ -107,6 +107,10 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   // are served WITHOUT a leading /api or /webhook and keep their own caching.
   app.addHook('onSend', (req, reply, payload, done) => {
     reply.header('permissions-policy', 'camera=(self), microphone=(self), display-capture=(self), autoplay=(self)');
+    // Hardening (Phase 3): this is a private, login-gated app — never index it.
+    // X-Robots-Tag covers EVERY response (SPA shell, chunks, API, webhooks),
+    // complementing robots.txt and the <meta name="robots"> in index.html.
+    reply.header('x-robots-tag', 'noindex, nofollow, noarchive, nosnippet');
     const url = req.raw.url ?? '';
     if (url.startsWith('/api') || url.startsWith('/webhook')) {
       reply.header('cache-control', 'no-store');

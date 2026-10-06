@@ -49,8 +49,8 @@ export default function Classes() {
       {me?.role === 'teacher' && (
         <div className="card">
           <h2>{t('classes.newClass')}</h2>
-          <label>{t('classes.className')}</label>
-          <input data-testid="new-class-name" value={name} onChange={(e) => setName(e.target.value)} minLength={2} />
+          <label htmlFor="new-class-name">{t('classes.className')}</label>
+          <input id="new-class-name" data-testid="new-class-name" value={name} onChange={(e) => setName(e.target.value)} minLength={2} />
           <button data-testid="create-class" onClick={() => createClass.mutate()} disabled={name.trim().length < 2 || createClass.isPending}>
             {t('common.create')}
           </button>
@@ -62,6 +62,7 @@ export default function Classes() {
           <h2>{t('classes.joinByCode')}</h2>
           <div className="row">
             <input
+              aria-label={t('classes.joinByCode')}
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
               maxLength={9}
