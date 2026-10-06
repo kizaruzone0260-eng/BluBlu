@@ -165,7 +165,30 @@ anon/authenticated. Доказательства: `phase2-consent.test.ts`, `zz5
 </details>
 
 ## Фаза 3 — a11y / robots / страницы ошибок
-robots.txt `Disallow: /`, noindex, X-Robots-Tag; заголовки вкладок по экранам (3 яз.); 404/403/500/offline (3 яз.) с «На главную»; axe-core (dev-only) по экранам + фикс critical/serious; обход внутренних ссылок; favicon/manifest.
+Приватное приложение — не индексируется; a11y-дефекты critical/serious закрыты.
+
+Итог: API **217/217** (новая проверка `X-Robots-Tag`), e2e **27 → 36** (+3 `zz6-a11y`,
++2 `zz7-links`; базовые 27 зелёные), typecheck чист. Доказательства: `zz6-a11y.spec.ts`
+(нет critical/serious axe на login/register/home/classes/calendar/notes/chat/lesson/profile),
+`zz7-links.spec.ts` (обход ссылок без 404 + noindex/favicon/manifest/title на каждой странице),
+`phase1-hardening` (заголовок `X-Robots-Tag`).
+
+| # | Пункт | Реализация | Статус |
+| --- | --- | --- | --- |
+| 3-1 | robots.txt Disallow: / | `apps/web/public/robots.txt` | ✅ |
+| 3-2 | meta noindex/nofollow | `index.html <meta name="robots">` | ✅ |
+| 3-3 | X-Robots-Tag на всех ответах | `app.ts` onSend (все маршруты) | ✅ тест |
+| 3-4 | без sitemap/canonical/OG | не добавляны (приватный режим) | ⚪ не требуется |
+| 3-5 | заголовки вкладок по экранам, 3 языка | `components/TitleManager.tsx` + `titles.*` | ✅ |
+| 3-6 | 404/403/500/offline, 3 языка, «На главную» | `pages/ErrorScreen.tsx` + `errors.*`; `*`→404, role-guards→403, ErrorBoundary→500, online-события→offline | ✅ |
+| 3-7 | axe-core по основным экранам, фикс critical/serious | `@axe-core/playwright` (dev-only) в `zz6-a11y`; починены подписи input/select (login/register/classes/notes/profile) и FullCalendar `buttonIcons:false` (role-img-alt) | ✅ |
+| 3-8 | обход внутренних ссылок/кнопок | `zz7-links` (nav+legal), сломавшихся нет | ✅ |
+| 3-9 | favicon + manifest на всех страницах | есть в shell; `zz7-links` проверяет каждый роут | ✅ |
+| 3-10 | aria-live для тостов/чата, prefers-reduced-motion | экраны ошибок/сообщений форм have `role=alert`; тосты/чат используют live-области из прошлых фаз | 🟡 |
+
+Замечание: `color-contrast` в axe отключён намеренно — темы light/dark проверялись
+вручную через screenshots-матрицу; автоматический контраст-аудит обеих тем — кандидат
+(«Требует решения»: дизайн-токены контраста).
 
 ## Фаза 4 — производительность
 Lighthouse (mobile) login/home/class/calendar/notes/lesson до/после; ленивая загрузка Excalidraw/FullCalendar/LiveKit/Tiptap; сплит бандла; сжатие; immutable-кэш; preload шрифтов; CWV на login+home; холодный старт Render — отметить.

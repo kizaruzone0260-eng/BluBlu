@@ -52,6 +52,9 @@ suite('Phase 1а: security response headers', () => {
     expect(h['strict-transport-security']).toBeDefined();
     expect(h['x-frame-options']).toBeDefined();
     expect(h['permissions-policy']).toContain('camera=(self)');
+    // Phase 3: the private app is never indexed — on every response, incl. API.
+    expect(h['x-robots-tag']).toContain('noindex');
+    expect(h['x-robots-tag']).toContain('nofollow');
   });
 
   it('5xx never leaks an internal message (generic, version-free body)', async () => {
