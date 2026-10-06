@@ -235,11 +235,12 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       };
     });
 
-    // Full account removal (§3.1 privacy). Cascade removes memberships; refresh tokens revoked.
+    // Full account removal (§3.1 privacy + Part 1в right-to-be-forgotten). Personal
+    // data (chat/notes/TG-link/tokens/prefs/consent/membership) is erased; authored
+    // class content stays but the author identity is anonymized. See services/account.
     app.delete('/api/me', { preHandler: app.authenticate }, async (req, reply) => {
-      await db.update(users).set({ deletedAt: new Date(), email: `deleted-${req.user!.id}@invalid.local` })
-        .where(eq(users.id, req.user!.id));
-      await db.delete(refreshTokens).where(eq(refreshTokens.userId, req.user!.id));
+      const { eraseAccount } = await import('../services/account.js');
+      await eraseAccount(db, req.user!.id);
       const { audit } = await import('../services/audit.js');
       audit(db, req.user!.id, 'account_deleted', { userId: req.user!.id });
       reply.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });

@@ -134,6 +134,13 @@
       "when": 1791285897226,
       "tag": "0018_legal_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791290000000,
+      "tag": "0019_rls_on_every_table",
+      "breakpoints": true
     }
   ]
 }
