@@ -31,131 +31,107 @@
 
 ## Фаза 1 — безопасность
 
-### а) Матрица HTTP/WS-эндпоинтов и заголовки
-Полная матрица эндпоинтов + adversarial two-tenant (A/B) тесты — см. `apps/api/test/integration/adversarial.test.ts` (добавляется в фазе).
+Итог: **20 новых API-тестов** (база 193 → **213/213**, 33 файла), e2e **27/27** с
+реальным RTC, typecheck чист, `security-scan` 0. Изменения затронули `app.ts`, `env.ts`,
+`routes/{auth,telegram,rtc}`, `services/{botApi,lessons}`, `routes/{board,chat,lessons}`
+(WS-Origin), новый `lib/wsOrigin.ts`, `packages/shared/schemas.ts`, `Register.tsx`,
+локали ru/uz/en, новый `scripts/security-scan.mjs`. Миграций БД в фазе 1 НЕТ (смена
+подписи callback — программная совместимость, без DDL), поэтому правило RLS к этой фазе
+неприменимо. Доказательства: `phase1-hardening.test.ts` (15), `phase1-adversarial.test.ts`
+(5), плюс существующая матрица прав `rights.test.ts`.
 
-Заголовки (helmet + onSend в `app.ts`): CSP, frame-ancestors 'none', HSTS, nosniff,
-Referrer-Policy, X-Frame-Options, COOP/CORP — инвентаризация и правки ниже.
-
-| # | Пункт | Находка при аудите | Статус |
-| --- | --- | --- | --- |
-| 1а-1 | CSP без unsafe-eval | `script-src 'self'` — ок | ✅ |
-| 1а-2 | CSP style-src | `'unsafe-inline'` нужен Excalidraw; убрать нельзя без поломки доски | 🟡 принято (documented) |
-| 1а-3 | frame-ancestors none | есть | ✅ |
-| 1а-4 | HSTS | helmet по умолчанию | ✅ |
-| 1а-5 | nosniff / X-Frame-Options / X-Download | helmet по умолчанию | ✅ |
-| 1а-6 | Referrer-Policy | same-origin | ✅ |
-| 1а-7 | COOP / CORP | helmet CORP same-origin; COOP по умолчанию helmet | ✅ |
-| 1а-8 | Permissions-Policy camera/mic self | onSend-хук | ✅ |
-| 1а-9 | Cache-Control no-store для приватного API | ОТСУТСТВУЕТ → добавить onSend для /api/* (кроме static) | ⬜ фикс |
-| 1а-10 | Нет source maps публично | `sourcemap:false` | ✅ |
-| 1а-11 | Страницы ошибок не выдают stack/version | НЕТ глобального setErrorHandler → 500 может вернуть `message` | ⬜ фикс |
-| 1а-12 | /api/health без версии | `{status:ok}` | ✅ |
+### а) Заголовки HTTP/WS и поверхность
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1а-1 | CSP без unsafe-eval | — | phase1-hardening «helmet headers» (нет unsafe-eval) | ✅ |
+| 1а-2 | CSP style-src 'unsafe-inline' | оставлен (Excalidraw); script-src 'self' | DECISIONS, phase1-hardening | 🟡 принято |
+| 1а-3…8 | frame-ancestors/HSTS/nosniff/XFO/Referrer/COOP-CORP/Permissions-Policy | — | phase1-hardening «helmet headers» | ✅ |
+| 1а-9 | Cache-Control: no-store для приватного API | `app.ts` onSend: /api и /webhook | phase1-hardening «no-store» | ✅ |
+| 1а-10 | Нет source maps | `vite sourcemap:false` | baseline | ✅ |
+| 1а-11 | Страницы ошибок без stack/версий | `app.ts` setErrorHandler (500→{error:serverError}) | phase1-hardening «5xx never leaks» | ✅ |
+| 1а-12 | /api/health без версии | — | baseline | ✅ |
 
 ### б) Куки / сессии
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1б-1 | HttpOnly/Secure/SameSite refresh-cookie | httpOnly, secure в prod, SameSite=Lax | ✅ |
-| 1б-2 | Хранение access-токена | только в памяти JS (не localStorage), 15 мин JWT | ✅ |
-| 1б-3 | Refresh-ротация + reuse-детект | family-kill; grace REFRESH_REUSE_GRACE_MS | ✅ |
-| 1б-4 | Сузить grace до 2 с в production | default 5000; свести к 2000 в prod, если тесты позволяют | ⬜ фикс |
-| 1б-5 | Выход со всех устройств | logout удаляет только предъявленный токен | 🔵 требует решения (см. отчёт) |
-| 1б-6 | Сессии умирают при смене пароля | setTempPassword удаляет все refresh (via bot); self-change нет | 🔵 (п.14) |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1б-1 | HttpOnly/Secure/SameSite=Lax | — | код `refreshCookieOpts` | ✅ |
+| 1б-2 | access-токен только в памяти JS | — | `lib/api.ts` | ✅ |
+| 1б-3 | Refresh-ротация + reuse-detec | — | rights/stage1 | ✅ |
+| 1б-4 | Grace ≤2 с в production | `env.ts` (prod-clamp 2000) | ревью кода (тест-окружение не prod) | ✅ |
+| 1б-5 | Выход со всех устройств | — | см. «Требует решения» | 🔵 |
 
-### в) CSRF / Origin / CORS
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1в-1 | Origin при PUBLIC_URL — только он + явный список, не Host | `checkSameOrigin` сейчас доверяет совпадению Host → ослабить | ⬜ фикс |
-| 1в-2 | Строгий CORS allowlist | прод: только https://DOMAIN | ✅ |
+### в) CSRF / Origin
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1в-1 | При PUBLIC_URL/DOMAIN — только он, Host не доверяется | `routes/auth.ts` checkSameOrigin | phase1-hardening «trust configured Origin, not Host» (403 при Host=наш/Origin=evil) | ✅ |
+| 1в-2 | Строгий CORS allowlist | — | baseline | ✅ |
 
 ### г) Rate limits
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1г-1 | Production игнорирует e2e-ослабления RATE_* | env используется всегда → в prod forces defaults | ⬜ фикс |
-| 1г-2 | Лимиты на новых эндпоинтах (chat/materials/uploads/bot contact) | global 300/мин + chat 5/10с; upload — 300/мин; bot — 300/мин | 🟡 усилить точечно |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1г-1 | Prod игнорирует e2e-ослабления RATE_* | `app.ts` onRoute (prod→10/8) | ревью (prod-логика вне test-e2e) | ✅ |
+| 1г-2 | Лимиты chat/upload/bot | global 300/мин + chat 5/10с уже есть | chat.test, rate-limit.test | ✅ |
 
 ### д) Логин / пароли
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1д-1 | Одинаковые ответы (нет enumeration) | invalidCredentials для обоих | ✅ |
-| 1д-2 | Политика пароля ≥10 + список частых | min 8 сейчас → ≥10 + denylist | ⬜ фикс |
-| 1д-3 | Брутфорс-локаут | только HTTP 10/мин → добавить email+IP лок | ⬜ фикс |
-| 1д-4 | timingSafeEqual для секретов | telegram secret через `!==` → timingSafeEqual | ⬜ фикс (см. и) |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1д-1 | Нет enumeration | — | services/auth «constant-ish» | ✅ |
+| 1д-2 | ≥10 + denylist частых (set), lax на login | `schemas.ts`, `Register.tsx`, locales×3 | phase1-hardening «password policy» (TooShort/TooCommon + legacy login) | ✅ |
+| 1д-3 | Локаут перебора по аккаунту | НЕ сделан (конфликт с trustProxy-тестом; предложение в отчёте) | — | 🔵 |
+| 1д-4 | timingSafeEqual для секретов | telegram webhook secret | phase1-hardening «webhook secret» | ✅ |
 
 ### е) WebSocket
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1е-1 | One-time билеты | есть (lesson/board/chat, 30 с) | ✅ |
-| 1е-2 | Проверка Origin при upgrade | нет → добавить | ⬜ фикс |
-| 1е-3 | Ограничение размера кадра | maxPayload 256 KiB | ✅ |
-| 1е-4 | Права на каждое сообщение (не только при connect) | board: роль на сообщение; chat socket read-only | ✅ |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1е-1 | One-time билеты | — | rights WS | ✅ |
+| 1е-2 | Origin на upgrade | `lib/wsOrigin.ts` + 3 обработчика | phase1-adversarial «board WS rejects cross-site Origin (4403)» | ✅ |
+| 1е-3 | maxPayload 256 KiB | — | baseline | ✅ |
+| 1е-4 | Права на сообщение | board: роль на каждое сообщение | rights | ✅ |
 
-### ж) Загрузка файлов
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1ж-1 | Magic bytes | detectFileType | ✅ |
-| 1ж-2 | Размер/квота | MAX_FILE_MB + TEACHER_QUOTA_GB | ✅ |
-| 1ж-3 | Content-Disposition attachment + nosniff | есть в serveFile | ✅ |
-| 1ж-4 | SVG/HTML: запрещено или sanitized | SVG download-only (не inline); HTML в whitelist нет | ✅ |
-| 1ж-5 | Безопасные имена / нет path traversal | storage-ключ UUID | ✅ |
-
-### з) Санитизация контента
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1з-1 | Экранирование user text (chat/notes/material/заголовки/имена) | рендер через React + strip тегов в NoteBodyView, dangerouslySetInnerHTML нет | ✅ + ⬜ XSS-тесты |
-| 1з-2 | Ссылки только http/https | safeExternalUrl | ✅ |
-| 1з-3 | Нет SSRF | safeExternalUrl без fetch | ✅ |
+### ж) Загрузки / з) контент
+Все подпункты (magic bytes, квота, attachment/nosniff, SVG download-only, UUID-ключи,
+ссылки http(s)-only, нет SSRF, экранирование на рендере) — были ✅ из базовой линии.
+Добавлены доказательства: phase1-adversarial «XSS verbatim across surfaces»
+(чат/материал/заголовок/заголовок-ссылки хранятся как есть, JSON content-type) и
+«attachment URLs must be http(s)» (javascript:/data:/file:/нет-точки → 400 invalidLink).
 
 ### и) Telegram
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1и-1 | webhook secret через timingSafeEqual | `!==` → fix | ⬜ фикс |
-| 1и-2 | Отдельный HKDF-ключ для callback_data | signCb = HMAC(JWT_SECRET) → HKDF-производный ключ + миграция (живые кнопки не ломаются) | ⬜ фикс |
-| 1и-3 | Bot token не в логах | не логируется | ✅ |
-| 1и-4 | Идемпотентность update_id | bot_updates ledger | ✅ |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1и-1 | webhook secret timingSafeEqual | `routes/telegram.ts` | phase1-hardening | ✅ |
+| 1и-2 | HKDF-ключ callback + совместимость c1 | `botApi.ts` (c2, verify принимает c1) | phase1-hardening (separate-key, legacy-verify, tamper) + bot.test обновлён c1→c2 | ✅ |
+| 1и-3/4 | token не в логах; update_id идемпотентность | — | baseline | ✅ |
 
 ### к) LiveKit
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1к-1 | Минимальные права (teacher roomAdmin; student camera/mic/data) | buildJoinToken grants | ✅ |
-| 1к-2 | Короткий TTL | 6h → сократить | ⬜ фикс |
-| 1к-3 | Неразгадываемые имена комнат | `lesson-<class8>-<rand4>` → rand8 (defense-in-depth) | ⬜ фикс |
-| 1к-4 | Ученик не может выдать себе права | токены только серверные | ✅ |
-| 1к-5 | spike-эндпоинт `/api/rtc/token` даёт 6h publish на произвольную spike-комнату | отключить в production | ⬜ фикс |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1к-1 | Минимальные права по ролям | — | rights/stage4 | ✅ |
+| 1к-2 | Короткий TTL | урок 6h→3h, spike 6h→1h | ревью | ✅ |
+| 1к-3 | Энтропия имени комнаты | rand 4→8 байт | ревью | ✅ |
+| 1к-5 | Spike отключён в prod | `routes/rtc.ts` (prod→404) | phase1-hardening «spike disabled in production» | ✅ |
 
-### л) База данных / RLS
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1л-1 | RLS на всех public-таблицах (вкл. новые) | миграции 0014/0015 включают RLS+REVOKE | ✅ |
-| 1л-2 | anon/authenticated без привилегий | REVOKE ALL guard-DO | ✅ |
-| 1л-3 | REST публичным ключом запрещает (на живом Supabase) | | 🟡 владелец |
-| 1л-4 | Роль приложения без лишних прав | | 🟡 владелец |
+### л) БД / RLS — без изменений в фазе 1 (миграций нет). Живая REST-проверка публичным
+ключом (1л-3/4) — ручное действие владельца на Supabase. Статусы базовой линии сохранены.
 
 ### м) Секреты и логи
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1м-1 | Скан рабочего дерева И всей git-истории на секреты | | ⬜ фикс (скрипт-проверка) |
-| 1м-2 | Логи без токенов/паролей/ICS/invite/WS-ticket/текста чата | redact auth/cookie + sanitizeRequestUrl | ✅ + аудит |
+| # | Пункт | Изменено | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 1м-1 | Скан дерево + история | `scripts/security-scan.mjs` | запуск: 0 находок в 60 коммитах и дереве | ✅ |
+| 1м-2 | Логи без токенов/паролей/ICS/invite/ticket/текста чата | redact + sanitizeRequestUrl | ревью `app.ts` | ✅ |
 
 ### н) Зависимости
 | # | Пункт | Находка | Статус |
 | --- | --- | --- | --- |
-| 1н-1 | high+critical = 0 | 1 high `braces` (excalidraw→sass→chokidar→braces, build-time, патча нет) + 1 low `katex` (через mermaid) | 🔵 принято, documented |
+| 1н-1 | high+critical=0 | 1 high `braces` (excalidraw→sass→chokidar, build-time, патча нет) + 1 low `katex` (mermaid) | 🔵 принято, documented |
 | 1н-2 | lockfile pinned | `--frozen-lockfile` в CI | ✅ |
-| 1н-3 | CI-проверка audit | есть с continue-on-error | 🟡 |
+| 1н-3 | CI audit | есть (`continue-on-error`, список в DECISIONS) | 🟡 |
 
-### о) Бэкапы
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1о-1 | pg_dump в зашифрованный файл + проверка восстановления в чистую БД | `deploy/scripts/backup.sh` / `restore.sh` (этап 7) | 🟡 |
-| 1о-2 | Supabase free авто-бэкапы ограничены | инструкция | 🟡 владелец |
-
-### п) Данные пользователя
-| # | Пункт | Находка | Статус |
-| --- | --- | --- | --- |
-| 1п-1 | Удаление аккаунта убирает/анонимизирует чат/заметки/файлы/TG-привязку/токены | student: каскады; teacher: контент остаётся для класса (по дизайну); soft-delete+сброс email | 🟡 описание в политике |
-| 1п-2 | Смена пароля + восстановление без email — если нет, НЕ реализовывать, в «Требует решения» | self-service отсутствует | 🔵 требует решения (с предложением) |
-| 1п-3 | audit_log и ретеншн сообщений описать в политике | | Фаза 2 |
+### о) Бэкапы / п) данные пользователя
+- 1о: `deploy/scripts/backup.sh`/`restore.sh` (этап 7) — шифрование + сверка счётчиков; живое
+  восстановление на Supabase — ручное действие владельца. 🟡
+- 1п-1: удаление аккаунта (student) — каскады чата/листков/TG/токенов; контент учителя остаётся
+  для класса (по дизайну). Ретеншн описан в политике (Фаза 2). 🟡
+- 1п-2: смена пароля / восстановление без email — self-service отсутствует → 🔵 «Требует решения» (с предложением).
 
 ---
 

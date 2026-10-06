@@ -170,7 +170,7 @@ suite('telegram bot (mocked api)', () => {
     clear();
     await go(msg(T_CHAT, '/announce'));
     const pick = api.last('send');
-    expect(JSON.stringify(pick?.opts?.buttons ?? '')).toContain('c1.');
+    expect(JSON.stringify(pick?.opts?.buttons ?? '')).toContain('c2.');
     clear();
     await go(cbq(T_CHAT, { u: teacherId, a: 'an', c: classId }));
     expect(lastText()).toContain('Текст объявления');
