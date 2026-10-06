@@ -127,8 +127,16 @@ suite('stage 7: security hardening', () => {
     const tk = l.json().accessToken as string;
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Aud' }).returning();
     await app.inject({ method: 'POST', url: `/api/classes/${cls!.id}/invites`, headers: { authorization: `Bearer ${tk}` }, payload: {} });
-    await new Promise((r) => setTimeout(r, 100));
-    const rows = await t.db.select().from(auditLog).where(eq(auditLog.action, 'invite_create'));
+    // audit() is intentionally fire-and-forget (never blocks the response); poll
+    // for the row instead of a fixed sleep so the assertion is deterministic on
+    // loaded CI runners (a fixed 100 ms wait was a timing race).
+    const until = Date.now() + 4000;
+    let rows: { action: string }[] = [];
+    do {
+      rows = await t.db.select().from(auditLog).where(eq(auditLog.action, 'invite_create'));
+      if (rows.length) break;
+      await new Promise((r) => setTimeout(r, 50));
+    } while (Date.now() < until);
     expect(rows.length).toBeGreaterThan(0);
     await app.close();
   });
