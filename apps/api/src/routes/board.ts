@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws';
 import { z } from 'zod';
 import type { DB } from '../db/index.js';
 import { consumeWsTicket } from '../services/wsTicket.js';
+import { wsOriginAllowed } from '../lib/wsOrigin.js';
 import { resolveClass } from '../services/classes.js';
 import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
@@ -164,6 +165,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
   // ── board WebSocket (one-time ticket auth, §audit) ──
   app.get('/api/ws/board/:id', { websocket: true }, (socket: WebSocket, req) => {
     void (async () => {
+      if (!wsOriginAllowed(req)) { socket.close(4403); return; }
       const url = new URL(req.url, 'http://local');
       const ticket = url.searchParams.get('ticket') ?? '';
       const sessionId = url.pathname.split('/').pop() ?? '';

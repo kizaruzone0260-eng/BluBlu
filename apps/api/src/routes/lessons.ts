@@ -13,6 +13,7 @@ import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { classTitle } from '../services/notifyQueue.js';
 import { createWsTicket, consumeWsTicket } from '../services/wsTicket.js';
+import { wsOriginAllowed } from '../lib/wsOrigin.js';
 import type { WebSocket as WsSocket } from 'ws';
 
 const withRoom = (s: LessonSession) => ({
@@ -261,6 +262,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
   // Browser WS can't set Authorization headers → ONE-TIME ticket in query, consumed here.
   app.get('/api/ws/lesson/:id', { websocket: true }, (socket: WsSocket, req) => {
     void (async () => {
+      if (!wsOriginAllowed(req)) { socket.close(4403); return; }
       const url = new URL(req.url, 'http://local');
       const ticket = url.searchParams.get('ticket') ?? '';
       const q = url.searchParams.get('sessionId') ?? (url.pathname.split('/').pop() ?? '');

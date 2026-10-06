@@ -75,6 +75,15 @@ const envSchema = z
   });
 
 export const env = envSchema.parse(process.env);
+
+// Hardening (Phase 1б): in PRODUCTION narrow the refresh-reuse grace window to
+// ≤2 s — long enough to absorb one aborted-rotation replay, short enough to
+// shrink the replay-theft blast radius. Non-prod keeps the configured value
+// (tests exercise rotation timing; e2e/StrictMode double-refresh needs slack).
+if (env.NODE_ENV === 'production' && env.REFRESH_REUSE_GRACE_MS > 2000) {
+  env.REFRESH_REUSE_GRACE_MS = 2000;
+}
+
 export type Env = typeof env;
 
 /** Client-facing LiveKit WebSocket address: LIVEKIT_URL (Cloud/demo) wins over LIVEKIT_WS_URL (self-host via Caddy). */

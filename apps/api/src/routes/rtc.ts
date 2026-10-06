@@ -16,6 +16,11 @@ const bodySchema = z.object({
 
 export async function rtcRoutes(app: FastifyInstance, _opts: { db: DB }) {
   app.post('/api/rtc/token', { preHandler: app.authenticate }, async (req, reply) => {
+    // Hardening (Phase 1к): the stage-0 spike room is a LAN/diagnostic tool only.
+    // It hands a 6h publish-capable token for any `spike-*` room, so in a real
+    // (production) deployment it is disabled entirely — lesson rooms go through
+    // the membership-gated /api/lessons/:id/join path instead.
+    if (env.NODE_ENV === 'production') return reply.code(404).send({ error: 'notFound' });
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
     const room = parsed.data.room;
@@ -26,7 +31,7 @@ export async function rtcRoutes(app: FastifyInstance, _opts: { db: DB }) {
     const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
       identity: req.user!.id,
       name: req.user!.role + '-' + room.slice(0, 12),
-      ttl: '6h',
+      ttl: '1h',
     });
     at.addGrant({
       room,

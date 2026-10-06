@@ -5,6 +5,7 @@ import { sql, eq } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { audit } from '../services/audit.js';
+import { wsOriginAllowed } from '../lib/wsOrigin.js';
 import {
   chatAccess, clearMute, consumeChatTicket, createChatTicket, deleteMessage, deleteMessageAny,
   editMessage, isMuted, listMessages, markRead, postMessage, setMute, chatSummary, type ChatMessageRow,
@@ -206,6 +207,7 @@ export async function chatRoutes(app: FastifyInstance, opts: { db: DB }) {
   // ── WebSocket (4401 bad/expired/reused ticket, 4404 no access) ─────────────
   app.get('/api/ws/chat/:id', { websocket: true }, (socket: WebSocket, req) => {
     void (async () => {
+      if (!wsOriginAllowed(req)) { socket.close(4403); return; }
       const classId = (req.params as { id: string }).id;
       const url = new URL(req.url ?? '/', 'http://local');
       const ticket = url.searchParams.get('ticket') ?? '';

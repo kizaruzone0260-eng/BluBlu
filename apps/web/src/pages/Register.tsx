@@ -64,7 +64,7 @@ export default function Register({ onDone }: { onDone: () => void }) {
           <label>{t('common.email')}</label>
           <input type="email" data-testid="reg-email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
           <label>{t('common.password')}</label>
-          <input data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+          <input data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} autoComplete="new-password" />
           {err && <p className="error" data-testid="reg-error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
           <button data-testid="register-step1" type="submit" disabled={busy}>{t('auth.continue')}</button>
         </form>

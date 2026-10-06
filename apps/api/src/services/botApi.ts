@@ -7,7 +7,7 @@
  * acting user — a forged or replayed callback from another account is refused,
  * and every handler STILL re-checks rights on the server.
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
 import { env } from '../env.js';
 
 export interface InlineButton { text: string; cb?: string; url?: string }
@@ -65,22 +65,46 @@ export class CapturingApi implements BotApi {
 }
 
 // ─── signed callback data ─────────────────────────────────────────────────────
+//
+// Hardening (Phase 1и): callback_data is signed with a DEDICATED key derived
+// from JWT_SECRET via HKDF (label 'klass.cb.v2'), NOT with JWT_SECRET itself —
+// so a leaked callback signature can never be replayed as a JWT and the auth
+// master secret is not reused in the bot surface. New buttons are version 'c2'.
+// The v1 scheme (HMAC over JWT_SECRET directly) is STILL VERIFIED so any button
+// already rendered in a chat keeps working through the transition — a signature
+// migration with zero broken buttons; nothing needs re-sending.
 
-const sig = (payload: string) =>
+const hkdfCbKey = (): Buffer =>
+  // HKDF-SHA256, 32-byte salt (domain separator, not a secret), info label.
+  // Derivation is deterministic per JWT_SECRET, so every process agrees.
+  Buffer.from(new Uint8Array(hkdfSync('sha256',
+    Buffer.from(env.JWT_SECRET, 'utf8'),
+    Buffer.from('klass-cb-salt-v2', 'utf8'),
+    Buffer.from('klass.cb.v2', 'utf8'), 32)));
+
+/** v2 signature with the dedicated derived key. */
+const sig2 = (payload: string): string =>
+  createHmac('sha256', hkdfCbKey()).update(`cb2:${payload}`).digest('base64url').slice(0, 22);
+
+/** legacy v1 signature (kept for verification only). */
+const sig1 = (payload: string): string =>
   createHmac('sha256', env.JWT_SECRET).update(`cb1:${payload}`).digest('base64url').slice(0, 22);
 
 /** payload = {u: userId or '', a: action, c?: classId, r?: reportId, …} */
 export function signCb(payload: Record<string, string>): string {
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  return `c1.${body}.${sig(body)}`;
+  return `c2.${body}.${sig2(body)}`;
 }
 
-/** Verify the signature and return the payload, or null on any tampering. */
+/** Verify the signature (v2 or transitional v1) and return the payload, or null on any tampering. */
 export function verifyCb(data: string): Record<string, string> | null {
   const parts = data.split('.');
   const head = parts[0]; const body = parts[1]; const given = parts[2];
-  if (parts.length !== 3 || head !== 'c1' || !body || !given) return null;
-  const expect = sig(body);
+  if (parts.length !== 3 || !body || !given) return null;
+  let expect: string | null = null;
+  if (head === 'c2') expect = sig2(body);
+  else if (head === 'c1') expect = sig1(body); // transition window: legacy buttons
+  if (expect === null) return null;
   const a = Buffer.from(expect); const b = Buffer.from(given);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {

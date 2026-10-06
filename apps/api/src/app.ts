@@ -100,9 +100,37 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   // helmet v8 dropped its Permissions-Policy middleware, so the header is set
   // here. Without it a restrictive embedder/default policy could silently kill
   // getUserMedia — the SPA would then show the localized «нет разрешения» error.
-  app.addHook('onSend', (_req, reply, payload, done) => {
+  //
+  // Hardening (Phase 1а): every PRIVATE API/webhook response is marked
+  // `no-store` so an intermediate cache (Render/proxy/browser) can never retain
+  // class data, chat history or /api/me. Static assets (the SPA shell/chunks)
+  // are served WITHOUT a leading /api or /webhook and keep their own caching.
+  app.addHook('onSend', (req, reply, payload, done) => {
     reply.header('permissions-policy', 'camera=(self), microphone=(self), display-capture=(self), autoplay=(self)');
+    const url = req.raw.url ?? '';
+    if (url.startsWith('/api') || url.startsWith('/webhook')) {
+      reply.header('cache-control', 'no-store');
+      reply.header('pragma', 'no-cache');
+    }
     done(null, payload);
+  });
+
+  // Hardening (Phase 1а): a single error handler so an unexpected 5xx never
+  // echoes Fastify's default `{message}` (which can carry driver/library text).
+  // Intentional 4xx replies thrown as errors keep their status; anything 500+
+  // is logged internally and answered with a generic, version-free body.
+  app.setErrorHandler((err, req, reply) => {
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    if (status >= 500) {
+      req.log?.error({ err }, 'unhandled error');
+      return reply.code(500).send({ error: 'serverError' });
+    }
+    // known client status: reuse the code, drop any message detail
+    const payload = (err as { response?: unknown }).response;
+    if (payload && typeof payload === 'object' && 'error' in payload) {
+      return reply.code(status).send(payload as { error: string });
+    }
+    return reply.code(status).send({ error: 'invalidInput' });
   });
 
   const corsOrigins = env.NODE_ENV === 'production'
@@ -142,11 +170,15 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     // stricter: login (brute force), register/join (one-time code attempts).
     // The caps are env-overridable (defaults 10 / 8) so the e2e suite, which
     // logs in far more than a real user, can relax them without touching prod.
+    // Hardening (Phase 1г): in PRODUCTION the env overrides are IGNORED — the
+    // strict caps below are always applied, so a leaked/accidental
+    // RATE_LOGIN_MAX=99999 in the deploy environment can never dis-arm the
+    // brute-force net. Non-prod (test/dev/e2e) keeps honoring the env.
     if (url === '/api/auth/login') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.RATE_LOGIN_MAX, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.NODE_ENV === 'production' ? 10 : env.RATE_LOGIN_MAX, timeWindow: '1 minute' } };
     }
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.RATE_CODE_MAX, timeWindow: '1 minute' } };
+      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.NODE_ENV === 'production' ? 8 : env.RATE_CODE_MAX, timeWindow: '1 minute' } };
     }
   });
   await app.register(rateLimit, { global: false });

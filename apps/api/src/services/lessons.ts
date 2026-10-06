@@ -15,7 +15,10 @@ export async function startLesson(
     .where(and(eq(lessonSessions.classId, classId), isNull(lessonSessions.endedAt)))
     .limit(1);
   if (existing) return existing;
-  const room = `lesson-${classId.slice(0, 8)}-${randomBytes(4).toString('hex')}`;
+  // Hardening (Phase 1к): 64 bits of per-session entropy in the room name.
+  // The room itself is never a secret (a valid, membership-gated JWT is still
+  // required to join), but a longer random tail removes any guessability.
+  const room = `lesson-${classId.slice(0, 8)}-${randomBytes(8).toString('hex')}`;
   const [s] = await db.insert(lessonSessions).values({
     classId, eventId: eventId ?? null, roomName: room, createdBy: teacherId,
   }).returning();
@@ -55,7 +58,7 @@ export async function buildJoinToken(opts: {
   isTeacher: boolean; lectureMode: boolean;
 }): Promise<string> {
   const at = new AccessToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
-    identity: opts.identity, name: opts.name, ttl: '6h',
+    identity: opts.identity, name: opts.name, ttl: '3h',
   });
   if (opts.isTeacher) {
     // camera + mic + screen with audio + room moderation

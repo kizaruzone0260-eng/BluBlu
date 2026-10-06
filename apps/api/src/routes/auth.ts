@@ -25,20 +25,28 @@ function refreshCookieOpts(ttlMs: number) {
   };
 }
 
-/** §3.9/§4: refresh endpoint must reject cross-origin POSTs (Origin, when present, must match).
- * Two ways to pass: (1) the configured origins (dev vite on another port, PUBLIC_URL/DOMAIN);
- * (2) the request's own Host header — a same-origin fetch from the deployed page (Render/cloud-
- * flare/localhost) whose origin we could not know from env (PUBLIC_URL is empty before the
- * first deploy). Browsers forbid scripts from setting Host, so (2) is still CSRF-safe. */
+/** §3.9/§4 + Hardening (Phase 1в): refresh/logout must reject cross-origin POSTs.
+ * When we KNOW our public origin (PUBLIC_URL or DOMAIN is configured — i.e. any
+ * real deploy) the Origin must match that allowlist EXACTLY; the request `Host`
+ * is never trusted, so a Host-header-injecting client cannot widen the door.
+ * Only in local dev/e2e (no PUBLIC_URL/DOMAIN) do we fall back to the request's
+ * own Host, which lets a same-origin page on an ephemeral port refresh without
+ * env config. The configured origins always include the dev vite origin. */
 function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply): boolean {
   const origin = req.headers.origin;
   if (!origin) return true; // curl / same-origin navigations
-  const allowed = new Set([env.PUBLIC_WEB_ORIGIN, `https://${env.DOMAIN ?? ''}`, `http://localhost:5173`, ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : [])]);
-  let sameHost = false;
-  try {
-    sameHost = new URL(origin).host === (req.headers.host ?? '');
-  } catch { /* malformed origin ⇒ not same host */ }
-  if (!allowed.has(origin) && !sameHost) {
+  const allowed = new Set<string>([
+    env.PUBLIC_WEB_ORIGIN, 'http://localhost:5173',
+    ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : []),
+    ...(env.DOMAIN ? [`https://${env.DOMAIN}`] : []),
+  ]);
+  const known = Boolean(env.PUBLIC_URL || env.DOMAIN);
+  let ok = allowed.has(origin);
+  if (!ok && !known) {
+    // dev/e2e only: a same-origin page whose Host we could not know from env.
+    try { ok = new URL(origin).host === (req.headers.host ?? ''); } catch { /* malformed ⇒ not same host */ }
+  }
+  if (!ok) {
     reply.code(403).send({ error: 'forbidden' });
     return false;
   }
@@ -50,7 +58,19 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
     // POST /api/auth/register — new student by one-time class code
     app.post('/api/auth/register', async (req, reply) => {
       const parsed = registerByCodeSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
+      if (!parsed.success) {
+        // Hardening (Phase 1д): surface a SPECIFIC, translated password reason
+        // so the user knows why their password was rejected; every other input
+        // problem stays the generic 'invalidInput' (no field enumeration).
+        const pw = parsed.error.issues.find((i) => i.path[0] === 'password');
+        if (pw) {
+          const code = pw.code === 'too_small' ? 'passwordTooShort'
+            : pw.code === 'invalid_string' ? 'passwordTooSimple'
+            : pw.code === 'custom' ? 'passwordTooCommon' : null;
+          if (code) return reply.code(400).send({ error: code });
+        }
+        return reply.code(400).send({ error: 'invalidInput' });
+      }
       const key = `code:${req.ip}`;
       const gate = throttleCheck(key);
       if (!gate.allowed) {

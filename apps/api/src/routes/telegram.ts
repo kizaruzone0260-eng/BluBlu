@@ -12,7 +12,7 @@ import { resolveClass } from '../services/classes.js';
 import { createBot } from '../services/telegramBot.js';
 import { handleUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
 import { applyMenu, CapturingApi, grammyApi, removeMenu, type BotApi } from '../services/botApi.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { hashToken } from '../services/notify.js';
 
 /**
@@ -60,7 +60,13 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   // deduped by the bot_updates ledger inside handleUpdate).
   app.post('/webhook/telegram', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (req, reply) => {
     const secret = req.headers['x-telegram-bot-api-secret-token'];
-    if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
+    // Hardening (Phase 1и): constant-time compare of the webhook shared secret,
+    // and a missing configured secret still rejects every request (no bypass).
+    const given = typeof secret === 'string' ? secret : '';
+    const expected = env.TELEGRAM_WEBHOOK_SECRET;
+    const a = Buffer.from(given, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (!expected || a.length !== b.length || !timingSafeEqual(a, b)) {
       return reply.code(403).send({ error: 'forbidden' });
     }
     const update = req.body as TgUpdate;

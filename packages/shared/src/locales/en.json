@@ -36,7 +36,7 @@
     "invalidCode": "This code doesn't match. Check it or ask the teacher for a new one.",
     "codeRateLimited": "Too many attempts. Please wait 15 minutes.",
     "emailTaken": "This email is already registered",
-    "passwordTooShort": "At least 8 characters",
+    "passwordTooShort": "At least 10 characters",
     "profile": "Profile",
     "tempPasswordSet": "Temporary password set",
     "step1": "Step 1 — code and access",
@@ -46,7 +46,9 @@
     "firstName": "First name",
     "lastName": "Last name",
     "nameGateTitle": "First and last name",
-    "nameGateHint": "This is how your teacher and classmates will see you. Both fields are required — you can't continue without them."
+    "nameGateHint": "This is how your teacher and classmates will see you. Both fields are required — you can't continue without them.",
+    "passwordTooSimple": "Letters required, no spaces",
+    "passwordTooCommon": "This password is too common, please choose another"
   },
   "classes": {
     "title": "My classes",
@@ -317,10 +319,11 @@
     "p4": "Deleting the account removes notes, sheets and class memberships; the request is in the “Profile” section."
   },
   "validate": {
-    "passwordTooShort": "At least 8 characters",
+    "passwordTooShort": "At least 10 characters",
     "passwordTooSimple": "Letters required, no spaces",
     "invalidColor": "Color in #rrggbb format",
-    "email": "Invalid email"
+    "email": "Invalid email",
+    "passwordTooCommon": "This password is too common, please choose another"
   },
   "chat": {
     "title": "Chat",

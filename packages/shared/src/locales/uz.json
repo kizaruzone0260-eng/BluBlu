@@ -36,7 +36,7 @@
     "invalidCode": "Kod mos kelmadi. Tekshiring yoki o'qituvchidan yangi kod so'rang.",
     "codeRateLimited": "Juda ko'p urinish. 15 daqiqa kuting.",
     "emailTaken": "Ushbu email allaqachon ro'yxatdan o'tgan",
-    "passwordTooShort": "Kamida 8 ta belgi",
+    "passwordTooShort": "Kamida 10 ta belgi",
     "profile": "Profil",
     "tempPasswordSet": "Vaqtinchalik parol o'rnatildi",
     "step1": "1-qadam — kod va kirish",
@@ -46,7 +46,9 @@
     "firstName": "Ism",
     "lastName": "Familiya",
     "nameGateTitle": "Ism va familiya",
-    "nameGateHint": "O'qituvchi va sinfdoshlar sizni shunday ko'radi. Ikkala maydon ham majburiy — davom etib bo'lmaydi."
+    "nameGateHint": "O'qituvchi va sinfdoshlar sizni shunday ko'radi. Ikkala maydon ham majburiy — davom etib bo'lmaydi.",
+    "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",
+    "passwordTooCommon": "Parol juda keng tarqalgan, boshqasini tanlang"
   },
   "classes": {
     "title": "Mening sinflarim",
@@ -317,10 +319,11 @@
     "p4": "Hisobni butunlay o'chirish qaydlar, varaqalar va sinf a'zoliklarini ham o'chiradi; so'rov — «Profil» bo'limida."
   },
   "validate": {
-    "passwordTooShort": "Kamida 8 ta belgi",
+    "passwordTooShort": "Kamida 10 ta belgi",
     "passwordTooSimple": "Harflar bo'lsin, bo'sh joy taqiqlangan",
     "invalidColor": "Rang #rrggbb formatida",
-    "email": "Email noto'g'ri"
+    "email": "Email noto'g'ri",
+    "passwordTooCommon": "Parol juda keng tarqalgan, boshqasini tanlang"
   },
   "chat": {
     "title": "Chat",

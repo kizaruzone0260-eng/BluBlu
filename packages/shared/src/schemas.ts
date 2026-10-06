@@ -3,11 +3,33 @@ import { DEFAULT_TIMEZONE, INVITE_MAX_TTL_DAYS, INVITE_MIN_TTL_DAYS, SUPPORTED_L
 
 const email = z.string().trim().toLowerCase().email().max(254);
 const name = z.string().trim().min(2).max(100);
-const password = z
+
+/**
+ * Hardening (Phase 1д): common/breached passwords rejected at SET time. This is
+ * a curated denylist of the most frequent weak passwords (case-insensitive),
+ * NOT a full breach corpus — it stops the trivial "password"/"123456" class of
+ * choices. Extended over time; deliberately excludes legitimate test phrases.
+ */
+const COMMON_PASSWORDS: ReadonlySet<string> = new Set([
+  'password', 'password1', 'password12', 'password123', 'password1234', 'passw0rd', 'passworde',
+  'qwerty', 'qwerty123', 'qwertyuiop', '123456', '1234567', '12345678', '123456789', '1234567890',
+  'abc123', 'abcd1234', 'iloveyou', 'letmein', 'welcome', 'welcome1', 'admin', 'administrator',
+  'monkey', 'dragon', 'football', 'baseball', 'sunshine', 'princess', 'login', 'password',
+  'secret', 'secret123', 'trustno1', 'master', 'hello', 'freedom', 'whatever', 'qazwsx',
+  '111111', '000000', '121212', '654321', '666666', '888888', 'asdasd', 'azerty', 'zuza',
+]);
+
+/** Password POLICY — applied when a password is CREATED (registration). */
+const passwordPolicy = z
   .string()
-  .min(8, 'passwordTooShort')
+  .min(10, 'passwordTooShort')
   .max(128)
-  .regex(/(?=.*[a-zА-Яа-я])(?=[^ ]+$)/, 'passwordTooSimple');
+  .regex(/(?=.*[a-zА-Яа-я])(?=[^ ]+$)/, 'passwordTooSimple')
+  .refine((v) => !COMMON_PASSWORDS.has(v.toLowerCase()), 'passwordTooCommon');
+
+/** Login only checks the SHA against the stored hash — never re-applies the
+ * policy, so accounts created under the earlier 8-char rule can still sign in. */
+const loginPassword = z.string().min(1).max(128);
 
 /**
  * Item 9 — registration step 2: given name + family name are separate,
@@ -17,7 +39,7 @@ export const registerByCodeSchema = z.object({
   firstName: z.string().trim().min(2, 'name2').max(80),
   lastName: z.string().trim().min(2, 'name2').max(80),
   email,
-  password,
+  password: passwordPolicy,
   code: z.string().trim().toUpperCase(),
 });
 
@@ -26,7 +48,7 @@ export const checkCodeSchema = z.object({
   code: z.string().trim().min(4).max(12),
 });
 
-export const loginSchema = z.object({ email, password });
+export const loginSchema = z.object({ email, password: loginPassword });
 
 export const joinByCodeSchema = z.object({
   code: z.string().trim().toUpperCase(),
