@@ -807,10 +807,11 @@ export default function Lesson() {
                   </div>
                   <div className="stage-strip" data-testid="stage-strip">
                     {stripTiles.slice(0, STRIP_MAX).map((tile) => (
-                      <button type="button" key={tile.key} className="strip-cell" data-testid={`strip-${tile.key}`}
-                        onClick={() => setPinnedKey(pinnedKey === tile.key ? null : tile.key)}>
+                      <div role="button" tabIndex={0} key={tile.key} className="strip-cell" data-testid={`strip-${tile.key}`}
+                        onClick={() => setPinnedKey(pinnedKey === tile.key ? null : tile.key)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPinnedKey(pinnedKey === tile.key ? null : tile.key); } }}>
                         <VideoTile tile={tile} track={tracksRef.current.get(tile.key)} />
-                      </button>
+                      </div>
                     ))}
                     {stripTiles.length > STRIP_MAX && (
                       <div className="strip-more" data-testid="strip-more">+{stripTiles.length - STRIP_MAX}</div>

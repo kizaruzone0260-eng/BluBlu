@@ -59,6 +59,10 @@ const api = async (method, p, body) => {
   return r.json().catch(() => null);
 };
 const classes = await api('GET', '/api/classes');
+// archive stale e2e-run classes so the «Для кого»/filter lists stay readable
+for (const c of classes.filter((x) => /^E2E (Чат|mute|камера|события|Материал|раскладка) \d{10,}/.test(x.name) && !x.archived)) {
+  await api('POST', `/api/classes/${c.id}/archive`);
+}
 // task 2 — the «Имя и фамилия» gate shots use a NEVER-completed account
 const gateLogin = await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
@@ -149,7 +153,24 @@ if (!(chatMsgs.messages?.length >= 3)) {
   if (stuToken) { await say(stuToken, 'Хорошо, подготовлю листок №4 📄'); await say(stuToken, 'А домашку можно сдавать до пятницы?'); await say(login.accessToken, 'Да, до 23:59 пятницы.'); }
 }
 
-// ── capture ──────────────────────────────────────────────────────────────────
+// ── material fixture (task A): topic + file/link/youtube/drive attachments ──
+const feedAll = await api('GET', `/api/classes/${cls.id}/feed`);
+if (!feedAll.some((x) => x.title === 'Дроби: конспект')) {
+  const topic = await api('POST', `/api/classes/${cls.id}/topics`, { name: 'Сложение дробей' });
+  const fd = new FormData();
+  fd.set('title', 'Дроби: конспект');
+  fd.set('description', '<p><b>Сложение</b> и вычитание дробей. <i>Домашка</i> — листок №4.</p>');
+  if (topic?.id) fd.set('topicId', topic.id);
+  fd.set('attachments', JSON.stringify([
+    { url: 'https://example.com/konspekt.pdf', title: 'Конспект (сайт школы)' },
+    { url: 'https://youtu.be/dQw4w9WgXcQ', title: 'Разбор на YouTube' },
+    { url: 'https://drive.google.com/file/d/1abc/view', title: 'Рабочий лист на Диске' },
+  ]));
+  fd.set('file', new Blob([new TextEncoder().encode('%PDF-1.4 material fixture body').buffer], { type: 'application/pdf' }), 'лист-4.pdf');
+  await fetch(`${BASE}/api/classes/${cls.id}/materials`, { method: 'POST', headers: { authorization: `Bearer ${login.accessToken}` }, body: fd });
+}
+
+// ── capture ───────────────────────────────────────────────────────────────────
 const browser = await chromium.launch({ channel: 'msedge' });
 const widths = process.env.SHOT_WIDTHS ? process.env.SHOT_WIDTHS.split(',').map(Number) : [390, 768, 1280];
 const themes = ['light', 'dark'];
@@ -235,6 +256,8 @@ for (const locale of locales) {
       };
       await shot('home');
       await shot('class', `/classes/${cls.id}`);
+      // task A: the «Создать материал» page (form + right panel)
+      await shot('material', `/classes/${cls.id}/material/new`);
       await shot('calendar', '/calendar');
       // item 5: per-event actions — teacher's edit form footer carries the
       // «Add to Google» and «.ics» buttons
