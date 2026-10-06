@@ -12,7 +12,7 @@ import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKe
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
   startedAt: string; endedAt: string | null; lectureMode: boolean; muteAll: boolean;
-  layout: 'gallery' | 'stage' | 'teacher'; wsUrl: string;
+  layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen: boolean; wsUrl: string;
 }
 
 interface PeerView {
@@ -21,10 +21,12 @@ interface PeerView {
 
 interface Tile {
   key: string; kind: 'video' | 'audio'; name: string; local: boolean; screen: boolean;
+  sid: string;
 }
 
 const LS_CAM = 'blublu.camDevice';
 const LS_MIC = 'blublu.micDevice';
+const LS_PIP = 'blublu.pip'; // task B: remembered floating-camera position + flags
 
 // livekit-client keeps its capture-option types internal — derive them from the
 // method signatures so the constraint chain below type-checks without casts to any
@@ -41,7 +43,7 @@ function useMediaErrorText() {
   };
 }
 
-function VideoTile({ tile, track }: { tile: Tile; track?: LkTrack }) {
+function VideoTile({ tile, track, big = false }: { tile: Tile; track?: LkTrack; big?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   useEffect(() => {
@@ -51,7 +53,7 @@ function VideoTile({ tile, track }: { tile: Tile; track?: LkTrack }) {
     return () => { track.detach(el); };
   }, [track, tile.key, tile.kind]);
   return (
-    <div className="video-tile" data-testid={tile.local ? 'tile-local' : 'tile-peer'}
+    <div className={big ? 'video-tile tile-big' : 'video-tile'} data-testid={tile.local ? 'tile-local' : 'tile-peer'}
       data-local={tile.local ? '1' : '0'} data-screen={tile.screen ? '1' : undefined}
       // remote audio must NOT take a grid slot — it plays silently in the background
       style={tile.kind === 'audio' ? { display: 'none' } : undefined}>
@@ -76,12 +78,21 @@ export default function Lesson() {
   const [connected, setConnected] = useState(false);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [error, setError] = useState('');
-  const [layout, setLayout] = useState<'gallery' | 'stage' | 'teacher'>('gallery');
+  const [layout, setLayout] = useState<Session['layout']>('auto');
   const [lectureMode, setLectureMode] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
   const [localCamOn, setLocalCamOn] = useState(false);
   const [localMicOn, setLocalMicOn] = useState(false);
   const [muteAll, setMuteAll] = useState(false); // task 3: teacher muted everyone
+  // ── task B: Meet-style stage ──
+  const [boardOpen, setBoardOpen] = useState(false); // shared: the board is the main window
+  const [boardFull, setBoardFull] = useState(false); // local: browser fullscreen for the stage
+  const [pinnedKey, setPinnedKey] = useState<string | null>(null); // local: click-to-pin
+  const [activeSid, setActiveSid] = useState<string | null>(null); // auto: who is speaking
+  const [pip, setPip] = useState<{ x: number; y: number; min: boolean; hidden: boolean }>(
+    () => { try { return { x: 12, y: 12, min: false, hidden: false, ...JSON.parse(localStorage.getItem(LS_PIP) || '{}') }; } catch { return { x: 12, y: 12, min: false, hidden: false }; } });
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ x0: number; y0: number; px0: number; py0: number } | null>(null);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
   const [camErr, setCamErr] = useState('');
@@ -141,6 +152,7 @@ export default function Lesson() {
     if (status.data?.session) {
       setLayout(status.data.session.layout);
       setMuteAll(status.data.session.muteAll); // restored on reload/reconnect
+      setBoardOpen(status.data.session.boardOpen); // task B: the board survives a reload
     }
   }, [status.data]);
 
@@ -162,9 +174,10 @@ export default function Lesson() {
           const msg = JSON.parse(ev.data as string) as { type: string; session?: Session; layout?: Session['layout']; on?: boolean };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
+          if (msg.type === 'board') setBoardOpen(!!msg.on); // task B: teacher opened/closed the board for all
           if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
           if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
-          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); }
+          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); }
         };
         ws.onclose = (ev) => {
           if (disposed) return;
@@ -344,7 +357,7 @@ export default function Lesson() {
       roomRef.current = room;
       room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
         addTile(
-          { key: `${participant.sid}:${pub.trackSid}`, kind: track.kind === 'video' ? 'video' : 'audio', name: peerName(participant.identity, participant.name), local: false, screen: pub.source === Track.Source.ScreenShare },
+          { key: `${participant.sid}:${pub.trackSid}`, kind: track.kind === 'video' ? 'video' : 'audio', name: peerName(participant.identity, participant.name), local: false, screen: pub.source === Track.Source.ScreenShare, sid: participant.sid },
           track,
         );
         refreshPeerList(room);
@@ -360,7 +373,7 @@ export default function Lesson() {
         // the physical microphone; re-playing it is the echo users reported.
         if (track.kind === 'audio') return;
         addTile(
-          { key: `local:${pub.trackSid}`, kind: 'video', name: `${t('lesson.you')}${pub.source === Track.Source.ScreenShare ? ' · screen' : ''}`, local: true, screen: pub.source === Track.Source.ScreenShare },
+          { key: `local:${pub.trackSid}`, kind: 'video', name: `${t('lesson.you')}${pub.source === Track.Source.ScreenShare ? ' · screen' : ''}`, local: true, screen: pub.source === Track.Source.ScreenShare, sid: room.localParticipant.sid },
           track,
         );
       });
@@ -370,6 +383,11 @@ export default function Lesson() {
       });
       room.on(RoomEvent.ParticipantConnected, () => refreshPeerList(room));
       room.on(RoomEvent.ParticipantDisconnected, () => refreshPeerList(room));
+      // task B «auto»: the loudest remote voice owns the main window
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        const top = speakers.find((s) => s.sid !== room.localParticipant.sid);
+        setActiveSid(top?.sid ?? null);
+      });
       room.on(RoomEvent.Disconnected, () => setConnected(false));
       await room.connect(wsUrl, token);
       // mic first (camera failures must not swallow the mic), then camera — each
@@ -494,7 +512,102 @@ export default function Lesson() {
     onSuccess: (s) => { setSession({ ...s, wsUrl: '' }); void qc.invalidateQueries({ queryKey: ['lesson-status'] }); },
   });
 
-  const gridClass = useMemo(() => `videos layout-${layout}`, [layout]);
+  const gridClass = useMemo(() => `videos layout-${layout === 'auto' ? 'gallery' : layout}`, [layout]);
+
+  // ── task B: the stage model ─────────────────────────────────────────────────
+  // main window priority: board (shared) > pinned > screen share > spotlight /
+  // active speaker (auto). Everything else lives in the compact strip; the own
+  // camera floats above the stage (draggable, snapping, remembered).
+  const videoTiles = useMemo(() => tiles.filter((x) => x.kind === 'video'), [tiles]);
+  const localTile = videoTiles.find((x) => x.local && !x.screen) ?? null;
+  const teacherTile = videoTiles.find((x) => !x.local && !x.screen) ?? null;
+  const stage = useMemo(() => {
+    if (boardOpen) return { kind: 'board' as const, tile: null as Tile | null };
+    if (layout === 'gallery') return { kind: 'grid' as const, tile: null };
+    const pinned = pinnedKey ? videoTiles.find((x) => x.key === pinnedKey) ?? null : null;
+    if (pinned) return { kind: 'tile' as const, tile: pinned };
+    const screen = videoTiles.find((x) => x.screen) ?? null;
+    if (screen) return { kind: 'tile' as const, tile: screen };
+    if (layout === 'teacher') { // spotlight: one person fills the stage
+      const first = videoTiles.find((x) => !x.local) ?? localTile;
+      return first ? { kind: 'tile' as const, tile: first } : { kind: 'grid' as const, tile: null };
+    }
+    if (layout === 'auto') {
+      const speaker = activeSid ? videoTiles.find((x) => !x.local && x.sid === activeSid) : null;
+      if (speaker) return { kind: 'tile' as const, tile: speaker };
+      return { kind: 'grid' as const, tile: null }; // nobody talking → honest grid
+    }
+    const first = videoTiles.find((x) => !x.local) ?? localTile;
+    return first ? { kind: 'tile' as const, tile: first } : { kind: 'grid' as const, tile: null };
+  }, [boardOpen, layout, videoTiles, pinnedKey, activeSid, localTile]);
+
+  const hasStage = stage.kind !== 'grid';
+  // when the board owns the stage, the teacher's camera floats for students too
+  const teacherFloats = !isTeacher && stage.kind === 'board' && Boolean(teacherTile);
+  const stripTiles = useMemo(() => {
+    const exclude = new Set<string>();
+    if (stage.tile) exclude.add(stage.tile.key);
+    if (hasStage && localTile) exclude.add(localTile.key); // own camera = the PiP, not a strip slot
+    if (teacherTile && teacherFloats) exclude.add(teacherTile.key);
+    return videoTiles.filter((x) => !exclude.has(x.key));
+  }, [videoTiles, stage.tile, hasStage, localTile, teacherTile, teacherFloats]);
+  const STRIP_MAX = 6;
+
+  function toggleBoard() {
+    const s = session;
+    if (!s) return;
+    const on = !boardOpen;
+    setBoardOpen(on);
+    if (!on) setBoardFull(false);
+    act.mutate({ path: `/api/lessons/${s.id}/board`, body: { on } });
+  }
+
+  function toggleStageFull() {
+    const el = stageRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) { void document.exitFullscreen().catch(() => undefined); setBoardFull(false); }
+    else { void el.requestFullscreen?.().catch(() => undefined); setBoardFull(true); }
+  }
+  useEffect(() => {
+    const onFs = () => { if (!document.fullscreenElement) setBoardFull(false); };
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+
+  // PiP drag: pointer capture, then snap to the nearest corner on release.
+  // pip.x / pip.y are offsets from the RIGHT and BOTTOM edges (CSS right/bottom).
+  const PIP_W = 180, PIP_H = 140;
+  function pipDown(e: React.PointerEvent) {
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    dragRef.current = { x0: e.clientX, y0: e.clientY, px0: pip.x, py0: pip.y };
+  }
+  function pipMove(e: React.PointerEvent) {
+    if (!dragRef.current) return;
+    const box = stageRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const maxX = Math.max(8, box.width - PIP_W - 8);
+    const maxY = Math.max(8, box.height - PIP_H - 8);
+    // moving the pointer RIGHT shrinks the right-offset
+    const nx = dragRef.current.px0 - (e.clientX - dragRef.current.x0);
+    const ny = dragRef.current.py0 - (e.clientY - dragRef.current.y0);
+    setPip((p) => ({ ...p, x: Math.min(maxX, Math.max(8, nx)), y: Math.min(maxY, Math.max(8, ny)) }));
+  }
+  function pipUp() {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    const box = stageRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const centerFromLeft = box.width - pip.x - PIP_W / 2;
+    const centerFromTop = box.height - pip.y - PIP_H / 2;
+    const next = {
+      x: centerFromLeft > box.width / 2 ? 12 : Math.max(8, box.width - PIP_W - 12),
+      y: centerFromTop > box.height / 2 ? 12 : Math.max(8, box.height - PIP_H - 12),
+    };
+    setPip((p) => { const v = { ...p, ...next }; localStorage.setItem(LS_PIP, JSON.stringify(v)); return v; });
+  }
+  useEffect(() => {
+    if (!dragRef.current) localStorage.setItem(LS_PIP, JSON.stringify(pip));
+  }, [pip.x, pip.y, pip.min, pip.hidden]);
 
   const devicePickers = (
     <div className="row" style={{ gap: 8 }}>
@@ -605,15 +718,25 @@ export default function Lesson() {
                     >
                       {lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
                     </button>
-                    <select style={{ width: 'auto', marginTop: 0 }} value={layout} onChange={(e) => {
+                    <select style={{ width: 'auto', marginTop: 0 }} data-testid="layout-select" value={layout} onChange={(e) => {
                       const l = e.target.value as Session['layout'];
                       setLayout(l);
                       act.mutate({ path: `/api/lessons/${session.id}/layout`, body: { layout: l }, method: 'PATCH' });
                     }}>
-                      <option value="gallery">{t('lesson.layoutGallery')}</option>
-                      <option value="stage">{t('lesson.layoutStage')}</option>
-                      <option value="teacher">{t('lesson.layoutTeacher')}</option>
+                      <option value="auto">{t('lesson.layoutAuto')}</option>
+                      <option value="teacher">{t('lesson.layoutSpotlight')}</option>
+                      <option value="stage">{t('lesson.layoutSidebar')}</option>
+                      <option value="gallery">{t('lesson.layoutGrid')}</option>
                     </select>
+                    <button
+                      className={`secondary${boardOpen ? ' chip-active' : ''}`}
+                      style={{ marginTop: 0 }}
+                      data-testid="board-toggle"
+                      aria-pressed={boardOpen}
+                      onClick={toggleBoard}
+                    >
+                      {boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen')}
+                    </button>
                     {/* participant list (task 3): mic/cam state + per-student actions */}
                     <details className="peers" data-testid="peers-panel">
                       <summary>{t('lesson.peersTitle')} · {peers.length}</summary>
@@ -664,17 +787,78 @@ export default function Lesson() {
               {/* student banners (task 3): why the mic is off — restored on reconnect */}
               {!isTeacher && muteAll && <p className="banner" data-testid="banner-muted">{t('lesson.bannerMuted')}</p>}
               {!isTeacher && lectureMode && !muteAll && <p className="banner" data-testid="banner-lecture">{t('lesson.bannerLecture')}</p>}
-              <div className={gridClass} data-testid="video-grid">
-                {tiles.map((tile) => (
-                  <VideoTile key={tile.key} tile={tile} track={tracksRef.current.get(tile.key)} />
-                ))}
-              </div>
-              {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
+              {/* ── task B: Meet-style stage. Board/screen/spotlight own the main
+                   window; cameras shrink to a compact strip (right on desktop,
+                   bottom on phones); the own camera is a draggable floating PiP. ── */}
+              {hasStage ? (
+                <div className="lesson-stage" ref={stageRef} data-testid="lesson-stage">
+                  <div className="stage-main" data-testid="stage-main">
+                    {stage.kind === 'board' ? (
+                      <>
+                        <Board sessionId={session.id} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                        <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
+                          onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
+                      </>
+                    ) : stage.tile ? (
+                      <div className="stage-tile" onClick={() => setPinnedKey(stage.tile!.key)} data-testid="stage-tile">
+                        <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big />
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="stage-strip" data-testid="stage-strip">
+                    {stripTiles.slice(0, STRIP_MAX).map((tile) => (
+                      <button type="button" key={tile.key} className="strip-cell" data-testid={`strip-${tile.key}`}
+                        onClick={() => setPinnedKey(pinnedKey === tile.key ? null : tile.key)}>
+                        <VideoTile tile={tile} track={tracksRef.current.get(tile.key)} />
+                      </button>
+                    ))}
+                    {stripTiles.length > STRIP_MAX && (
+                      <div className="strip-more" data-testid="strip-more">+{stripTiles.length - STRIP_MAX}</div>
+                    )}
+                  </div>
+                  {/* teacher's camera for students: a small floating window (§B3) */}
+                  {teacherFloats && teacherTile && (
+                    <div className="lesson-pip pip-teacher" data-testid="pip-teacher" style={{ right: pip.x, top: 12 }}>
+                      <VideoTile tile={teacherTile} track={tracksRef.current.get(teacherTile.key)} />
+                    </div>
+                  )}
+                  {/* own camera: floating, draggable via the bar, snaps to corners,
+                        minimize/hide, position remembered (localStorage) */}
+                  {localTile && !pip.hidden && (
+                    <div className={`lesson-pip pip-local${pip.min ? ' pip-min' : ''}`} data-testid="pip-local"
+                      style={{ right: pip.x, bottom: pip.y }}>
+                      <div className="pip-bar" data-testid="pip-bar"
+                        onPointerDown={pipDown} onPointerMove={pipMove} onPointerUp={pipUp} onPointerCancel={pipUp}>
+                        <span>{t('lesson.you')}</span>
+                        <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-min"
+                          aria-label={t('lesson.pipMin')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, min: !p.min })); }}>{pip.min ? '▢' : '—'}</button>
+                        <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-hide"
+                          aria-label={t('lesson.pipHide')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, hidden: true })); }}>✕</button>
+                      </div>
+                      {!pip.min && <VideoTile tile={localTile} track={tracksRef.current.get(localTile.key)} />}
+                    </div>
+                  )}
+                  {localTile && pip.hidden && (
+                    <button type="button" className="pip-restore" style={{ marginTop: 0 }} data-testid="pip-restore"
+                      onClick={() => setPip((p) => ({ ...p, hidden: false }))}>📹</button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className={gridClass} data-testid="video-grid">
+                    {tiles.map((tile) => (
+                      <VideoTile key={tile.key} tile={tile} track={tracksRef.current.get(tile.key)} />
+                    ))}
+                  </div>
+                  {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
+                </>
+              )}
               {toast && <div className="toast" role="status" data-testid="lesson-toast">{toast}</div>}
             </>
           )}
-          {/* board is WS-based: visible while a session exists, even before/without RTC */}
-          {session && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
+          {/* board is WS-based: while a session exists it is reachable even before
+               RTC — as the stage when open, as a card under the grid otherwise */}
+          {session && !(connected && boardOpen) && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
           {!isTeacher && session && (
             <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
           )}

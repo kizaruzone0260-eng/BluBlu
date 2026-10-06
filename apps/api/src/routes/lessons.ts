@@ -20,6 +20,7 @@ const withRoom = (s: LessonSession) => ({
   startedAt: s.startedAt, endedAt: s.endedAt, lectureMode: s.lectureMode,
   muteAll: s.muteAll, // task 3: student banners survive reconnects
   layout: s.layoutState.layout,
+  boardOpen: s.layoutState.boardOpen ?? false, // task B: the board as the main window
 });
 
 /** RoomService failures must not 500 the API (media server may be starting). */
@@ -120,17 +121,35 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { token, wsUrl: livekitPublicWsUrl(), room: s.roomName, session: withRoom(s) };
   });
 
-  // Layout for everyone (§3.6)
+  // Layout for everyone (§3.6); boardOpen is preserved across layout changes
   app.patch('/api/lessons/:id/layout', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const s = await teacherSession(req, reply, id);
     if (!s) return;
-    const p = z.object({ layout: z.enum(['gallery', 'stage', 'teacher']) }).safeParse(req.body);
+    const p = z.object({ layout: z.enum(['auto', 'gallery', 'stage', 'teacher']) }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const { lessonSessions } = await import('../db/schema.js');
-    await db.update(lessonSessions).set({ layoutState: { layout: p.data.layout } }).where(eq(lessonSessions.id, id));
+    await db.update(lessonSessions).set({
+      layoutState: { layout: p.data.layout, boardOpen: s.layoutState.boardOpen ?? false },
+    }).where(eq(lessonSessions.id, id));
     wsBroadcast(id, { type: 'layout', layout: p.data.layout });
     return { ok: true };
+  });
+
+  // task B — «Доска»: the whiteboard becomes the main stage window for everyone
+  // (cameras shrink to the strip); closing restores the previous arrangement.
+  app.post('/api/lessons/:id/board', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const s = await teacherSession(req, reply, id);
+    if (!s) return;
+    const p = z.object({ on: z.boolean() }).safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    const { lessonSessions } = await import('../db/schema.js');
+    await db.update(lessonSessions).set({
+      layoutState: { layout: s.layoutState.layout, boardOpen: p.data.on },
+    }).where(eq(lessonSessions.id, id));
+    wsBroadcast(id, { type: 'board', on: p.data.on });
+    return { ok: true, on: p.data.on };
   });
 
   async function setLecture(id: string, on: boolean) {

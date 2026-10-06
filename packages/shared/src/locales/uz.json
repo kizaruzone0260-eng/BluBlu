@@ -230,7 +230,16 @@
     "lectureOn": "Leksiya rejimi: yoniq",
     "waitingPeers": "O'quvchilar kutilmoqda…",
     "boardClear": "Sahifani tozalash",
-    "boardClearConfirm": "Bu sahifa tozalansinmi? Ustidagi barcha chizmalar o'chiriladi."
+    "boardClearConfirm": "Bu sahifa tozalansinmi? Ustidagi barcha chizmalar o'chiriladi.",
+    "layoutAuto": "Avto",
+    "layoutSpotlight": "Spotlight",
+    "layoutSidebar": "Yon panel",
+    "layoutGrid": "Setka",
+    "boardOpen": "Doska",
+    "boardClose": "Doskani yopish",
+    "boardFull": "To‘liq ekran",
+    "pipMin": "Oynani yig‘ish",
+    "pipHide": "Oynani yashirish"
   },
   "tg": {
     "title": "Telegram bildirishnomalari",

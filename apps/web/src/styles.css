@@ -183,6 +183,47 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .ink-editor:fullscreen { background: var(--bg); padding: var(--sp-3); overflow: auto; }
 .ink-editor .note-ink.ink-full { width: 100%; }
 
+/* ── lesson stage (task B, Meet-like) ─────────────────────────────────────── */
+.lesson-stage { position: relative; display: flex; gap: var(--sp-2); align-items: stretch; margin-top: var(--sp-2); }
+.stage-main { flex: 1; min-width: 0; position: relative; }
+.stage-main .card { margin: 0; }
+.stage-tile video, .stage-main video { width: 100%; max-height: 72vh; object-fit: contain; background: #000; border-radius: var(--r-md); }
+.stage-strip {
+  flex: 0 0 190px; width: 190px; display: flex; flex-direction: column; gap: 6px;
+  max-height: 74vh; overflow-y: auto; padding-right: 2px;
+}
+.strip-cell {
+  display: block; width: 100%; padding: 0; margin: 0; min-height: 0; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2);
+}
+.strip-cell video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; border-radius: inherit; }
+.strip-more { text-align: center; color: var(--text-muted); border: 1px dashed var(--border); border-radius: var(--r-md); padding: 6px; font-weight: 700; }
+/* floating cameras: the own PiP (draggable via the bar) + the teacher window for students */
+.lesson-pip {
+  position: absolute; z-index: 5; width: 180px; overflow: hidden;
+  background: var(--surface-1); border: 1px solid var(--border-strong, var(--border)); border-radius: var(--r-md);
+  box-shadow: 0 4px 18px rgb(0 0 0 / .25);
+}
+.lesson-pip video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+.pip-bar {
+  display: flex; align-items: center; gap: 4px; padding: 2px 6px; font-size: .75rem;
+  cursor: grab; touch-action: none; user-select: none; background: var(--surface-2);
+}
+.lesson-pip.pip-min { width: 128px; }
+.pip-restore {
+  position: absolute; right: 12px; bottom: 12px; z-index: 6; width: var(--tap); min-width: var(--tap);
+  height: var(--tap); border-radius: 50%; margin: 0; padding: 0;
+}
+.stage-full { position: absolute; right: 12px; bottom: 12px; z-index: 4; }
+.lesson-stage:fullscreen { background: var(--bg); padding: var(--sp-3); width: 100%; height: 100%; }
+.lesson-stage:fullscreen .stage-strip { max-height: calc(100vh - 40px); }
+/* phone: the strip runs along the BOTTOM, the board takes the full width */
+@media (max-width: 899px) {
+  .lesson-stage { flex-direction: column; }
+  .stage-strip { flex: 0 0 auto; width: 100%; max-height: none; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .strip-cell { flex: 0 0 140px; }
+}
+
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */
 .topbar {
   display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0;

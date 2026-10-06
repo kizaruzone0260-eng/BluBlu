@@ -230,7 +230,16 @@
     "lectureOn": "Режим лекции: вкл",
     "waitingPeers": "Ожидаем учеников…",
     "boardClear": "Очистить страницу",
-    "boardClearConfirm": "Очистить эту страницу? Все рисунки на ней будут удалены."
+    "boardClearConfirm": "Очистить эту страницу? Все рисунки на ней будут удалены.",
+    "layoutAuto": "Авто",
+    "layoutSpotlight": "Spotlight",
+    "layoutSidebar": "Боковая полоса",
+    "layoutGrid": "Сетка",
+    "boardOpen": "Доска",
+    "boardClose": "Закрыть доску",
+    "boardFull": "На весь экран",
+    "pipMin": "Свернуть окно",
+    "pipHide": "Скрыть окно"
   },
   "tg": {
     "title": "Telegram-уведомления",

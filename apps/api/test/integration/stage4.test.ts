@@ -124,6 +124,32 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
     await app.close();
   });
 
+  // task B: «Доска» promotes the whiteboard to the main stage for everyone
+  it('board open/close persists; layout change keeps boardOpen; students cannot toggle', async () => {
+    const app = await fresh();
+    const st = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: auth(teacher.token), payload: { classId } });
+    const sessionId = st.json().id as string;
+    expect(st.json().boardOpen).toBe(false);
+    const on = await app.inject({ method: 'POST', url: `/api/lessons/${sessionId}/board`, headers: auth(teacher.token), payload: { on: true } });
+    expect(on.statusCode).toBe(200);
+    let act = await app.inject({ method: 'GET', url: `/api/lessons/active?classId=${classId}`, headers: auth(studentToken) });
+    expect(act.json().session.boardOpen).toBe(true);
+    // a layout switch must not silently close the board
+    await app.inject({ method: 'PATCH', url: `/api/lessons/${sessionId}/layout`, headers: auth(teacher.token), payload: { layout: 'teacher' } });
+    act = await app.inject({ method: 'GET', url: `/api/lessons/active?classId=${classId}`, headers: auth(studentToken) });
+    expect(act.json().session.boardOpen).toBe(true);
+    expect(act.json().session.layout).toBe('teacher');
+    // only the teacher may toggle
+    const denied = await app.inject({ method: 'POST', url: `/api/lessons/${sessionId}/board`, headers: auth(studentToken), payload: { on: false } });
+    expect(denied.statusCode).toBe(403);
+    const off = await app.inject({ method: 'POST', url: `/api/lessons/${sessionId}/board`, headers: auth(teacher.token), payload: { on: false } });
+    expect(off.json().on).toBe(false);
+    act = await app.inject({ method: 'GET', url: `/api/lessons/active?classId=${classId}`, headers: auth(studentToken) });
+    expect(act.json().session.boardOpen).toBe(false);
+    await app.inject({ method: 'POST', url: `/api/lessons/${sessionId}/end`, headers: auth(teacher.token) });
+    await app.close();
+  });
+
   it('WS lesson status: initial snapshot + started/ended broadcasts', async () => {
     const app = await fresh();
     await app.listen({ port: 0, host: '127.0.0.1' });

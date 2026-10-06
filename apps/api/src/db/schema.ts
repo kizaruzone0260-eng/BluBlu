@@ -197,8 +197,12 @@ export const lessonSessions = pgTable('lesson_sessions', {
   lectureMode: boolean('lecture_mode').notNull().default(false),
   /** moderation feedback (task 3): «mute everyone» state, restored on reconnect */
   muteAll: boolean('mute_all').notNull().default(false),
-  /** layout for everyone: {layout: 'gallery'|'stage'|'teacher'} */
-  layoutState: jsonb('layout_state').$type<{ layout: 'gallery' | 'stage' | 'teacher' }>().notNull().default({ layout: 'gallery' }),
+  /**
+   * Layout for everyone (task B): gallery/stage/teacher are the classic modes,
+   * 'auto' lets the client pick; boardOpen promotes the whiteboard to the main
+   * stage window for ALL participants (jsonb — no migration needed).
+   */
+  layoutState: jsonb('layout_state').$type<{ layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen?: boolean }>().notNull().default({ layout: 'gallery' }),
   createdBy: uuid('created_by').notNull().references(() => users.id),
 }, (t) => [index('lessons_class_idx').on(t.classId, t.startedAt)]);
 

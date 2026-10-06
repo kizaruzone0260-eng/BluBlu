@@ -230,7 +230,16 @@
     "lectureOn": "Lecture mode on",
     "waitingPeers": "Waiting for students…",
     "boardClear": "Clear page",
-    "boardClearConfirm": "Clear this page? All drawings on it will be deleted."
+    "boardClearConfirm": "Clear this page? All drawings on it will be deleted.",
+    "layoutAuto": "Auto",
+    "layoutSpotlight": "Spotlight",
+    "layoutSidebar": "Sidebar",
+    "layoutGrid": "Grid",
+    "boardOpen": "Board",
+    "boardClose": "Close board",
+    "boardFull": "Fullscreen",
+    "pipMin": "Minimize window",
+    "pipHide": "Hide window"
   },
   "tg": {
     "title": "Telegram notifications",
