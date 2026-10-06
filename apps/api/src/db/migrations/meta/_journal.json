@@ -141,6 +141,13 @@
       "when": 1791290000000,
       "tag": "0019_rls_on_every_table",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791291000000,
+      "tag": "0020_rls_app_policies",
+      "breakpoints": true
     }
   ]
 }
