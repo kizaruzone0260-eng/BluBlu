@@ -88,6 +88,13 @@ export interface Me {
   tz: string;
   /** name screen (task 2): false → show «Имя и фамилия» before the app */
   profileCompleted: boolean;
+  /** legal (Phase 2): false → the accept-Privacy-and-Terms gate is shown */
+  policyAccepted: boolean;
+}
+
+/** Accept the current privacy+terms bundle (version is sent for validation). */
+export async function acceptPolicy(version: string): Promise<void> {
+  await api('/api/me/accept-policy', { method: 'POST', body: JSON.stringify({ version }) });
 }
 
 /**

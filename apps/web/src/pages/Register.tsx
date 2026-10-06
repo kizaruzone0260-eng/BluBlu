@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { checkCode, registerByCode } from '../lib/api';
+import { acceptPolicy, checkCode, registerByCode } from '../lib/api';
+import { POLICY_VERSION } from '@klass/shared';
 
 /**
  * Item 9 — student registration in two steps.
@@ -18,6 +19,7 @@ export default function Register({ onDone }: { onDone: () => void }) {
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [accepted, setAccepted] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -39,9 +41,13 @@ export default function Register({ onDone }: { onDone: () => void }) {
   async function submitStep2(e: React.FormEvent) {
     e.preventDefault();
     setErr('');
+    // consent (Phase 2): the student must accept Privacy + Terms at step 2
+    if (!accepted) { setErr('mustAccept'); return; }
     setBusy(true);
     try {
       await registerByCode(firstName.trim(), lastName.trim(), email, password, code);
+      // record the acceptance for the freshly created account (already logged in)
+      await acceptPolicy(POLICY_VERSION).catch(() => undefined);
       onDone();
     } catch (e: unknown) {
       setErr((e as { code?: string }).code ?? 'errorGeneric');
@@ -76,7 +82,23 @@ export default function Register({ onDone }: { onDone: () => void }) {
           <label htmlFor="reg-last">{t('auth.lastName')}</label>
           <input id="reg-last" data-testid="reg-last" value={lastName} onChange={(e) => setLastName(e.target.value)}
             required minLength={2} autoComplete="family-name" />
-          {err && <p className="error" data-testid="reg-error">{t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
+          <p className="consent-row">
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <input id="reg-consent" data-testid="reg-consent" type="checkbox" checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)} style={{ width: 'auto', marginTop: 3 }} />
+              <span>
+                {t('consent.regCheckbox')}{' '}
+                <Link to="/privacy">{t('legalLinks.privacy')}</Link>
+                {' / '}
+                <Link to="/terms">{t('legalLinks.terms')}</Link>
+              </span>
+            </label>
+          </p>
+          {err && (
+            <p className="error" data-testid="reg-error">
+              {err === 'mustAccept' ? t('consent.mustAccept') : t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}
+            </p>
+          )}
           <div className="row">
             <button data-testid="register-submit" type="submit" disabled={busy}>{t('common.register')}</button>
             <button className="ghost" type="button" style={{ marginTop: 0 }} onClick={() => { setStep(1); setErr(''); }}>
@@ -85,7 +107,13 @@ export default function Register({ onDone }: { onDone: () => void }) {
           </div>
         </form>
       )}
-      <p className="muted"><Link to="/login">{t('common.login')}</Link></p>
+      <p className="muted">
+        <Link to="/login">{t('common.login')}</Link>
+        {' · '}
+        <Link to="/privacy">{t('legalLinks.privacy')}</Link>
+        {' · '}
+        <Link to="/terms">{t('legalLinks.terms')}</Link>
+      </p>
     </div>
   );
 }

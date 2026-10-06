@@ -313,10 +313,93 @@
   },
   "privacy": {
     "title": "Maxfiylik siyosati",
-    "p1": "Platforma o‘z serverida (self-hosted) ishlaydi. Shaxsiy ma'lumotlar minimal: ism, elektron pochta, til, vaqt mintaqasi va — xohishga ko‘ra — Telegram chat identifikatori.",
-    "p2": "O'quvchilarning ma'lumotlari uchinchi shaxslarga berilmaydi va tahlilda qayta ishlanmaydi. Treker va reklama skriptlari yo'q. Yagona tashqi xizmat — Telegram Bot API: unga chat identifikatori va bildirishnoma matni uzatiladi.",
-    "p3": "Video darslar shu serverdagi media server orqali o'tadi — uchinchi tomon video bulutlaridan foydalanilmaydi. Darslar yozib olinmaydi.",
-    "p4": "Hisobni butunlay o'chirish qaydlar, varaqalar va sinf a'zoliklarini ham o'chiradi; so'rov — «Profil» bo'limida."
+    "version": "Hujjatlar versiyasi: 2026-10-06",
+    "intro": "BluBlu — egasi (o‘quv muassasasi yoki o‘qituvchi) o‘rnatadigan va boshqaradigan o‘quv platformasi. Ushbu matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
+    "sections": [
+      {
+        "h": "Ma‘lumotlarga kim javobgar",
+        "b": [
+          "Shaxsiy ma‘lumotlar operatori — BluBlu nusxasining egasi. Ma‘lumotlar bo‘yicha murojaat: [egasi e-mail/lavozimini kiriting]."
+        ]
+      },
+      {
+        "h": "Qanday ma‘lumotlarni ishlaymiz",
+        "b": [
+          "Hisob ma‘lumotlari: elektron pochta, ism va familiya, interfeys tili va vaqt mintaqasi.",
+          "Foydalanuvchilar yaratadigan o‘quv kontenti: sinflar, material va fayllar, eslatmalar, chat xabarlari, calendar voqealari, doskalar va o‘quvchi varaqalari.",
+          "Ixtiyoriy — xabarnomalar uchun Telegram chat identifikatori (chat_id).",
+          "Build raqami va texnik identifikatorlar (uuid) o‘z-o‘ziga shaxsiy ma‘lumot hisoblanmaydi."
+        ]
+      },
+      {
+        "h": "Texnik jurnallar",
+        "b": [
+          "Server diagnostika va xavfsizlik uchun so‘rov IP manzilini, vaqtini, metodini va yo‘lini yozadi.",
+          "Tokenli so‘rov qatorlari (query) va WebSocket chiptalari jurnallardan qirqiladi; parollar va sirlar yozilmaydi."
+        ]
+      },
+      {
+        "h": "Huquqiy asoslar",
+        "b": [
+          "Ishlov ta‘lim xizmatini ko‘rsatish uchun zarur (shartnoma/ba‘dnav maqsadlarini bajarish) va ro‘yxatdan o‘tish hamda birinchi kirishda so‘raladigan rozilik asosida amalga oshiriladi."
+        ]
+      },
+      {
+        "h": "Ma‘lumotlarni biz uchun kim qayta ishlaydi (protsessorlar)",
+        "b": [
+          "Render — ilova hostingi (Frankfurt, YE).",
+          "Supabase — boshqariladigan PostgreSQL bazasi (Frankfurt, YE).",
+          "LiveKit — video aloqa serveri; demo rejimida LiveKit Cloud ishlatiladi, o‘zi o‘rnatilganda media egasi serverida qoladi.",
+          "Telegram Bot API — foydalanuvchi Telegramni o‘zi bog‘lagandagina chat_id va xabarnoma matnini oladi."
+        ]
+      },
+      {
+        "h": "Ma‘lumot uzatish",
+        "b": [
+          "Joylashtirish infratuzilmasi Frankfurtda (YE).",
+          "Interfeysdan tashqi so‘rovlar cheklangan va faqat foydalanuvchi harakati bilan bo‘ladi: masalan, YouTube videosi bosilgandan keyingina youtube-nocookie.com orqali ochiladi."
+        ]
+      },
+      {
+        "h": "Saqlash muddatlari",
+        "b": [
+          "Hisob ma‘lumotlari va o‘quv kontenti hisob yoki sinf faol bo‘lguncha saqlanadi.",
+          "Amallar jurnali (audit_log) va chat xabarlari tegishli hisob yoki sinf o‘chirilgungacha saqlanadi.",
+          "Hisob to‘liq o‘chirilganda shaxsiy ma‘lumotlar nomlashadi (pochta bekor qilinadi), o‘quvchi eslatmalari, varaqalari, sinf a‘zoligi, Telegram bog‘lanishi va sessiya tokenlari kaskad o‘chiriladi. O‘qituvchi yaratgan material va e‘lonlar o‘sha sinf uchun ochiq qoladi."
+        ]
+      },
+      {
+        "h": "Hisobni to‘liq o‘chirish",
+        "b": [
+          "Hisobni «Profil» bo‘limida o‘zingiz o‘chira olasiz. Amal qaytarib bo‘lmaydi; sinf uchun yaratilgan ba‘zi kontent sinf a‘zolari manfaatiga saqlanib qoladi (saqlash muddatlari bo‘limiga qarang)."
+        ]
+      },
+      {
+        "h": "Brauzerda nima saqlanadi",
+        "b": [
+          "Faqat zarur narsalar: kirish sessiyasi (skriptlar kira olmaydigan himoyalangan cookie), tanlangan til va mavzu, interfeys sozlamalari (masalan, suzuvchi kamera oynasi joylashuvi).",
+          "Analitika va reklama trekerlari yo‘q, shuning uchun cookie banneri talab qilinmaydi."
+        ]
+      },
+      {
+        "h": "Voyaga yetmaganlar",
+        "b": [
+          "Servis o‘qituvchi rahbarligida darslar uchun mo‘ljallangan. Yosh va qonuniy vakil roziligini tasdiqlash tartibini egasi belgilaydi. [egasi to‘ldiradi]"
+        ]
+      },
+      {
+        "h": "Sizning huquqlaringiz",
+        "b": [
+          "Ma‘lumotlaringizni «Profil»da ko‘rishingiz, tahrirlashingiz va hisobni o‘chirishingiz mumkin. Boshqa savollar uchun egaga murojaat qiling (yuqoridagi kontakt)."
+        ]
+      },
+      {
+        "h": "Hujjatlarni o‘zgartirish",
+        "b": [
+          "Yangi versiya paydo bo‘lganda keyingi kirishda qayta rozilik so‘raladi; versiya qabul qilinish vaqti belgisi bilan saqlanadi."
+        ]
+      }
+    ]
   },
   "validate": {
     "passwordTooShort": "Kamida 10 ta belgi",
@@ -413,5 +496,76 @@
     "badType": "Fayl turi qo‘llab-quvvatlanmaydi",
     "ytWatch": "Ko‘rish",
     "driveHint": "Faylga kirishni Google sozlamalarida tekshiring"
+  },
+  "terms": {
+    "title": "Foydalanish shartlari",
+    "version": "Hujjatlar versiyasi: 2026-10-06",
+    "intro": "BluBlu platformasidan foydalanish shartlari. Matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
+    "sections": [
+      {
+        "h": "Mavzu",
+        "b": [
+          "BluBlu dars o‘tkazish vositalarini beradi: material, topshiriq, calendar, eslatma, chat va video darslar. Servis «tayyor holicha» taqdim etiladi."
+        ]
+      },
+      {
+        "h": "Hisob",
+        "b": [
+          "O‘z hisob ma‘lumotlaringiz xavfsizligi va hisobingizda bajarilgan amallar uchun siz javobsiz. Bitta hisob bitta kishiga mo‘ljallangan."
+        ]
+      },
+      {
+        "h": "Foydalanish qoidalari",
+        "b": [
+          "Zararli kontent, boshqalarning huquqini buzish, spam va kirish yoki xavfsizlik cheklovlarini aylanib o‘tishga urinishlar taqiqlanadi."
+        ]
+      },
+      {
+        "h": "Kontent va huquqlar",
+        "b": [
+          "Yaratilgan materiallar ustidan huquq muallifda qoladi. Materialni sinfga joylashtirish — uni shu sinf a‘zolariga ko‘rsatishga rozilik bildirishdir."
+        ]
+      },
+      {
+        "h": "Mavjudlik",
+        "b": [
+          "Rejali ishlar va infratuzilma xususiyatlari tufayli kirish uzilishi mumkin; uzluksiz ishlash kafolatlanmaydi."
+        ]
+      },
+      {
+        "h": "Javobgarlikni cheklash",
+        "b": [
+          "Ega bilvosita zarars va tashqi servislarning (video aloqa, Telegram) ishlashi uchun javob bermaydi. [egasi aniqlashtiradi]"
+        ]
+      },
+      {
+        "h": "Foydalanishni tugatish",
+        "b": [
+          "Hisobni istalgan vaqtda o‘chira olasiz. Ega bu shartlar buzilganda kirishni to‘xtatish huquqiga ega."
+        ]
+      },
+      {
+        "h": "Shartlarni o‘zgartirish va kontaktlar",
+        "b": [
+          "Muhim o‘zgarishlar haqida foydalanuvchilar keyingi kirishda biladi (versiyani qayta qabul qilish). Ega kontaktilari: [kiriting]."
+        ]
+      }
+    ]
+  },
+  "consent": {
+    "regCheckbox": "Men Maxfiylik siyosatini va Foydalanish shartlarini o‘qib chiqdim va qabul qilaman",
+    "mustAccept": "Davom etish uchun Maxfiylik siyosati va Foydalanish shartlarini qabul qiling.",
+    "gateTitle": "Shartlar bilan tanishing va qabul qiling",
+    "gateBody": "Biz huquqiy hujjatlarni yangiladik. Davom etish uchun iltimos, o‘qib chiqing va qabul qiling.",
+    "privacyLink": "Maxfiylik siyosati",
+    "termsLink": "Foydalanish shartlari",
+    "accept": "Qabul qilish",
+    "decline": "Rad etish va chiqish",
+    "versionNote": "Hujjatlar versiyasi: {{version}}"
+  },
+  "legalLinks": {
+    "privacy": "Siyosat",
+    "terms": "Shartlar",
+    "back": "← Orqaga"
   }
 }

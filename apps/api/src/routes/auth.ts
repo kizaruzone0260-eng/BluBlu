@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { eq, and, isNull } from 'drizzle-orm';
 import {
-  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema,
+  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema, POLICY_VERSION,
 } from '@klass/shared';
-import { users, refreshTokens } from '../db/schema.js';
+import { users, refreshTokens, policyAcceptances } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import {
@@ -155,10 +156,30 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
     app.get('/api/me', { preHandler: app.authenticate }, async (req, reply) => {
       const [user] = await db.select().from(users).where(and(eq(users.id, req.user!.id), isNull(users.deletedAt))).limit(1);
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
+      const [acc] = await db.select({ version: policyAcceptances.version })
+        .from(policyAcceptances).where(eq(policyAcceptances.userId, user.id)).limit(1);
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
         locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
+        // Legal (Phase 2): the SPA shows the accept gate when this is false.
+        policyAccepted: acc?.version === POLICY_VERSION,
       };
+    });
+
+    // Legal (Phase 2): record acceptance of the current privacy+terms bundle.
+    // Idempotent upsert; the client only reaches the app once this is set, so
+    // registration step 2, teacher first login and every existing user's next
+    // login all funnel through here.
+    app.post('/api/me/accept-policy', { preHandler: app.authenticate }, async (req, reply) => {
+      const b = z.object({ version: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).safeParse(req.body);
+      if (!b.success) return reply.code(400).send({ error: 'invalidInput' });
+      if (b.data.version !== POLICY_VERSION) return reply.code(409).send({ error: 'policyVersionStale' });
+      await db.insert(policyAcceptances)
+        .values({ userId: req.user!.id, version: POLICY_VERSION, acceptedAt: new Date() })
+        .onConflictDoUpdate({ target: policyAcceptances.userId, set: { version: POLICY_VERSION, acceptedAt: new Date() } });
+      const { audit } = await import('../services/audit.js');
+      audit(db, req.user!.id, 'policy_accepted', { version: POLICY_VERSION });
+      return { ok: true, version: POLICY_VERSION };
     });
 
     app.patch('/api/me/profile', { preHandler: app.authenticate }, async (req, reply) => {

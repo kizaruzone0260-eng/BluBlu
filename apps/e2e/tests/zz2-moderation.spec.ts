@@ -78,6 +78,7 @@ test('moderation feedback: mute everyone → toast + student banner, unmute rest
   await pS.getByTestId('register-step1').click();
   await pS.getByTestId('reg-first').fill('Мут');
   await pS.getByTestId('reg-last').fill('Тест');
+  await pS.getByTestId('reg-consent').check();
   await pS.getByTestId('register-submit').click();
   await expect(pS.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
   await pS.goto(`/lesson?classId=${cls.id}`);

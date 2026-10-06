@@ -72,6 +72,7 @@ test.describe.serial('material form (task A)', () => {
     await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
     await page.getByTestId('reg-first').fill('Материал');
     await page.getByTestId('reg-last').fill('Тест');
+    await page.getByTestId('reg-consent').check();
     await page.getByTestId('register-submit').click();
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
     await ctx.close();

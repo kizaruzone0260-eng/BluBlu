@@ -463,3 +463,11 @@ button.danger-text { color: var(--danger); }
   border: 1px solid var(--border); border-radius: var(--r-md); padding: 6px 8px;
 }
 .material-edit { background: var(--surface-2); }
+
+/* Legal task (Phase 2): privacy/terms documents + the accept gate */
+.legal-doc { line-height: 1.6; }
+.legal-doc h2 { font-size: 1.05rem; margin: 1.4em 0 .35em; }
+.legal-doc p { margin: .4em 0; }
+.legal-gate h1 { font-size: 1.3rem; }
+.consent-row { margin: .6em 0; }
+.consent-row a { text-decoration: underline; }

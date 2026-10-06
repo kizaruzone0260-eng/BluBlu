@@ -312,11 +312,94 @@
     "noEvents": "No events"
   },
   "privacy": {
-    "title": "Privacy policy",
-    "p1": "The platform runs on your own server (self-hosted). Personal data is minimal: name, email, language, time zone and — optionally — a Telegram chat identifier.",
-    "p2": "Student data is never shared with third parties and is not processed by analytics. There are no trackers or ad scripts. The only external service is the Telegram Bot API: it receives the chat identifier and the notification text.",
-    "p3": "Video lessons go through a media server installed on the same server — no third-party video clouds are used. Lessons are not recorded.",
-    "p4": "Deleting the account removes notes, sheets and class memberships; the request is in the “Profile” section."
+    "title": "Privacy Policy",
+    "version": "Document version: 2026-10-06",
+    "intro": "BluBlu is a learning platform installed and administered by its owner (a school or a teacher). This text is a draft: legal review is the owner’s responsibility.",
+    "sections": [
+      {
+        "h": "Who is responsible for the data",
+        "b": [
+          "The data controller is the owner of this BluBlu instance. Contact for data requests: [enter the owner’s e-mail/role]."
+        ]
+      },
+      {
+        "h": "What data we process",
+        "b": [
+          "Account data: email address, first and last name, interface language and time zone.",
+          "Learning content users create: classes, materials and files, notes, chat messages, calendar events, boards and student sheets.",
+          "Optionally — your Telegram chat identifier (chat_id) for notifications.",
+          "The build number and technical identifiers (uuid) are not personal data by themselves."
+        ]
+      },
+      {
+        "h": "Technical logs",
+        "b": [
+          "The server records the request IP address, time, method and path for diagnostics and security.",
+          "Query strings containing tokens and WebSocket tickets are stripped from logs; passwords and secrets are never recorded."
+        ]
+      },
+      {
+        "h": "Legal bases",
+        "b": [
+          "Processing is necessary to deliver the education service (performance of a contract/statutory purpose) and is carried out on the basis of consent requested at registration and on first login."
+        ]
+      },
+      {
+        "h": "Who processes data for us (processors)",
+        "b": [
+          "Render — application hosting (Frankfurt region, EU).",
+          "Supabase — managed PostgreSQL database (Frankfurt region, EU).",
+          "LiveKit — the video-conferencing server; LiveKit Cloud is used in demo mode, and with a self-hosted setup media stays on the owner’s server.",
+          "Telegram Bot API — receives the chat_id and notification text only if the user links Telegram themselves."
+        ]
+      },
+      {
+        "h": "Data transfers",
+        "b": [
+          "Hosting infrastructure is located in Frankfurt (EU).",
+          "Outbound requests from the interface are limited and happen only on user action: for example, an embedded YouTube video opens via youtube-nocookie.com only after a click."
+        ]
+      },
+      {
+        "h": "Retention",
+        "b": [
+          "Account data and learning content are kept while the account or class is active.",
+          "The action log (audit_log) and chat messages are kept until the corresponding account or class is deleted.",
+          "On full account deletion personal data is anonymized (the email is reset), and student notes, sheets, class memberships, the Telegram link and session tokens are removed by cascade. Materials and announcements created by a teacher stay available to the class they were created for."
+        ]
+      },
+      {
+        "h": "Full account deletion",
+        "b": [
+          "You can delete your account yourself under “Profile”. The action is irreversible; some learning content created for a class is kept in the interest of that class’s members (see the retention section)."
+        ]
+      },
+      {
+        "h": "What is stored in the browser",
+        "b": [
+          "Only what is necessary: the login session (a secure cookie not readable by scripts), the chosen language and theme, and local interface settings (for example, the floating camera window position).",
+          "There is no analytics or advertising tracking, so a cookie banner is not required."
+        ]
+      },
+      {
+        "h": "Minors",
+        "b": [
+          "The service is intended for lessons under a teacher’s supervision. The procedure for verifying age and obtaining a legal guardian’s consent is defined by the owner. [owner to complete]"
+        ]
+      },
+      {
+        "h": "Your rights",
+        "b": [
+          "You can view and edit your data under “Profile” and delete your account. For other processing questions contact the owner (contact above)."
+        ]
+      },
+      {
+        "h": "Changes to these documents",
+        "b": [
+          "When a new version appears, re-consent is requested on the next login; the accepted version is stored together with its timestamp."
+        ]
+      }
+    ]
   },
   "validate": {
     "passwordTooShort": "At least 10 characters",
@@ -413,5 +496,76 @@
     "badType": "Unsupported file type",
     "ytWatch": "Watch",
     "driveHint": "Check file access in your Google settings"
+  },
+  "terms": {
+    "title": "Terms of Service",
+    "version": "Document version: 2026-10-06",
+    "intro": "Terms for using the BluBlu platform. This text is a draft: legal review is the owner’s responsibility.",
+    "sections": [
+      {
+        "h": "Scope",
+        "b": [
+          "BluBlu provides tools for running lessons: materials, assignments, a calendar, notes, chat and video lessons. The service is provided “as is”."
+        ]
+      },
+      {
+        "h": "Your account",
+        "b": [
+          "You are responsible for keeping your credentials safe and for actions taken under your account. One account is intended for one person."
+        ]
+      },
+      {
+        "h": "Acceptable use",
+        "b": [
+          "Malicious content, infringing others’ rights, spam, and attempts to bypass access or security restrictions are prohibited."
+        ]
+      },
+      {
+        "h": "Content and rights",
+        "b": [
+          "Rights to the materials you create remain with their author. Posting a material to a class grants permission to show it to that class’s members."
+        ]
+      },
+      {
+        "h": "Availability",
+        "b": [
+          "Access may be interrupted by planned maintenance and infrastructure characteristics; uninterrupted operation is not guaranteed."
+        ]
+      },
+      {
+        "h": "Limitation of liability",
+        "b": [
+          "The owner is not liable for indirect damages or for the operation of external services (video conferencing, Telegram). [owner to refine]"
+        ]
+      },
+      {
+        "h": "Termination",
+        "b": [
+          "You may delete your account at any time. The owner may suspend access for violation of these terms."
+        ]
+      },
+      {
+        "h": "Changes and contacts",
+        "b": [
+          "You will learn of material changes at your next login (by re-accepting the version). Owner contact: [enter]."
+        ]
+      }
+    ]
+  },
+  "consent": {
+    "regCheckbox": "I have read and accept the Privacy Policy and the Terms of Service",
+    "mustAccept": "To continue, please accept the Privacy Policy and the Terms of Service.",
+    "gateTitle": "Please review and accept",
+    "gateBody": "We have updated the legal documents. Please read and accept them to continue.",
+    "privacyLink": "Privacy Policy",
+    "termsLink": "Terms of Service",
+    "accept": "Accept",
+    "decline": "Decline and sign out",
+    "versionNote": "Document version: {{version}}"
+  },
+  "legalLinks": {
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "back": "← Back"
   }
 }

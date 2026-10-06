@@ -35,7 +35,11 @@ export default function Login({ onDone }: { onDone: () => void }) {
       <p className="muted">
         {t('auth.haveCode')} <Link to="/register">{t('common.register')}</Link>
       </p>
-      <p className="muted"><Link to="/privacy">{t('privacy.title')}</Link></p>
+      <p className="muted">
+        <Link to="/privacy">{t('legalLinks.privacy')}</Link>
+        {' · '}
+        <Link to="/terms">{t('legalLinks.terms')}</Link>
+      </p>
       {/* build stamp (task 1) — tiny, interface-only */}
       <p className="muted build-tag" data-testid="build-tag">build {buildId()}</p>
     </div>

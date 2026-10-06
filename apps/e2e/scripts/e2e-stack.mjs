@@ -107,6 +107,14 @@ await admin.unsafe(`
 await admin.unsafe(`
   update users set last_name = 'E2E', profile_completed_at = coalesce(profile_completed_at, now())
   where email = 'owner@e2e.io'`);
+// Legal gate (Phase 2): seed every boot-time fixture account as having accepted
+// the current policy version, so specs that log in reach the app (and the name
+// gate for the intentionally-incomplete accounts) instead of the policy gate.
+// Accounts REGISTERED during a run accept via the register-step-2 checkbox.
+await admin.unsafe(`
+  insert into policy_acceptances (user_id, version, accepted_at)
+  select id, '2026-10-06', now() from users
+  on conflict (user_id) do update set version = '2026-10-06', accepted_at = now()`);
 writeFileSync(path.join(ROOT, 'apps/e2e/.stack.json'), JSON.stringify({
   port: PORT, teacherEmail: 'owner@e2e.io', teacherPassword: 'Passw0rd123',
 }));

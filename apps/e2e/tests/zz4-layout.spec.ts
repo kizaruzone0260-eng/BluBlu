@@ -94,6 +94,7 @@ test('lesson layout B: board as the main stage with a floating camera (real RTC)
   await pS.getByTestId('register-step1').click();
   await pS.getByTestId('reg-first').fill('Раскладка');
   await pS.getByTestId('reg-last').fill('Тест');
+  await pS.getByTestId('reg-consent').check();
   await pS.getByTestId('register-submit').click();
   await expect(pS.getByTestId('home-title')).toBeVisible({ timeout: 20_000 }); // logged in + token set
   await joinWithCam(pS, cls.id);

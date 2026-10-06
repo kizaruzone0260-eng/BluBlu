@@ -20,6 +20,14 @@ export const DEFAULT_TIMEZONE = 'Asia/Tashkent';
 export const SUPPORTED_LOCALES = ['ru', 'uz', 'en'] as const;
 
 /**
+ * Legal/consent (Hardening Phase 2). One version string covers the privacy
+ * policy + terms bundle shown at registration and on first login. Bump it (and
+ * the texts) whenever the legal documents change; every user is then asked to
+ * re-accept ONCE on next login because their stored version differs.
+ */
+export const POLICY_VERSION = '2026-10-06';
+
+/**
  * Product name shown to users. NOT translated (BluBlu in all three languages)
  * and NOT to be confused with internal identifiers (pnpm @klass/* packages,
  * the `klass` database, container/volume names, env vars, localStorage keys,

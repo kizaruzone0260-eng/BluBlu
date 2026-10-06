@@ -15,7 +15,7 @@ export function makeDb(url: string) {
 export async function preparedDb(url: string) {
   const t = makeDb(url);
   await migrate(t.db, { migrationsFolder: path.resolve('src/db/migrations') });
-  await t.sql`truncate users, classes, class_members, invite_codes, refresh_tokens, audit_log, posts, files, teacher_notes, events, ics_tokens, lesson_sessions, whiteboards, student_notes, telegram_links, telegram_tokens, class_telegram_chats, class_link_tokens, notification_prefs, class_notify_prefs, notifications, ws_tickets, chat_messages, chat_mutes, chat_reads, chat_ws_tickets, bot_sessions, bot_updates, contact_reports, contact_blocklist, topics, post_attachments, post_audience restart identity cascade`;
+  await t.sql`truncate users, classes, class_members, invite_codes, refresh_tokens, audit_log, posts, files, teacher_notes, events, ics_tokens, lesson_sessions, whiteboards, student_notes, telegram_links, telegram_tokens, class_telegram_chats, class_link_tokens, notification_prefs, class_notify_prefs, notifications, ws_tickets, chat_messages, chat_mutes, chat_reads, chat_ws_tickets, bot_sessions, bot_updates, contact_reports, contact_blocklist, topics, post_attachments, post_audience, policy_acceptances restart identity cascade`;
   return t;
 }
 

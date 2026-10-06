@@ -12,12 +12,14 @@ import ClassDetail from './pages/ClassDetail';
 import MaterialNew from './pages/MaterialNew';
 import Calendar from './pages/Calendar';
 import CompleteName from './pages/CompleteName';
+import AcceptPolicies from './pages/AcceptPolicies';
 import Lesson from './pages/Lesson';
 import Profile from './pages/Profile';
 import Notes from './pages/Notes';
 import Sheets from './pages/Sheets';
 import ChatRoom, { ChatList } from './pages/Chat';import Spike from './pages/Spike';
 import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
@@ -72,7 +74,19 @@ export default function App() {
   return (
     <AuthCtx.Provider value={{ me, refresh }}>
       {me ? (
-        me.profileCompleted === false ? (
+        me.policyAccepted === false ? (
+          // Legal gate (Phase 2): replaces the authenticated UI until the current
+          // privacy+terms bundle is accepted. The standalone legal pages stay
+          // reachable from the gate via these nested routes.
+          <div className="container">
+            <AuthHeader />
+            <Routes>
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route path="*" element={<AcceptPolicies onDone={refresh} />} />
+            </Routes>
+          </div>
+        ) : me.profileCompleted === false ? (
           // name screen (task 2): replaces the whole app until saved — no route
           // to navigate around, so no redirect loop; logout stays reachable.
           <div className="container">
@@ -96,6 +110,7 @@ export default function App() {
             <Route path="/chat/:id" element={<ChatRoom />} />
             <Route path="/spike" element={<Spike />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Shell>
@@ -108,6 +123,7 @@ export default function App() {
             <Route path="/register" element={<Register onDone={refresh} />} />
             <Route path="/spike" element={<Spike />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
             <Route path="*" element={<Navigate to="/login" />} />
           </Routes>
         </div>

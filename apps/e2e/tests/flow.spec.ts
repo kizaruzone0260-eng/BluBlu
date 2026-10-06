@@ -57,6 +57,7 @@ async function registerStudent(page: import('@playwright/test').Page, first: str
   await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
   await page.getByTestId('reg-first').fill(first);
   await page.getByTestId('reg-last').fill(last);
+  await page.getByTestId('reg-consent').check();
   await page.getByTestId('register-submit').click();
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 }

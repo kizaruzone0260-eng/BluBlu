@@ -395,3 +395,16 @@ export const chatWsTickets = pgTable('chat_ws_tickets', {
   usedAt: timestamp('used_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('chat_ws_tickets_class_idx').on(t.classId)]);
+
+/**
+ * Legal/consent (Hardening Phase 2): the privacy+terms bundle a user accepted,
+ * with its version and the acceptance instant. One row per user; the SPA shows
+ * the accept gate whenever the stored version differs from the CURRENT one, so
+ * a new policy version is re-accepted once on next login. FK cascades so account
+ * deletion removes it.
+ */
+export const policyAcceptances = pgTable('policy_acceptances', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  version: text('version').notNull(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
+});
