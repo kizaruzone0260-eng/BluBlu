@@ -191,7 +191,23 @@ anon/authenticated. Доказательства: `phase2-consent.test.ts`, `zz5
 («Требует решения»: дизайн-токены контраста).
 
 ## Фаза 4 — производительность
-Lighthouse (mobile) login/home/class/calendar/notes/lesson до/после; ленивая загрузка Excalidraw/FullCalendar/LiveKit/Tiptap; сплит бандла; сжатие; immutable-кэш; preload шрифтов; CWV на login+home; холодный старт Render — отметить.
+Итог: API **218/218** (тест сжатия), e2e **36/36** (lazy-страницы, вкл. RTC-спеки, зелёные),
+typecheck чист. Initial-JS (entry-чанк из `index.html`) **2 870 → 998 kB** (gzip **876 → 282 kB**, −65%):
+Excalidraw, FullCalendar, LiveKit, Tiptap и рисование вынесены в async-чанки через `React.lazy`+`Suspense`.
+
+| # | Пункт | Реализация | Доказательство | Статус |
+| --- | --- | --- | --- | --- |
+| 4-1 | Ленивая загрузка тяжёлого | `App.tsx`: lazy Calendar/Lesson/Notes/Sheets/MaterialNew/ClassDetail + `<Suspense>` | vite-сборка: entry 998 kB, тяжёлые — отдельные чанки | ✅ |
+| 4-2 | Сплит бандла | динамические импорты дают авто-сплит; async-чанки mermaid/katex/excalidraw/livekit | размер entry vs async | ✅ |
+| 4-3 | Сжатие brotli/gzip на источнике | `@fastify/compress` (MIT) encodings br+gzip | `phase1-hardening` «compressed» (218/218) | ✅ |
+| 4-4 | immutable-кэш хэшированных ассетов | `app.ts` onSend: `/assets/*` → `public,max-age=31536000,immutable` | код + review | ✅ |
+| 4-5 | no-cache для shell и sw.js | HTML/sw → `no-cache` (revalidate) | код + review | ✅ |
+| 4-6 | preload шрифтов + font-display | `index.html` preload inter-400/600-latin; `font-display:swap` был и есть | review | ✅ |
+| 4-7 | Lighthouse mobile до/после + CWV | не запускался в этом окружении (нет headless-Chrome-Lighthouse); вместо него — точные byte-size до/после и число initial-запросов | см. «Не проверено без реального окружения» | 🟡 владелец/CI |
+| 4-8 | холодный старт Render free tier | отмечено, НЕ чинится (по заданию) | DECISIONS | ⚪ note |
+
+Новая рантайм-зависимость: только `@fastify/compress` (MIT) на сервере; в браузерный бандл не попадает.
+Транспортное сжатие ассетов (brotli) теперь делает источник, поэтому edge-настройки не обязательны.
 
 ## Фаза 5 — формы и финал
 Все формы: клиент+сервер валидация, защита от двойной отправки, сообщения на 3 яз.; полный набор проверок + скриншоты 390/768/1280 × 3 × 2 темы; сравнение с базой; итоговая таблица.

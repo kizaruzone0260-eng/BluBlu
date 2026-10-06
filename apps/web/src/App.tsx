@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
@@ -7,22 +7,24 @@ import { Nav, LangDropdown, ThemeToggle } from './components/Nav';
 import Home, { useLiveClass } from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import Classes from './pages/Classes';
-import ClassDetail from './pages/ClassDetail';
-import MaterialNew from './pages/MaterialNew';
-import Calendar from './pages/Calendar';
 import CompleteName from './pages/CompleteName';
 import AcceptPolicies from './pages/AcceptPolicies';
-import Lesson from './pages/Lesson';
+import Classes from './pages/Classes';
 import Profile from './pages/Profile';
-import Notes from './pages/Notes';
-import Sheets from './pages/Sheets';
 import ChatRoom, { ChatList } from './pages/Chat';import Spike from './pages/Spike';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import ErrorScreen from './pages/ErrorScreen';
 import TitleManager from './components/TitleManager';
 import ErrorBoundary from './components/ErrorBoundary';
+// Performance (Phase 4): the heavy, editor/media surfaces are lazy-loaded so
+// Excalidraw, FullCalendar, LiveKit and Tiptap stay OUT of the initial chunk.
+const ClassDetail = lazy(() => import('./pages/ClassDetail'));
+const MaterialNew = lazy(() => import('./pages/MaterialNew'));
+const Calendar = lazy(() => import('./pages/Calendar'));
+const Lesson = lazy(() => import('./pages/Lesson'));
+const Notes = lazy(() => import('./pages/Notes'));
+const Sheets = lazy(() => import('./pages/Sheets'));
 
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
@@ -116,6 +118,7 @@ export default function App() {
           </div>
         ) : (
         <Shell me={me}>
+          <Suspense fallback={<div className="container muted">…</div>}>
           <Routes>
             <Route path="/" element={<Home me={me} />} />
             <Route path="/profile" element={<Profile />} />
@@ -138,6 +141,7 @@ export default function App() {
             <Route path="/register" element={<Navigate to="/" replace />} />
             <Route path="*" element={<ErrorScreen kind="404" />} />
           </Routes>
+          </Suspense>
         </Shell>
         )
         ) : (

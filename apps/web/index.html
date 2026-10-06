@@ -10,6 +10,11 @@
     <meta name="description" content="BluBlu — платформа онлайн-уроков" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Performance (Phase 4): preload the two Inter weights used above the fold
+         so the first text paint (LCP) does not wait on the CSS @font-face scan.
+         crossorigin is required for font preloads to match the fetch. -->
+    <link rel="preload" href="/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin />
     <title>BluBlu</title>
   </head>
   <body>

@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import compress from '@fastify/compress';
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import websocket from '@fastify/websocket';
@@ -111,10 +112,22 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     // X-Robots-Tag covers EVERY response (SPA shell, chunks, API, webhooks),
     // complementing robots.txt and the <meta name="robots"> in index.html.
     reply.header('x-robots-tag', 'noindex, nofollow, noarchive, nosnippet');
-    const url = req.raw.url ?? '';
+    const url = (req.raw.url ?? '').split('?')[0] ?? '';
+    // Private API/webhook data is never cached by any layer.
     if (url.startsWith('/api') || url.startsWith('/webhook')) {
       reply.header('cache-control', 'no-store');
       reply.header('pragma', 'no-cache');
+    } else if (url.startsWith('/assets/')) {
+      // Performance (Phase 4): Vite content-hashes everything under /assets/, so
+      // those URLs are permanently cacheable — long maxAge + immutable skips the
+      // revalidation round-trip on every return visit.
+      reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (url === '/sw.js') {
+      // The service worker must revalidate so a new deploy is picked up.
+      reply.header('cache-control', 'no-cache');
+    } else if (reply.getHeader('content-type')?.toString().includes('text/html')) {
+      // SPA shell + index: always revalidate (etag/304) so a deploy shows up fast.
+      reply.header('cache-control', 'no-cache');
     }
     done(null, payload);
   });
@@ -147,6 +160,11 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
+  // Performance (Phase 4): transparently gzip/brotli text-like responses (the SPA
+  // shell, hashed JS/CSS chunks, JSON API, ICS, SVG). @fastify/compress only
+  // touches its default-compressible MIME set, so media/PDF range streams served
+  // by serveFile are left untouched (no broken byte-range seeking).
+  await app.register(compress, { encodings: ['br', 'gzip'], threshold: 0 });
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
 
   // File uploads (§3.3): 100 MB per file, ≤4 files per request

@@ -57,6 +57,13 @@ suite('Phase 1а: security response headers', () => {
     expect(h['x-robots-tag']).toContain('nofollow');
   });
 
+  it('Phase 4: text-like responses are compressed (gzip/brotli) on the origin', async () => {
+    const r = await app.inject({ method: 'GET', url: '/api/health', headers: { 'accept-encoding': 'gzip, br' } });
+    expect(r.statusCode).toBe(200);
+    const enc = r.headers['content-encoding'];
+    expect(['gzip', 'br']).toContain(enc as string);
+  });
+
   it('5xx never leaks an internal message (generic, version-free body)', async () => {
     // force an unhandled error by hitting a route that reads a deleted session
     const r = await app.inject({ method: 'GET', url: '/__boom' });

@@ -1,5 +1,23 @@
 # Решения по ходу работы
 
+## 2026-10-06 (Фаза 4 — производительность)
+
+- **Ленивая загрузка тяжёлых экранов.** Calendar (FullCalendar), Lesson (LiveKit +
+  Excalidraw), Notes/Sheets/MaterialNew (Tiptap + рисование) и ClassDetail (тянет
+  RichText через ленту) переведены на `React.lazy` + `<Suspense>`. Entry-чанк упал
+  с 2 870 kB до 998 kB (gzip 876→282). Новые зависимости ради этого НЕ добавляны.
+- **`@fastify/compress` (MIT)** — единственная новая рантайм-зависимость фазы, только
+  на сервере (в браузер не попадает). `encodings:['br','gzip']`, `threshold:0`,
+  `ifContentEncoding:'identity'`. Не сжимает медиа/PDF (не в списке compressible),
+  поэтому byte-range отдача файлов не затронута (проверено правами/файловыми тестами).
+- **Кэш-стратегия статики (onSend в `app.ts`):** `/assets/*` (контент-хэш Vite) →
+  `immutable, max-age=1y`; HTML-shell и `sw.js` → `no-cache` (revalidate по etag),
+  чтобы новый деплой подхватывался сразу. Приватный API остаётся `no-store`.
+- **Lighthouse/CWV не запускались** в этом окружении (нет headless Chrome Lighthouse);
+  зафиксированы точные byte-size до/после и расщепление на async-чанки как измеримое
+  доказательство. Полный Lighthouse-прогон — в «не проверено без реального окружения».
+- **Холодный старт Render free tier** осознанно НЕ чинится (по заданию) — только отмечено.
+
 ## 2026-10-06 (Фаза 3 — a11y/robots)
 
 - **`@axe-core/playwright` + `axe-core` добавлены DEV-ONLY в `apps/e2e`** (лицензия
