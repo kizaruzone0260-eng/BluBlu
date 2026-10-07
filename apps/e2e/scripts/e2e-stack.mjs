@@ -1,12 +1,19 @@
 /**
  * E2E stack: embedded Postgres (port 5455) + api server (port 3123, serving the
  * built web bundle) + seeded teacher. Playwright webServer launches this.
+ *
+ * Task 3 adds a SECOND api process on port 3124 that runs in the DEPLOYED shape
+ * (NODE_ENV=production, TRUST_PROXY=1, PUBLIC_URL = its own page address) against the
+ * same database and bundle. Tests/zz9-prod-shape.spec.ts drives the real browser flow
+ * through it. The main 3123 server stays non-production on purpose: production IGNORES
+ * the relaxed auth rate caps (by design — see lib/prodConfig.ts), and the suite logs in
+ * far more than 10 times a minute.
  */
 import EmbeddedPostgres from 'embedded-postgres';
 import { initUtf8Cluster } from '../../api/scripts/pg-init-utf8.mjs';
 import postgres from 'postgres';
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -15,9 +22,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../../..');
 const dataDir = path.join(ROOT, 'apps/e2e/e2edata');
 const PORT = 3123;
+const PROD_PORT = 3124; // the DEPLOYED shape: NODE_ENV=production + TRUST_PROXY=1
 const PGPORT = 5455;
 
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+// Stale hand-off file: readers must wait for THIS run, not reuse the previous one.
+try { rmSync(path.join(ROOT, 'apps/e2e/.stack.json'), { force: true }); } catch { /* none */ }
 
 // Windows: an orphaned postmaster from a failed run keeps the shm block; clear it.
 if (process.platform === 'win32') {
@@ -40,6 +50,9 @@ if (needInit) {
 }
 await pg.start();
 try { await pg.createDatabase('klass'); } catch { /* exists */ }
+try { await pg.createDatabase('klass_prod'); } catch { /* exists */ }
+// the separate database for the production-shaped server (task 3) — see prodEnv below
+try { await pg.createDatabase('klass_prod'); } catch { /* exists */ }
 
 const url = `postgres://klass:klass@127.0.0.1:${PGPORT}/klass`;
 const admin = postgres(url, { max: 2 });
@@ -115,14 +128,76 @@ await admin.unsafe(`
   insert into policy_acceptances (user_id, version, accepted_at)
   select id, '2026-10-06', now() from users
   on conflict (user_id) do update set version = '2026-10-06', accepted_at = now()`);
+// ── the DEPLOYED shape, on its own port AND its own database (task 3) ─────────
+// NODE_ENV=production + TRUST_PROXY=1 + PUBLIC_URL equal to the address the page is
+// served from, serving the same built bundle. It gets a SEPARATE database on purpose:
+// two API processes on one database would both claim the pg-boss jobs (scheduled
+// publishing, notifications), so a spec on 3123 could have its job executed by the
+// other server with different env — cross-talk that is a test artefact, not production
+// (production runs one process). server.ts applies the migrations itself at boot.
+// Production also IGNORES the relaxed auth rate caps (by design, lib/prodConfig.ts), so
+// only this one spec — a handful of logins — may use it; the suite stays on 3123.
+const prodUrl = `postgres://klass:klass@127.0.0.1:${PGPORT}/klass_prod`;
+const prodEnv = {
+  ...process.env,
+  NODE_ENV: 'production',
+  TRUST_PROXY: '1',
+  PORT: String(PROD_PORT),
+  HOST: '127.0.0.1',
+  DATABASE_URL: prodUrl,
+  WEB_DIST: path.join(ROOT, 'apps/web/dist'),
+  STORAGE_DIR: path.join(ROOT, 'apps/e2e/files-prod'),
+  JWT_SECRET: 'e2e-secret-e2e-secret-e2e-secret-0123456789',
+  LIVEKIT_API_KEY: process.env.LIVEKIT_API_KEY ?? 'e2ekey',
+  LIVEKIT_API_SECRET: process.env.LIVEKIT_API_SECRET ?? 'e2esecrete2esecrete2esecrete2esecret',
+  LIVEKIT_WS_URL: process.env.LIVEKIT_WS_URL ?? 'ws://127.0.0.1:7880',
+  ...(process.env.LIVEKIT_URL ? { LIVEKIT_URL: process.env.LIVEKIT_URL } : {}),
+  LIVEKIT_INTERNAL_URL: 'http://127.0.0.1:7880',
+  TELEGRAM_TRANSPORT: 'log',
+  // PUBLIC_URL == the address the browser opens (the configuration the cloud deploy is
+  // supposed to have; the outage happened because it did not).
+  PUBLIC_URL: `http://127.0.0.1:${PROD_PORT}`,
+  PUBLIC_WEB_ORIGIN: `http://127.0.0.1:${PROD_PORT}`,
+};
+const apiProd = spawn('node', ['dist/server.js'], {
+  cwd: path.join(ROOT, 'apps/api'),
+  stdio: ['ignore', 'inherit', 'inherit'],
+  env: prodEnv,
+});
+let prodUp = false;
+for (let i = 0; i < 60 && !prodUp; i++) {
+  await new Promise((r) => setTimeout(r, 1000));
+  try { prodUp = (await fetch(`http://127.0.0.1:${PROD_PORT}/api/health`)).ok; } catch { /* not yet */ }
+}
+if (!prodUp) { console.error('production-shaped api did not become healthy'); process.exit(1); }
+
+// Seed the same owner account into klass_prod (its migrations were applied by its own
+// boot). Only what zz9-prod-shape needs: a name-complete teacher that accepted policy v
+// 2026-10-06, so it lands in the app instead of a gate.
+{
+  const prodAdmin = postgres(prodUrl, { max: 2 });
+  try {
+    await prodAdmin.unsafe(`
+      insert into users (id, role, name, last_name, email, password_hash, locale, tz, created_at, profile_completed_at)
+      values ('${teacherId}', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now(), now())
+      on conflict (email) do update set last_name = 'E2E', profile_completed_at = now()`);
+    await prodAdmin.unsafe(`
+      insert into policy_acceptances (user_id, version, accepted_at)
+      select id, '2026-10-06', now() from users
+      on conflict (user_id) do update set version = '2026-10-06', accepted_at = now()`);
+  } finally { await prodAdmin.end({ timeout: 5 }); }
+}
+
 writeFileSync(path.join(ROOT, 'apps/e2e/.stack.json'), JSON.stringify({
   port: PORT, teacherEmail: 'owner@e2e.io', teacherPassword: 'Passw0rd123',
+  prodPort: PROD_PORT,
 }));
-console.log('[e2e-stack] ready on', PORT);
+console.log('[e2e-stack] ready on', PORT, '(production-shaped api on', PROD_PORT, ')');
 
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 async function shutdown() {
   api.kill();
+  apiProd.kill();
   await pg.stop().catch(() => undefined);
   process.exit(0);
 }
