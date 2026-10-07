@@ -1,5 +1,11 @@
 # Video Call Fix Report
 
+> ⚠️ **ЗАМЕНЁН (2026-10-07).** Этот фикс (`075e8a6`, миграция `0020`) не устранил сбой в
+> бою: production работает ролью-владельцем с `rolbypassrls = true`, поэтому RLS его чтения
+> не фильтровал. Настоящая причина — Origin/CSRF-гейт (фикс `896d355`), а политики `0020`
+> сняты миграцией `0021` как недостижимые. См. `VIDEO_CALL_FINAL_FIX_REPORT.md` и
+> `VIDEO_LESSON_FOLLOWUP_REPORT.md`. Тест `phase1-rls-approle.test.ts` переписан, а не удалён.
+
 ## 1. Root Cause
 
 **CONFIRMED ROOT CAUSE:** migration `0019` (Part 1е, коммит `155221a`) включил

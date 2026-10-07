@@ -12,7 +12,7 @@
     `POSTGRES_USER=klass` в `.github/workflows/ci.yml`): роль приложения `klass` —
     `rolsuper = true`, `rolbypassrls = true`, владелец 35/35 таблиц `public`,
     `relforcerowsecurity = 0` на всех;
-  - боёк (Supabase, Session pooler): роль приложения `postgres` — `rolsuper = false`,
+  - бэкенд в бою (Supabase, Session pooler): роль приложения `postgres` — `rolsuper = false`,
     **`rolbypassrls = true`**, владелец 35/35 таблиц, `relforcerowsecurity = 0` на всех,
     и под ней видно `users_live = 1`, `classes = 4`, `lesson_sessions = 4`,
     `refresh_tokens = 28` (то есть `/api/me` и `/api/lessons/active` отвечали 200 всегда);

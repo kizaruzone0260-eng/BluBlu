@@ -1,5 +1,12 @@
 # Video Call Final Fix Report
 
+> **Дополнен (2026-10-07).** Причина и фикс `896d355` в этом отчёте верны и подтверждены
+> заново. Остатки инцидента (миграция `0021`, второй слой `Sec-Fetch-Site`, пустой
+> `PUBLIC_WEB_ORIGIN` в production, лог allowlist на старте, тесты и e2e в боевой
+> конфигурации, `pnpm cloud:smoke`) разобраны в `VIDEO_LESSON_FOLLOWUP_REPORT.md`.
+> Раздел «§4 Why Previous Fix 075e8a6 Was Insufficient» остаётся действующим выводом:
+> RLS-гипотеза для продакшена опровергнута замером.
+
 Date: 2026-10-06 · Branch: `overnight` · Fix commit: see §11
 Previous (insufficient) fix: `075e8a6` — «fix: restore video lesson authentication flow»
 
