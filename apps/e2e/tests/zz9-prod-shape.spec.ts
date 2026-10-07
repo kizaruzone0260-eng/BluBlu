@@ -1,7 +1,7 @@
 /**
  * Task 3 — the real browser flow against the DEPLOYED configuration.
  *
- * The stack (scripts/e2e-stack.mjs) starts a second API on `prodPort` with
+ * scripts/prod-shape-api.mjs starts a dedicated API process with
  * NODE_ENV=production, TRUST_PROXY=1 and PUBLIC_URL equal to the address the page is
  * served from — the exact shape of the Render deploy. This spec is the regression test
  * for the outage: the video-lesson page was reachable, but the first token refresh from
@@ -24,12 +24,13 @@
 import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { startProdShapeApi } from '../scripts/prod-shape-api.mjs';
 
 function readStack() {
   for (let i = 0; i < 80; i++) {
     try {
       return JSON.parse(readFileSync(path.join(process.cwd(), '.stack.json'), 'utf8')) as {
-        port: number; prodPort: number; teacherEmail: string; teacherPassword: string;
+        port: number; teacherEmail: string; teacherPassword: string;
       };
     } catch {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
@@ -38,7 +39,17 @@ function readStack() {
   throw new Error('.stack.json never appeared');
 }
 const stack = readStack();
-const BASE = `http://127.0.0.1:${stack.prodPort}`;
+
+// The deployed shape is started for THIS spec only (scripts/prod-shape-api.mjs) — see the
+// comment there for why it is not part of the shared stack.
+let BASE = '';
+let prodApi: { stop: () => Promise<void> } | null = null;
+
+test.beforeAll(async () => {
+  prodApi = await startProdShapeApi(stack.teacherPassword);
+  BASE = prodApi.base;
+});
+test.afterAll(async () => { await prodApi?.stop(); prodApi = null; });
 
 /** Any HTTP(S) answer from the media server = reachable. */
 async function livekitReachable(wsUrl: string): Promise<boolean> {
@@ -56,7 +67,7 @@ test('deployed configuration: reload keeps the session, the lesson joins, cross-
   const api = await pw.newContext({ baseURL: BASE });
   const login = await api.post('/api/auth/login', {
     data: { email: stack.teacherEmail, password: stack.teacherPassword },
-    headers: { origin: BASE, host: `127.0.0.1:${stack.prodPort}` },
+    headers: { origin: BASE, host: new URL(BASE).host },
   });
   expect(login.status(), 'login must work in the deployed shape').toBe(200);
   const setCookie = String(login.headers()['set-cookie'] ?? '');
@@ -66,7 +77,7 @@ test('deployed configuration: reload keeps the session, the lesson joins, cross-
   expect(setCookie, 'Lax blocks a cross-site POST from carrying it').toMatch(/SameSite=Lax/i);
   expect(setCookie).toMatch(/Path=\/api\/auth/i);
   const token = String((await login.json()).accessToken);
-  const H = { authorization: `Bearer ${token}`, origin: BASE, host: `127.0.0.1:${stack.prodPort}` };
+  const H = { authorization: `Bearer ${token}`, origin: BASE, host: new URL(BASE).host };
 
   // a cross-site Origin is refused by THIS server (the negative half of the gate)
   const cross = await api.post('/api/auth/refresh', {
@@ -156,7 +167,7 @@ test('deployed configuration: reload keeps the session, the lesson joins, cross-
   const upgraded: { opened: boolean; closeCode: number | null; error: string | null } =
     await new Promise((res) => {
       const ws = new WebSocket(
-        `ws://127.0.0.1:${stack.prodPort}/api/ws/lesson/${session.id}?ticket=${encodeURIComponent(ticket)}`,
+        `${BASE.replace(/^http/,'ws')}/api/ws/lesson/${session.id}?ticket=${encodeURIComponent(ticket)}`,
         { headers: { origin: BASE } },
       );
       const out = { opened: false, closeCode: null as number | null, error: null as string | null };
