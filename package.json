@@ -19,7 +19,9 @@
     "seed:teacher": "pnpm --filter @klass/api seed:teacher",
     "demo": "node apps/api/scripts/demo.mjs",
     "demo:check": "node apps/api/scripts/demo-check.mjs",
-    "audit": "pnpm audit --prod"
+    "audit": "pnpm audit --prod",
+    "cloud:smoke": "node apps/api/scripts/cloud-smoke.mjs",
+    "db:audit": "pnpm --filter @klass/api db:audit"
   },
   "pnpm": {
     "overrides": {

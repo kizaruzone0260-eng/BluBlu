@@ -17,7 +17,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
-    "test:integration": "node scripts/with-postgres.mjs pnpm exec vitest run"
+    "test:integration": "node scripts/with-postgres.mjs pnpm exec vitest run",
+    "db:audit": "node scripts/rls-audit.mjs"
   },
   "dependencies": {
     "@fastify/compress": "^9.2.0",

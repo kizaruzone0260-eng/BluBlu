@@ -38,7 +38,14 @@ Render web service (free) + Supabase Free (Postgres) + LiveKit Cloud Build
    переменных из cloud.env (никогда не коммитить!).
 4. После первого деплоя: скопировать `https://<name>.onrender.com` в
    `PUBLIC_URL` (ссылки уведомлений, CORS/CSRF, webhook Telegram) →
-   Environment → Publish.
+   Environment → Publish. Сюда же — `PUBLIC_WEB_ORIGIN` (тот же адрес: SPA
+   обслуживается этим же сервисом). Это адрес, с которого реально открывают
+   интерфейс: он попадает в allowlist Origin-гейта. При старте сервис печатает
+   итог строкой `origins: allowed=[…] sameHost=on` и, если `PUBLIC_URL` пуст или
+   не `https://`, предупреждение `origin config warning: …` — смотреть в лог
+   Render после каждого деплоя. Даже при расходящемся `PUBLIC_URL` пользователь
+   остаётся в системе: запрос со страницы, чей хост совпадает с хостом запроса,
+   разрешён (см. `apps/api/src/lib/origin.ts`).
 5. **Telegram (опционально).** Как включить бота:
    - @BotFather → `/newbot` (или существующий) → взять токен;
    - в cloud.env: `TELEGRAM_BOT_TOKEN=<токен>` и `TELEGRAM_BOT_NAME=<имя бота
@@ -67,8 +74,21 @@ Render web service (free) + Supabase Free (Postgres) + LiveKit Cloud Build
 тестовые данные или пересоздать базу в Supabase.
 
 ## Проверка после деплоя
+
+**Каждый деплой — прогонять `pnpm cloud:smoke` (см. docs/DEPLOY.md §9).** Он ничего не
+создаёт в данных и сам отзывает сессию, которую завёл; секреты и токены в вывод не
+попадают.
+
 - `GET https://<host>/api/health` → `{"status":"ok"}` (без версий/секретов).
 - Вход учителем → создать класс → код → ученик с телефона → урок: видео идёт,
   доска открывается, обрыв WiFi → WS переподключается сам.
-- Проверка RLS: `curl https://<ref>.supabase.co/rest/v1/users?select=id -H
-  "apikey: <anon>" -H "authorization: Bearer <anon>"` → пустой массив `[]`.
+- Проверка RLS/привилегий: `curl https://<ref>.supabase.co/rest/v1/users?select=id -H
+  "apikey: <anon>" -H "authorization: Bearer <anon>"` → доступ **запрещён** (замерено:
+  `401`; пустой массив был бы тоже отказом, но 200 с строками — нет). То же для
+  `classes`, `chat_messages`, `posts`, `files`, `teacher_notes`.
+- Каталог базы: `pnpm db:audit -- <путь к cloud.env> --require-data` — роль приложения,
+  владельцы таблиц, `rolbypassrls`, список политик (`app_trusted_access` быть не должно:
+  их сняла миграция 0021), привилегии `anon`/`authenticated` по всем таблицам и
+  количество видимых приложению строк.
+- Лог старта Render: строка `origins: allowed=[…] sameHost=on` и отсутствие
+  `origin config warning` с пустым/не-https `PUBLIC_URL`.
