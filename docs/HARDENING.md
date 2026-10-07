@@ -65,7 +65,11 @@
 | --- | --- | --- | --- | --- |
 | 1в-1 | configured Origin (PUBLIC_WEB_ORIGIN/PUBLIC_URL/https://DOMAIN) **или** Origin == собственный Host запроса; чужой Origin → 403 | `routes/auth.ts` checkSameOrigin → общий `lib/origin.ts` | phase1-hardening «trust configured Origin, not Host» (403 при Origin=evil) + video-lesson-origin-drift / unit «origin gate» | ✅ |
 | 1в-1a | ⚠️ Инцидент: вариант «только allowlist, Host не доверяется» (9573faa) снова сломал облачный прод — страница своего же хоста получала 403 на `/api/auth/refresh`, SPA ронял токен и Video Lesson выбрасывал на Sign In (тот же инцидент уже чинился в fe50ec8). Причина: allowlist не совпал с фактическим адресом UI. Итог: same-Host Origin принимается, кросс-сайт по-прежнему 403 | `lib/origin.ts`, `lib/wsOrigin.ts`, `render.yaml` (`PUBLIC_WEB_ORIGIN`) | `video-lesson-origin-drift.test.ts` (падает на старом коде), unit `origin-gate.test.ts` | ✅ |
-| 1в-2 | Строгий CORS allowlist | — | baseline | ✅ |
+| 1в-1b | Второй слой: `Sec-Fetch-Site: cross-site` → отказ, даже если Origin в allowlist (браузерный заголовок, который скрипт подставить не может) | `lib/origin.ts` requestOriginAllowed | unit `origin-gate` «rejects Sec-Fetch-Site: cross-site …», integration `prod-config` (refresh с cross-site → 403, с same-origin → 200) | ✅ (2026-10-07) |
+| 1в-1c | Сравнение идёт по СЫРОМУ `Host` (`req.headers.host`), а не по `X-Forwarded-Host`/`req.hostname`, которые Fastify строит из XFH при `trustProxy=1` | `lib/origin.ts` (одна точка для HTTP и WS) | unit «compares the RAW Host — a spoofed X-Forwarded-Host cannot widen or narrow the gate», integration «X-Forwarded-Host spoof cannot move the gate» (обе ветки) | ✅ (2026-10-07) |
+| 1в-1d | В production `PUBLIC_WEB_ORIGIN` по умолчанию пуст → localhost не попадает ни в Origin-allowlist, ни в CORS. Замер до изменения: `Origin: http://localhost:5173` на бойке получал **401** (проходил!), теперь 403 | `lib/prodConfig.ts` effectiveWebOrigin, `env.ts`, `app.ts` | unit `prod-config.test.ts` (обе среды), integration `prod-config.test.ts`, `pnpm cloud:smoke` | ✅ (2026-10-07) |
+| 1в-1e | Лог старта печатает фактический allowlist и предупреждает о дрейфе (пустой/не-https `PUBLIC_URL`, слэш на конце, пустой `PUBLIC_WEB_ORIGIN`) — только публичные адреса, без секретов | `lib/origin.ts` originBootSummary, `server.ts` | unit (каждая ветка предупреждений) + живой лог двупроцессного e2e-стека: `origins: allowed=[http://127.0.0.1:3124] sameHost=on` / `origin config warning: PUBLIC_URL is not an https origin` | ✅ (2026-10-07) |
+| 1в-2 | Строгий CORS allowlist: в production дополнительно учитывает явный `PUBLIC_WEB_ORIGIN` (раньше читал только DOMAIN, и раздельный фронтент не мог авторизоваться) | `lib/prodConfig.ts` effectiveCorsOrigins, `app.ts` | unit `prod-config.test.ts` (4 ветки, включая «никого не пустим» и «пустая строка не попадает в список») | ✅ |
 
 ### г) Rate limits
 | # | Пункт | Изменено | Доказательство | Статус |
@@ -118,6 +122,24 @@ pg_class включает `ENABLE ROW LEVEL SECURITY` и с guarded-`REVOKE` з�
 RLS обходит (FORCE не ставится) — на запросы не влияет. Доказательство: `phase1-rls.test.ts` (3)
 прямо читает pg_class/has_table_privilege. Живой REST-тест публичным ключом на Supabase —
 по-прежнему ручное действие владельца (нет anon-ключа в офлайн-наборе).
+
+**2026-10-07: политики `0020` сняты миграцией `0021`.** `0020` добавляла по одной
+`app_trusted_access … TO PUBLIC USING (true)` на таблицу из предположения, что боёк ходит
+НЕ-владеющей ролью. Замер (read-only `pnpm db:audit`, `apps/api/scripts/rls-audit.mjs`) это
+опроверг: dev/CI — роль `klass` superuser + BYPASSRLS + владелец 35/35 таблиц; боёк — роль
+`postgres`, владелец 35/35 с `rolbypassrls = true`; `relforcerowsecurity = 0` везде. То есть
+политика была достижима только ролям, которые RLS и так обходят, и не достигала тех, кого
+должна была ограничивать. RLS остался включённым на всех 35 таблицах, привилегии не менялись.
+Замерено после `0021` на бою: политик 0, `rls_on 35/35`, `forced 0`, у `anon`/`authenticated`
+0 привилегий по всем 35 таблицам, чтение `users, classes, chat_messages, posts, files,
+teacher_notes` отказано на уровне привилегий, PostgREST с публичным ключом отвечает 401 на
+каждой из шести, а приложение под своей ролью видит `users_live=1, classes=4, sessions=4`
+и `cloud-verify` проходит полностью (write/read/update/delete). Тест
+`phase1-rls-approle.test.ts` ПЕРЕПИСАН (не удалён): теперь он сторожит сам инвариант
+«роль приложения = superuser/BYPASSRLS/владелец, FORCE нигде нет», требует отсутствие
+политик `TO PUBLIC` на уровне `pg_policy` и доказывает, что не-владелец с выданными GRANT при
+policy-less RLS видит 0 строк — то есть перевод `DATABASE_URL` на другую роль обязан принести
+собственные политики. Решение: `docs/DECISIONS.md` (2026-10-07).
 
 ### м) Секреты и логи
 | # | Пункт | Изменено | Доказательство | Статус |

@@ -90,3 +90,74 @@ export function cookieIsSecure(nodeEnv: NodeEnv): boolean {
 export function rtcSpikeEnabled(nodeEnv: NodeEnv): boolean {
   return nodeEnv !== 'production';
 }
+
+/**
+ * The base every user-facing link is built from (Telegram messages, calendar and lesson
+ * URLs): PUBLIC_URL → https://DOMAIN → PUBLIC_WEB_ORIGIN, trailing slash removed. An empty
+ * result means the operator configured nothing: links degrade rather than sending a user to a
+ * dev localhost, and the boot summary warns (task 2г).
+ */
+export function effectiveSiteBase(opts: { publicUrl: string; domain?: string; publicWebOrigin: string }): string {
+  const strip = (s: string) => s.trim().replace(/\/+$/, '');
+  if (opts.publicUrl.trim()) return strip(opts.publicUrl);
+  if (opts.domain?.trim()) return `https://${strip(opts.domain).replace(/^https?:\/\//, '')}`;
+  return strip(opts.publicWebOrigin);
+}
+
+/**
+ * Telegram webhook registration base: PUBLIC_URL → https://DOMAIN → none. It deliberately
+ * does NOT fall back to PUBLIC_WEB_ORIGIN: registering a webhook against a CSRF-only origin
+ * (or a dev host) silently points the live bot somewhere that cannot receive it.
+ */
+export function effectiveWebhookBase(opts: { publicUrl: string; domain?: string }): string {
+  if (opts.publicUrl.trim()) return opts.publicUrl.trim().replace(/\/+$/, '');
+  if (opts.domain?.trim()) return `https://${opts.domain.trim().replace(/^https?:\/\//, '')}`;
+  return '';
+}
+
+/**
+ * LiveKit addressing. LIVEKIT_URL (Cloud / demo tunnel) overrides both the client WebSocket
+ * and the server-side RoomService base; wss/ws map to https/http for the REST call.
+ */
+export function effectiveLiveKitWs(opts: { livekitUrl: string; livekitWsUrl: string }): string {
+  return opts.livekitUrl || opts.livekitWsUrl;
+}
+export function effectiveLiveKitApiBase(opts: { livekitUrl: string; livekitInternalUrl: string }): string {
+  const base = opts.livekitUrl || opts.livekitInternalUrl;
+  return base.replace(/^wss/, 'https').replace(/^ws/, 'http');
+}
+
+/**
+ * Secrets that must not stay at their shipped defaults in production. `env.ts` refuses to boot
+ * on these; extracted so both branches are testable without spawning a process and without
+ * ever echoing a value.
+ */
+export function productionSecretProblems(opts: {
+  nodeEnv: NodeEnv;
+  jwtSecret: string; devJwtSecret: string;
+  livekitApiKey: string; devLiveKitKey: string;
+  livekitApiSecret: string; devLiveKitSecret: string;
+}): Array<{ path: string; message: string }> {
+  if (opts.nodeEnv !== 'production') return [];
+  const out: Array<{ path: string; message: string }> = [];
+  if (opts.jwtSecret === opts.devJwtSecret) {
+    out.push({ path: 'JWT_SECRET', message: 'JWT_SECRET must be set in production' });
+  }
+  if (opts.livekitApiSecret === opts.devLiveKitSecret || opts.livekitApiKey === opts.devLiveKitKey) {
+    out.push({ path: 'LIVEKIT_API_KEY', message: 'LiveKit keys must be set in production' });
+  }
+  return out;
+}
+
+/**
+ * Where versioned migrations are read from. Production runs the compiled image, everything
+ * else the sources. Getting this wrong means the app boots and silently skips a migration, so
+ * it is stated once and asserted in the real: the e2e stack starts a NODE_ENV=production
+ * process against an EMPTY database (klass_prod), and the deployed-configuration spec can only
+ * pass if that boot created the schema from dist/db/migrations.
+ */
+export function effectiveMigrationsFolder(nodeEnv: NodeEnv, cwd = process.cwd()): string {
+  return nodeEnv === 'production'
+    ? `${cwd}/dist/db/migrations`
+    : `${cwd}/src/db/migrations`;
+}

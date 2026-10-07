@@ -6,6 +6,7 @@ import {
 } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
+import { effectiveSiteBase } from '../lib/prodConfig.js';
 import { listEventsInRange } from './events.js';
 
 export type NotifyKind =
@@ -96,14 +97,10 @@ const T: Record<NotifyKind, { ru: (p: Record<string, string>) => string; uz: (p:
 };
 
 export function siteUrl(): string {
-  // demo (Cloudflare Tunnel / any public origin override) wins over the
-  // production DOMAIN logic.
-  if (env.PUBLIC_URL) return env.PUBLIC_URL.replace(/\/+$/, '');
-  if (env.DOMAIN) return `https://${env.DOMAIN}`;
-  // PUBLIC_WEB_ORIGIN is empty in production unless the operator sets it (task 2в), so
-  // a link can end up empty — that is a configuration gap the boot log warns about,
-  // never a reason to point a user at a dev localhost URL.
-  return env.PUBLIC_WEB_ORIGIN.replace(/\/+$/, '');
+  // The precedence is a production-shape rule, so it lives with the rest of them.
+  return effectiveSiteBase({
+    publicUrl: env.PUBLIC_URL, domain: env.DOMAIN, publicWebOrigin: env.PUBLIC_WEB_ORIGIN,
+  });
 }
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');

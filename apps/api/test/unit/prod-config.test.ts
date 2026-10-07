@@ -15,14 +15,25 @@ import {
   cookieIsSecure,
   effectiveCodeMax,
   effectiveCorsOrigins,
+  effectiveLiveKitApiBase,
+  effectiveLiveKitWs,
   effectiveLoginMax,
+  effectiveMigrationsFolder,
   effectiveRefreshGrace,
+  effectiveSiteBase,
+  effectiveWebhookBase,
   effectiveWebOrigin,
   PROD_CODE_MAX,
   PROD_LOGIN_MAX,
   PROD_REFRESH_GRACE_CEILING_MS,
+  productionSecretProblems,
   rtcSpikeEnabled,
 } from '../../src/lib/prodConfig.js';
+
+// the shipped defaults env.ts refuses to boot on in production (values, not secrets: these
+// are the literals in the repository)
+const DEV_JWT = 'dev-only-secret-change-me-0123456789abcdefgh';
+const DEV_LK = 'devsecretdevsecretdevsecret123456';
 
 const NODE_ENVS = ['development', 'test', 'production'] as const;
 
@@ -122,5 +133,80 @@ describe('refresh cookie and the stage-0 spike route', () => {
     expect(rtcSpikeEnabled('development')).toBe(true);
     expect(rtcSpikeEnabled('test')).toBe(true);
     expect(rtcSpikeEnabled('production')).toBe(false);
+  });
+});
+
+describe('address resolution from the presence of a variable', () => {
+  it('link base: PUBLIC_URL wins, then DOMAIN, then PUBLIC_WEB_ORIGIN; slashes trimmed', () => {
+    expect(effectiveSiteBase({ publicUrl: 'https://abc.trycloudflare.com/', domain: 'school.example', publicWebOrigin: 'https://ui.example' }))
+      .toBe('https://abc.trycloudflare.com');
+    expect(effectiveSiteBase({ publicUrl: '', domain: 'school.example', publicWebOrigin: 'https://ui.example' }))
+      .toBe('https://school.example');
+    expect(effectiveSiteBase({ publicUrl: '', domain: '', publicWebOrigin: 'https://ui.example' }))
+      .toBe('https://ui.example');
+    // nothing configured → empty, and never a silent localhost link in a user's message
+    expect(effectiveSiteBase({ publicUrl: '', domain: '', publicWebOrigin: '' })).toBe('');
+    // a DOMAIN pasted with a scheme does not become https://https://…
+    expect(effectiveSiteBase({ publicUrl: '', domain: 'https://school.example', publicWebOrigin: '' }))
+      .toBe('https://school.example');
+  });
+
+  it('webhook base: PUBLIC_URL then DOMAIN only — it never falls back to the CSRF origin', () => {
+    expect(effectiveWebhookBase({ publicUrl: 'https://api.example', domain: undefined })).toBe('https://api.example');
+    expect(effectiveWebhookBase({ publicUrl: '', domain: 'school.example' })).toBe('https://school.example');
+    // the case that matters: an operator who set only PUBLIC_WEB_ORIGIN must not have the
+    // live bot's webhook silently pointed at it
+    expect(effectiveWebhookBase({ publicUrl: '', domain: undefined })).toBe('');
+  });
+
+  it('LiveKit: LIVEKIT_URL overrides both the client ws and the RoomService base', () => {
+    expect(effectiveLiveKitWs({ livekitUrl: 'wss://x.livekit.cloud', livekitWsUrl: 'ws://localhost:7880' }))
+      .toBe('wss://x.livekit.cloud');
+    expect(effectiveLiveKitWs({ livekitUrl: '', livekitWsUrl: 'ws://localhost:7880' }))
+      .toBe('ws://localhost:7880');
+    expect(effectiveLiveKitApiBase({ livekitUrl: 'wss://x.livekit.cloud', livekitInternalUrl: 'http://localhost:7880' }))
+      .toBe('https://x.livekit.cloud');
+    expect(effectiveLiveKitApiBase({ livekitUrl: '', livekitInternalUrl: 'http://127.0.0.1:7880' }))
+      .toBe('http://127.0.0.1:7880');
+  });
+
+  it('migrations come from dist/ in production and src/ everywhere else', () => {
+    expect(effectiveMigrationsFolder('production', '/repo')).toBe('/repo/dist/db/migrations');
+    expect(effectiveMigrationsFolder('development', '/repo')).toBe('/repo/src/db/migrations');
+    expect(effectiveMigrationsFolder('test', '/repo')).toBe('/repo/src/db/migrations');
+  });
+});
+
+describe('production refuses to boot on shipped defaults (never echoing a value)', () => {
+  const base = {
+    jwtSecret: 'a-real-secret-of-its-own-0123456789abcdef', devJwtSecret: DEV_JWT,
+    livekitApiKey: 'api-key-set', devLiveKitKey: 'devkey',
+    livekitApiSecret: 'a-real-livekit-secret-0123456789abcdef', devLiveKitSecret: DEV_LK,
+  };
+
+  it('production with the shipped dev secrets reports both problems', () => {
+    const p = productionSecretProblems({
+      ...base, nodeEnv: 'production', jwtSecret: DEV_JWT, livekitApiKey: 'devkey', livekitApiSecret: DEV_LK,
+    });
+    expect(p.map((x) => x.path).sort()).toEqual(['JWT_SECRET', 'LIVEKIT_API_KEY']);
+    // the messages name the variable only — never a value
+    expect(JSON.stringify(p)).not.toMatch(DEV_JWT);
+  });
+
+  it('production with real values reports nothing', () => {
+    expect(productionSecretProblems({ ...base, nodeEnv: 'production' })).toEqual([]);
+  });
+
+  it('a lone default LiveKit key is still a problem (the other secret being real is not enough)', () => {
+    const p = productionSecretProblems({ ...base, nodeEnv: 'production', livekitApiKey: 'devkey' });
+    expect(p.map((x) => x.path)).toEqual(['LIVEKIT_API_KEY']);
+  });
+
+  it('development and test are not blocked (they ship with the dev defaults)', () => {
+    for (const nodeEnv of ['development', 'test'] as const) {
+      expect(productionSecretProblems({
+        ...base, nodeEnv, jwtSecret: DEV_JWT, livekitApiKey: 'devkey', livekitApiSecret: DEV_LK,
+      })).toEqual([]);
+    }
   });
 });

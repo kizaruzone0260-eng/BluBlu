@@ -7,14 +7,13 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { LogTransport, TelegramTransport } from './services/notify.js';
 import { createBot } from './services/telegramBot.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
+import { effectiveMigrationsFolder, effectiveWebhookBase } from './lib/prodConfig.js';
 
 async function main() {
   const db = getDb(env.DATABASE_URL);
 
   // Versioned migrations applied at boot (§4 надёжность). Fails fast if broken.
-  const migrationsFolder = env.NODE_ENV === 'production'
-    ? path.join(process.cwd(), 'dist', 'db', 'migrations')
-    : path.join(process.cwd(), 'src', 'db', 'migrations');
+  const migrationsFolder = effectiveMigrationsFolder(env.NODE_ENV, process.cwd());
   if (fs.existsSync(migrationsFolder)) {
     await migrate(db, { migrationsFolder });
   } else {
@@ -40,7 +39,7 @@ async function main() {
   }, 10 * 60_000).unref?.();
   // Telegram webhook registration (best-effort; server admin does it too).
   // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.
-  const webhookBase = env.PUBLIC_URL || (env.DOMAIN ? `https://${env.DOMAIN}` : '');
+  const webhookBase = effectiveWebhookBase({ publicUrl: env.PUBLIC_URL, domain: env.DOMAIN });
   if (bot && webhookBase && env.TELEGRAM_WEBHOOK_SECRET && env.TELEGRAM_MODE === 'webhook') {
     try {
       await bot.api.setWebhook(`${webhookBase}/webhook/telegram`, {

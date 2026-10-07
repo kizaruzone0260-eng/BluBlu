@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { effectiveTokenTtl } from './lib/tokenTtl.js';
-import { effectiveRefreshGrace, effectiveWebOrigin } from './lib/prodConfig.js';
+import { effectiveLiveKitApiBase, effectiveLiveKitWs, effectiveRefreshGrace, effectiveWebOrigin, productionSecretProblems } from './lib/prodConfig.js';
 
 const DEV_SECRET = 'dev-only-secret-change-me-0123456789abcdefgh';
 
@@ -74,11 +74,13 @@ const envSchema = z
     if (v.SEED_TEACHER_EMAIL && !v.SEED_TEACHER_PASSWORD) {
       ctx.addIssue({ code: 'custom', message: 'SEED_TEACHER_PASSWORD is required when SEED_TEACHER_EMAIL is set', path: ['SEED_TEACHER_PASSWORD'] });
     }
-    if (v.NODE_ENV === 'production' && v.JWT_SECRET === DEV_SECRET) {
-      ctx.addIssue({ code: 'custom', message: 'JWT_SECRET must be set in production', path: ['JWT_SECRET'] });
-    }
-    if (v.NODE_ENV === 'production' && (v.LIVEKIT_API_SECRET === 'devsecretdevsecretdevsecret123456' || v.LIVEKIT_API_KEY === 'devkey')) {
-      ctx.addIssue({ code: 'custom', message: 'LiveKit keys must be set in production', path: ['LIVEKIT_API_KEY'] });
+    // The rule itself is lib/prodConfig.productionSecretProblems (unit-tested in both shapes)
+    for (const p of productionSecretProblems({
+      nodeEnv: v.NODE_ENV, jwtSecret: v.JWT_SECRET, devJwtSecret: DEV_SECRET,
+      livekitApiKey: v.LIVEKIT_API_KEY, devLiveKitKey: 'devkey',
+      livekitApiSecret: v.LIVEKIT_API_SECRET, devLiveKitSecret: 'devsecretdevsecretdevsecret123456',
+    })) {
+      ctx.addIssue({ code: 'custom', message: p.message, path: [p.path] });
     }
   });
 
@@ -105,11 +107,10 @@ export type Env = typeof env;
 
 /** Client-facing LiveKit WebSocket address: LIVEKIT_URL (Cloud/demo) wins over LIVEKIT_WS_URL (self-host via Caddy). */
 export function livekitPublicWsUrl(): string {
-  return env.LIVEKIT_URL || env.LIVEKIT_WS_URL;
+  return effectiveLiveKitWs({ livekitUrl: env.LIVEKIT_URL, livekitWsUrl: env.LIVEKIT_WS_URL });
 }
 
 /** RoomService REST base: wss→https / ws→http; falls back to LIVEKIT_INTERNAL_URL for self-hosted LAN access. */
 export function livekitRoomApiUrl(): string {
-  const base = env.LIVEKIT_URL || env.LIVEKIT_INTERNAL_URL;
-  return base.replace(/^wss/, 'https').replace(/^ws/, 'http');
+  return effectiveLiveKitApiBase({ livekitUrl: env.LIVEKIT_URL, livekitInternalUrl: env.LIVEKIT_INTERNAL_URL });
 }
