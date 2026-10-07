@@ -88,7 +88,7 @@ export default function ClassDetail() {
       </div>
       {cls?.description && <p className="muted">{cls.description}</p>}
       {me?.role === 'teacher' && (
-        <p><a href={`/lesson?classId=${id}`}><button style={{ marginTop: 0 }} className="secondary">{t('lesson.title')}</button></a></p>
+        <p><Link to={`/lesson?classId=${id}`}><button style={{ marginTop: 0 }} className="secondary">{t('lesson.title')}</button></Link></p>
       )}
       <Feed classId={id} />
       {me?.role === 'teacher' && (

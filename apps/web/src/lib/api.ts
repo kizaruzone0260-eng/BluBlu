@@ -1,8 +1,10 @@
 let accessToken: string | null = null;
+let restorePromise: Promise<boolean> | null = null;
 const listeners = new Set<(loggedIn: boolean) => void>();
 
 export function setAccessToken(t: string | null) {
   accessToken = t;
+  if (t == null) restorePromise = null;
   listeners.forEach((l) => l(t != null));
 }
 
@@ -61,7 +63,9 @@ async function tryRefresh(): Promise<boolean> {
  * the user is logged out on every hard page load.
  */
 export function restoreSession(): Promise<boolean> {
-  return tryRefresh();
+  if (accessToken) return Promise.resolve(true);
+  restorePromise ??= tryRefresh();
+  return restorePromise;
 }
 
 export async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {

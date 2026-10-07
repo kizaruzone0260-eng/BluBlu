@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -43,6 +43,7 @@ function toLocalInput(isoUtc: string, tz: string): string {
 }
 
 export default function Calendar() {
+  const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const qc = useQueryClient();
@@ -249,7 +250,7 @@ export default function Calendar() {
           <p className="muted">{new Date(actions.startsAt).toLocaleString()} · {actions.description || t('cal.noEvents')}</p>
           <div className="row">
             {actions.kind === 'lesson' && (
-              <a href={`/lesson?eventId=${actions.eventId}`} data-testid="act-join"><button style={{ marginTop: 0 }}>{t('cal.joinLesson')}</button></a>
+              <Link to={`/lesson?eventId=${actions.eventId}`} data-testid="act-join"><button style={{ marginTop: 0 }}>{t('cal.joinLesson')}</button></Link>
             )}
             <a href={googleTemplate(actions)} target="_blank" rel="noreferrer">
               <button className="secondary" style={{ marginTop: 0 }} data-testid="act-google">📅 {t('cal.evGoogle')}</button>
@@ -330,7 +331,7 @@ export default function Calendar() {
                 }}>{t('cal.delete')}</button>
             )}
             {form.kind === 'lesson' && form.id && (
-              <a href={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></a>
+              <Link to={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></Link>
             )}
             {/* calendar task §5: per-event export buttons for the teacher too */}
             {form.id && formOcc && (
@@ -371,7 +372,7 @@ export default function Calendar() {
             setActions(null);
             if (o.kind === 'lesson' && me?.role !== 'teacher') {
               const openAt = +new Date(o.startsAt) - 10 * 60_000; // §3.6: активна за 10 минут
-              if (Date.now() >= openAt) { window.location.href = `/lesson?eventId=${o.eventId}`; return; }
+              if (Date.now() >= openAt) { navigate(`/lesson?eventId=${o.eventId}`); return; }
               setActions(o); // too early → the actions card explains and still offers exports
               return;
             }
