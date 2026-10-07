@@ -14,6 +14,7 @@ import { peekInviteCode } from '../services/invites.js';
 import { normalizeInviteCode } from '../lib/invite.js';
 import { requestOriginAllowed } from '../lib/origin.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
+import { cookieIsSecure } from '../lib/prodConfig.js';
 
 const REFRESH_COOKIE = 'klass_rt';
 
@@ -21,8 +22,11 @@ function refreshCookieOpts(ttlMs: number) {
   return {
     path: '/api/auth',
     httpOnly: true,
+    // SameSite=Lax is what actually stops a cross-site POST from carrying the refresh
+    // cookie; Secure is mandatory in production (a real deploy is https-only) — see
+    // lib/prodConfig.ts. Do not weaken either: the Origin gate is the third layer.
     sameSite: 'lax' as const,
-    secure: env.NODE_ENV === 'production',
+    secure: cookieIsSecure(env.NODE_ENV),
     maxAge: Math.floor(ttlMs / 1000),
   };
 }

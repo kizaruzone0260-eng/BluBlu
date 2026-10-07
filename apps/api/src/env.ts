@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { effectiveTokenTtl } from './lib/tokenTtl.js';
+import { effectiveRefreshGrace, effectiveWebOrigin } from './lib/prodConfig.js';
 
 const DEV_SECRET = 'dev-only-secret-change-me-0123456789abcdefgh';
 
@@ -38,7 +39,9 @@ const envSchema = z
   STORAGE_DIR: z.string().default('./files-store'),
   MAX_FILE_MB: z.coerce.number().default(100),
   TEACHER_QUOTA_GB: z.coerce.number().default(5),
-  PUBLIC_WEB_ORIGIN: z.string().default('http://localhost:5173'),
+  // Origin of the UI. The schema default is EMPTY on purpose: lib/prodConfig keeps the
+  // vite dev origin for development/test and leaves production unset (see task 2в).
+  PUBLIC_WEB_ORIGIN: z.string().default(''),
   DOMAIN: z.string().optional(),
   WEB_DIST: z.string().optional(),
   // trust X-Forwarded-For for client IP (rate limits, logs): '1' behind Caddy/
@@ -81,16 +84,18 @@ const envSchema = z
 
 export const env = envSchema.parse(process.env);
 
-// Hardening (Phase 1б) + Part 4б: the refresh-reuse grace window. A browser that
-// aborts a rotation response (instant reload mid-boot) replays the now-stale
-// token; without a grace window that trips the reuse-theft kill and logs the
-// user out. The e2e/integration tests prove that at the old 2 s production value
-// a slow refresh response (delay up to 3 s) DID kill the session, so per the task
-// the production window is reverted to 5 s — still bounded (≤5 s) to keep the
-// replay-theft blast radius small, but enough to survive a 3-s stalled rotation.
-if (env.NODE_ENV === 'production' && env.REFRESH_REUSE_GRACE_MS > 5000) {
-  env.REFRESH_REUSE_GRACE_MS = 5000;
-}
+// Hardening (Phase 1б) + Part 4б + task 2в: the production-only env adjustments live in
+// lib/prodConfig.ts (one place, unit-tested in both modes, and asserted again by
+// test/integration/prod-config.test.ts against a production-shaped app).
+//   • the refresh-reuse grace window is capped at 5 s in production — a browser that
+//     aborts a rotation response (instant reload mid-boot) replays the just-rotated
+//     token, and without the window that trips the reuse-theft kill and logs a real
+//     user out; the integration tests proved a 3-s stall kills the session at 2 s;
+//   • PUBLIC_WEB_ORIGIN keeps the vite dev origin outside production and stays EMPTY
+//     inside it, so localhost can never enter the CORS list or the CSRF/WS allowlist
+//     of a real deployment by default.
+env.REFRESH_REUSE_GRACE_MS = effectiveRefreshGrace(env.REFRESH_REUSE_GRACE_MS, env.NODE_ENV);
+env.PUBLIC_WEB_ORIGIN = effectiveWebOrigin(process.env.PUBLIC_WEB_ORIGIN, env.NODE_ENV);
 
 // Part 4а: floor the LiveKit lesson-token TTL at 2 h in production, so a
 // mistyped small value can never drop a mid-lesson participant.

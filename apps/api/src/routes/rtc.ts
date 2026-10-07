@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AccessToken } from 'livekit-server-sdk';
 import type { DB } from '../db/index.js';
 import { env, livekitPublicWsUrl } from '../env.js';
+import { rtcSpikeEnabled } from '../lib/prodConfig.js';
 
 /**
  * Stage-0 spike + stage-4 base: server-issued short-lived LiveKit JWT.
@@ -19,8 +20,9 @@ export async function rtcRoutes(app: FastifyInstance, _opts: { db: DB }) {
     // Hardening (Phase 1к): the stage-0 spike room is a LAN/diagnostic tool only.
     // It hands a 6h publish-capable token for any `spike-*` room, so in a real
     // (production) deployment it is disabled entirely — lesson rooms go through
-    // the membership-gated /api/lessons/:id/join path instead.
-    if (env.NODE_ENV === 'production') return reply.code(404).send({ error: 'notFound' });
+    // the membership-gated /api/lessons/:id/join path instead. The rule itself lives
+    // in lib/prodConfig.ts (rtcSpikeEnabled) with the rest of the production matrix.
+    if (!rtcSpikeEnabled(env.NODE_ENV)) return reply.code(404).send({ error: 'notFound' });
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
     const room = parsed.data.room;

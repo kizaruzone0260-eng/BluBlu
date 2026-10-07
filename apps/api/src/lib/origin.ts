@@ -40,14 +40,19 @@ export function normalizeOrigin(raw: string): string {
   return raw.trim().replace(/\/+$/, '').toLowerCase();
 }
 
-/** The origins the operator explicitly configured (dev vite origin always included). */
+/**
+ * The origins the operator explicitly configured. In production the dev vite origin is
+ * NOT part of the list (PUBLIC_WEB_ORIGIN defaults to empty there — see lib/prodConfig),
+ * so a deployed app never accepts a localhost page. Duplicates collapse, because
+ * PUBLIC_URL and PUBLIC_WEB_ORIGIN are the same address in the shipped shape (the API
+ * serves the SPA).
+ */
 export function configuredOrigins(): string[] {
-  return [
+  return [...new Set([
     env.PUBLIC_WEB_ORIGIN,
-    'http://localhost:5173',
     ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : []),
     ...(env.DOMAIN ? [`https://${env.DOMAIN}`] : []),
-  ].map(normalizeOrigin).filter((o) => o.length > 0);
+  ].map(normalizeOrigin).filter((o) => o.length > 0))];
 }
 
 /**
@@ -75,9 +80,45 @@ export function originAllowed(origin: string, host: string, configured: string[]
  * A missing Origin (curl, non-browser clients, fastify.inject tests) is allowed:
  * browsers always send it for POST/WS, and those endpoints carry their own real
  * gate (one-time ticket / rotating refresh token).
+ *
+ * Second layer (task 2б): `Sec-Fetch-Site` is a browser-managed header that cannot be
+ * set by script. When a browser explicitly says the request came from a DIFFERENT site,
+ * the request is refused even if its Origin happens to be on the allowlist — a cheap,
+ * unforgeable cross-check against a mis-configured or over-wide allowlist. `same-site`
+ * is deliberately not refused: our own deployment can legitimately be reached through a
+ * sibling origin, and the refresh cookie is SameSite=Lax, which already blocks
+ * cross-site POSTs from carrying it.
  */
 export function requestOriginAllowed(req: FastifyRequest): boolean {
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (typeof secFetchSite === 'string' && secFetchSite.toLowerCase() === 'cross-site') return false;
   const origin = req.headers.origin;
   if (!origin) return true;
   return originAllowed(origin, req.headers.host ?? '', configuredOrigins());
+}
+
+/**
+ * Operator-facing summary, computed at boot and written to the log (task 2г).
+ * Origins are public host names — nothing here is a secret, and no env VALUE is
+ * echoed beyond the origin addresses themselves.
+ */
+export function originBootSummary(): { allowed: string[]; sameHostFallback: boolean; warnings: string[] } {
+  const allowed = configuredOrigins();
+  const warnings: string[] = [];
+  if (!env.PUBLIC_URL && !env.DOMAIN) {
+    warnings.push(
+      'PUBLIC_URL and DOMAIN are both empty: only the request\'s own Host is trusted as an origin. ' +
+      'Set PUBLIC_URL to the exact https address the UI is served from.',
+    );
+  }
+  if (env.PUBLIC_URL && !/^https:\/\//i.test(env.PUBLIC_URL)) {
+    warnings.push(`PUBLIC_URL is not an https origin ("${env.PUBLIC_URL}") — a real deployment must be https.`);
+  }
+  if (env.PUBLIC_URL?.trim().endsWith('/')) {
+    warnings.push('PUBLIC_URL has a trailing slash; it is normalised for Origin checks but should be stored without one.');
+  }
+  if (env.NODE_ENV === 'production' && !env.PUBLIC_WEB_ORIGIN) {
+    warnings.push('PUBLIC_WEB_ORIGIN is unset (production default is empty): notification links fall back to PUBLIC_URL/DOMAIN.');
+  }
+  return { allowed, sameHostFallback: true, warnings };
 }

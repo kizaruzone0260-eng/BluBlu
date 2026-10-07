@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { DB } from './db/index.js';
 import { currentBuildId, injectBuildMeta } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
+import { effectiveCodeMax, effectiveCorsOrigins, effectiveLoginMax } from './lib/prodConfig.js';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { classRoutes } from './routes/classes.js';
@@ -150,9 +151,15 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     return reply.code(status).send({ error: 'invalidInput' });
   });
 
-  const corsOrigins = env.NODE_ENV === 'production'
-    ? (env.DOMAIN ? [`https://${env.DOMAIN}`] : [])
-    : [env.PUBLIC_WEB_ORIGIN, ...(env.PUBLIC_URL ? [env.PUBLIC_URL] : [])];
+  // Production CORS: no cross-origin entry is needed (the API serves the SPA), and an
+  // explicitly configured PUBLIC_WEB_ORIGIN is honoured instead of dropped — see
+  // lib/prodConfig.ts, which also documents why production IGNORES the rate relaxations.
+  const corsOrigins = effectiveCorsOrigins({
+    nodeEnv: env.NODE_ENV,
+    domain: env.DOMAIN,
+    publicWebOrigin: env.PUBLIC_WEB_ORIGIN,
+    publicUrl: env.PUBLIC_URL,
+  });
   await app.register(cors, {
     origin: corsOrigins,
     credentials: true,
@@ -209,10 +216,16 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
     // RATE_LOGIN_MAX=99999 in the deploy environment can never dis-arm the
     // brute-force net. Non-prod (test/dev/e2e) keeps honoring the env.
     if (url === '/api/auth/login') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.NODE_ENV === 'production' ? 10 : env.RATE_LOGIN_MAX, timeWindow: '1 minute' } };
+      routeOptions.config = {
+        ...routeOptions.config,
+        rateLimit: { max: effectiveLoginMax(env.NODE_ENV, env.RATE_LOGIN_MAX), timeWindow: '1 minute' },
+      };
     }
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code') {
-      routeOptions.config = { ...routeOptions.config, rateLimit: { max: env.NODE_ENV === 'production' ? 8 : env.RATE_CODE_MAX, timeWindow: '1 minute' } };
+      routeOptions.config = {
+        ...routeOptions.config,
+        rateLimit: { max: effectiveCodeMax(env.NODE_ENV, env.RATE_CODE_MAX), timeWindow: '1 minute' },
+      };
     }
   });
   await app.register(rateLimit, { global: false });

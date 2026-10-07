@@ -99,7 +99,11 @@ export function siteUrl(): string {
   // demo (Cloudflare Tunnel / any public origin override) wins over the
   // production DOMAIN logic.
   if (env.PUBLIC_URL) return env.PUBLIC_URL.replace(/\/+$/, '');
-  return env.DOMAIN ? `https://${env.DOMAIN}` : env.PUBLIC_WEB_ORIGIN;
+  if (env.DOMAIN) return `https://${env.DOMAIN}`;
+  // PUBLIC_WEB_ORIGIN is empty in production unless the operator sets it (task 2в), so
+  // a link can end up empty — that is a configuration gap the boot log warns about,
+  // never a reason to point a user at a dev localhost URL.
+  return env.PUBLIC_WEB_ORIGIN.replace(/\/+$/, '');
 }
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');

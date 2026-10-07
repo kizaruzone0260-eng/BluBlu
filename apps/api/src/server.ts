@@ -80,6 +80,15 @@ async function main() {
   }
 
   const app = await buildApp(db);
+
+  // Task 2г: say out loud which Origins the deployment will accept, and warn about the
+  // configuration drift that caused the video-lesson outage. Origins are public host
+  // names — no secret value is ever logged here.
+  const { originBootSummary } = await import('./lib/origin.js');
+  const origins = originBootSummary();
+  console.log(`origins: allowed=[${origins.allowed.join(', ') || '—'}] sameHost=on`);
+  for (const w of origins.warnings) console.warn(`origin config warning: ${w}`);
+
   await app.listen({ port: env.PORT, host: env.HOST });
 
   const shutdown = async () => {
