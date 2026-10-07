@@ -1,5 +1,45 @@
 # Решения по ходу работы
 
+## 2026-10-07 (миграция 0021: снятие политик `app_trusted_access`)
+
+- **Решение:** политики, добавленные `0020_rls_app_policies.sql`, удалены вперёд идущей
+  миграцией `0021_rls_drop_app_policies.sql` (`DROP POLICY IF EXISTS app_trusted_access`
+  по циклу over `pg_class` r/p в `public`). RLS **остаётся включённым** на всех таблицах,
+  права не выдавались и не отзывались, ролей не создавалось, данных не касались.
+- **Почему удалены, а не оставлены «на всякий случай»:** доказано каталогом, а не
+  рассуждением (`apps/api/scripts/rls-audit.mjs`, read-only, секретов не печатает):
+  - локальный/CI кластер (embedded Postgres и `postgres:16-alpine` с
+    `POSTGRES_USER=klass` в `.github/workflows/ci.yml`): роль приложения `klass` —
+    `rolsuper = true`, `rolbypassrls = true`, владелец 35/35 таблиц `public`,
+    `relforcerowsecurity = 0` на всех;
+  - боёк (Supabase, Session pooler): роль приложения `postgres` — `rolsuper = false`,
+    **`rolbypassrls = true`**, владелец 35/35 таблиц, `relforcerowsecurity = 0` на всех,
+    и под ней видно `users_live = 1`, `classes = 4`, `lesson_sessions = 4`,
+    `refresh_tokens = 28` (то есть `/api/me` и `/api/lessons/active` отвечали 200 всегда);
+  - `anon`/`authenticated`: `has_table_privilege` = false по **всем** 35 таблицам
+    (SELECT/INSERT/UPDATE/DELETE), чтение любой таблицы отказано на уровне привилегий,
+    PostgREST с публичным ключом отвечает 401 на `users`, `classes`, `chat_messages`,
+    `posts`, `files`, `teacher_notes`.
+  Итог: политика `TO PUBLIC USING (true)` достижима только ролями, которые и так
+  обходят RLS, а недостижима для тех, кого она «не должна открывать». Она не давала
+  ничего — а ложное чувство, что «RLS теперь безопасен для не-владельца», только мешает.
+- **Главный вывод инцидента:** `0020` не была причиной прод-боя видеоурка. Причина —
+  Origin/CSRF-гейт, который отклонял собственный адрес страницы
+  (`VIDEO_CALL_FINAL_FIX_REPORT.md`, фикс `896d355`).
+- **Чем это рискуем и как закрыто:** если в будущем `DATABASE_URL` переведут на
+  не-владелец без `BYPASSRLS`, policy-less RLS отфильтрует все SELECT в 0 строк →
+  401 на `/api/me` → «выбрасывает на логин». Это теперь не сюрприз:
+  `test/integration/phase1-rls-approle.test.ts` переписан (не удалён) и проверяет
+  (1) инвариант «роль приложения = superuser/BYPASSRLS/владелец и ни одна таблица не
+  FORCE», (2) отсутствие политик для `TO PUBLIC` на уровне `pg_policy`,
+  (3) нулевые привилегии и ноль прочитанных строк у `anon`/`authenticated` по
+  `users, classes, chat_messages, posts, files, teacher_notes`,
+  (4) сам контракт: не-владелец с выданными GRANT видит 0 строк, а роль без грантов
+  получает отказ до обращения к RLS. Смена роли обязана принести собственные политики.
+- **Откат:** `0021` обратима повторным прогоном `0020` (политики идемпотентны:
+  `DROP POLICY IF EXISTS` + `CREATE POLICY`) либо `git revert` файла миграции. Никаких
+  destructive-операций в откате нет.
+
 ## 2026-10-06 (Фаза 4 — производительность)
 
 - **Ленивая загрузка тяжёлых экранов.** Calendar (FullCalendar), Lesson (LiveKit +

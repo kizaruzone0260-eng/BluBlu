@@ -148,6 +148,13 @@
       "when": 1791291000000,
       "tag": "0020_rls_app_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791310000000,
+      "tag": "0021_rls_drop_app_policies",
+      "breakpoints": true
     }
   ]
 }
