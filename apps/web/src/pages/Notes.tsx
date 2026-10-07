@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -6,10 +6,14 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
+import { editorIsAlive } from '../lib/tiptapSafe';
 import { useAuth } from '../App';
 import { InkEditor, composeInk, extractInk, type InkData } from '../components/NoteInk';
 
 const DRAFT = '__draft__';
+
+/** Stable identity for `useEditor` — see components/RichText.tsx and lib/tiptapSafe.ts. */
+const EXTENSIONS = [StarterKit];
 
 interface Note {
   id: string; classId: string | null; eventId: string | null; pinned: boolean;
@@ -17,17 +21,27 @@ interface Note {
 }
 
 function Tiptap({ value, onChange }: { value: string; onChange: (html: string) => void }) {
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  // Stable options (see components/RichText.tsx) + every read guarded by editorIsAlive:
+  // the notes editor is the other place that used to call getHTML() on an instance
+  // @tiptap/react had already destroyed, which put the whole page behind the 500 screen.
+  const editorProps = useMemo(() => ({ attributes: { class: 'tiptap' } }), []);
+  const onUpdate = useCallback(({ editor }: { editor: Editor }) => {
+    if (editorIsAlive(editor)) onChangeRef.current(editor.getHTML());
+  }, []);
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: EXTENSIONS,
     content: value || '<p></p>',
-    editorProps: { attributes: { class: 'tiptap' } },
-    onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    editorProps,
+    onUpdate,
   });
   // controlled-content sync: when the note SWITCHES (value arrives from the
   // server after mount) push it into the editor; typing never round-trips back
   // because onUpdate already keeps value === editor.getHTML().
   useEffect(() => {
-    if (editor && value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
+    if (!editorIsAlive(editor)) return;
+    if (value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
   }, [value, editor]);
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>
@@ -38,7 +52,9 @@ function Tiptap({ value, onChange }: { value: string; onChange: (html: string) =
 }
 
 function MenuBar({ editor }: { editor: Editor | null }) {
-  if (!editor) return null;
+  // an un-mounted-but-alive instance still gets its toolbar (EditorContent mounts it);
+  // a destroyed one has no commands left to build buttons from.
+  if (!editorIsAlive(editor)) return null;
   const btn = (label: string, fn: () => void, active = false) => (
     <button
       key={label} type="button" className="secondary"

@@ -1,28 +1,52 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useTranslation } from 'react-i18next';
+import { editorIsAlive } from '../lib/tiptapSafe';
 
 /**
  * Shared rich-text block (extracted from the notes editor for the material
  * form). StarterKit v3 already ships bold/italic/underline/lists/undo. The
  * toolbar is a fixed superset: material and notes use the same buttons.
+ *
+ * The option objects handed to `useEditor` are STABLE on purpose (module-level array,
+ * memoised props, one `useCallback`): a fresh literal per render makes
+ * `@tiptap/react`'s `EditorInstanceManager.compareOptions` fail, and it then reconfigures
+ * the editor on every render — churn around the destroyed-instance window below.
+ * Every read of the instance goes through `editorIsAlive` (see lib/tiptapSafe).
  */
+const EXTENSIONS = [StarterKit];
+
 export default function RichText({ value, onChange, minHeight = 140 }: {
   value: string; onChange: (html: string) => void; minHeight?: number;
 }) {
   const { t } = useTranslation();
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const editorProps = useMemo(
+    () => ({ attributes: { class: 'tiptap', 'aria-label': t('material.descriptionAria') } }),
+    [t],
+  );
+  const onUpdate = useCallback(({ editor }: { editor: Editor }) => {
+    if (editorIsAlive(editor)) onChangeRef.current(editor.getHTML());
+  }, []);
+
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: EXTENSIONS,
     content: value || '<p></p>',
-    editorProps: { attributes: { class: 'tiptap', 'aria-label': t('material.descriptionAria') } },
-    onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    editorProps,
+    onUpdate,
   });
+
   // controlled-content sync (same contract as the notes editor): external
-  // value changes are pushed in without emitting an update loop
+  // value changes are pushed in without emitting an update loop. A destroyed instance is
+  // skipped, and the store re-renders with its replacement — same deps, so this runs again.
   useEffect(() => {
-    if (editor && value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
+    if (!editorIsAlive(editor)) return;
+    if (value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
   }, [value, editor]);
+
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>
       <MenuBar editor={editor} />
@@ -35,7 +59,9 @@ export default function RichText({ value, onChange, minHeight = 140 }: {
 
 function MenuBar({ editor }: { editor: Editor | null }) {
   const { t } = useTranslation();
-  if (!editor) return null;
+  // `EditorContent` is what mounts the view, so an unmounted instance is normal here and
+  // must still render the toolbar; only a destroyed one is refused (its commands are gone).
+  if (!editorIsAlive(editor)) return null;
   const btn = (label: string, title: string, fn: () => void, active = false, testid?: string) => (
     <button
       key={label} type="button" className="secondary" title={title}
