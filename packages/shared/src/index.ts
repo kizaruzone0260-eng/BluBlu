@@ -4,3 +4,4 @@ export * from './content.js';
 export * from './media.js';
 export * from './inkView.js';
 export * from './stageModel.js';
+export * from './chatReply.js';
