@@ -19,8 +19,8 @@ export function clampK(k: number): number {
 }
 
 /** Zoom by `factor` keeping the screen point (px, py) (relative to the svg box) fixed. */
-export function zoomAt(v: InkView0, size: InkSize, px: number, py: number, factor: number): InkView0 {
-  const k = clampK(v.k * factor);
+export function zoomAt(v: InkView0, size: InkSize, px: number, py: number, factor: number, clamp: (k: number) => number = clampK): InkView0 {
+  const k = clamp(v.k * factor);
   const wx = v.x + px / v.k;
   const wy = v.y + py / v.k;
   return { x: wx - px / k, y: wy - py / k, k };
