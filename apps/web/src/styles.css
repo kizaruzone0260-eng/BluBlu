@@ -217,11 +217,93 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .stage-full { position: absolute; right: 12px; bottom: 12px; z-index: 4; }
 .lesson-stage:fullscreen { background: var(--bg); padding: var(--sp-3); width: 100%; height: 100%; }
 .lesson-stage:fullscreen .stage-strip { max-height: calc(100vh - 40px); }
+
+/* ── demonstrating a screen (task 1, 2026-10-08) ───────────────────────────────────
+   The shared picture owns the main window; these rules are its zoom/fit surface, the
+   tool row, the controls that stay on top in fullscreen, and the presenter's preview. */
+/* The stage is a COLUMN of three bands — caption, picture, tools. The first version had the
+   picture absolutely positioned and the tools floating over it, which clipped the caption
+   (the tile's own name row sat above a 100%-high video) and let the presenter's preview and
+   the rotate hint cover the tools at 390 px — all three seen in the 2026-10-08 screenshots.
+   Bands cannot overlap by construction; the picture still scales from its own top-left inside
+   .screen-viewport, which clips it. */
+.screen-stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 72vh; min-height: 260px;
+  overflow: hidden; border-radius: var(--r-md); background: #000;
+  display: flex; flex-direction: column;
+}
+.lesson-stage:fullscreen .screen-stage { max-height: none; height: 100%; min-height: 0; }
+/* «На весь экран» on the stage itself: Chrome's UA sheet already drops the caps, this is the
+   same guarantee for every engine (and keeps the 16/9 box from fighting the viewport). */
+.screen-stage:fullscreen { max-height: none; min-height: 0; aspect-ratio: auto; border-radius: 0; }
+.screen-windowed { height: 100vh; aspect-ratio: auto; max-height: none; min-height: 0; }
+.screen-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 3px 8px;
+  min-height: 28px; background: var(--surface-2); border-bottom: 1px solid var(--border);
+  font-size: .8rem; color: var(--text-muted); z-index: 6;
+}
+.screen-caption { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.screen-head .screen-you { margin-left: auto; font-size: .78rem; }
+.screen-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.screen-picture { position: absolute; inset: 0; display: grid; place-items: center; touch-action: none; cursor: grab; }
+.screen-picture:active { cursor: grabbing; }
+.screen-picture .video-tile, .screen-picture video { width: 100%; height: 100%; }
+.screen-stage .screen-picture video { max-height: none; }
+.screen-stage[data-fit="contain"] .screen-picture video { object-fit: contain; }
+.screen-stage[data-fit="cover"] .screen-picture video { object-fit: cover; }
+.screen-tools {
+  display: flex; align-items: center; justify-content: center; gap: 2px; flex-wrap: wrap;
+  align-self: center; margin: 6px 8px; padding: 2px 6px; border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow-md);
+  max-width: calc(100% - 16px); z-index: 6;
+}
+.screen-tools button { min-width: var(--tap); min-height: 40px; height: 40px; margin: 0; padding: 0 8px; }
+.screen-zoom { font-size: .78rem; color: var(--text-muted); min-width: 44px; text-align: center; }
+.screen-you { font-size: .78rem; padding-left: 4px; }
+.screen-overlay {
+  position: absolute; right: 10px; top: 10px; z-index: 6; display: flex; gap: 4px; align-items: center;
+  padding: 4px 6px; border-radius: var(--r-full); background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: var(--shadow-md);
+}
+.screen-overlay button { min-height: 40px; margin: 0; }
+/* the «поверните телефон» note is its own band: floating over the picture it covered the
+   fullscreen room controls (measured at 390 px, screen-full-ru-390-light.png) */
+.screen-note {
+  align-self: center; margin: 0 8px; font-size: .82rem; text-align: center;
+  padding: 4px 10px; border-radius: var(--r-full); background: var(--accent-soft); color: var(--accent);
+  max-width: calc(100% - 16px); z-index: 6;
+}
+/* «Развернуть в окне» — the Fullscreen-API-free expansion (iOS Safari, refused requests) */
+.screen-windowed { position: fixed; inset: 0; z-index: 90; border-radius: 0; }
+.lesson-stage.strip-closed .stage-strip { display: none; }
+.stage-switch {
+  display: flex; gap: 2px; padding: 2px; border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow-md);
+}
+.stage-switch-flow { margin: 0 auto 6px; }
+.stage-switch button { min-height: 36px; margin: 0; padding: 0 10px; font-size: .85rem; }
+/* The presenter's plaque paints above the floating camera (z 5) and the share preview (z 7).
+   The overlap itself came from the collapsed stage (fixed above); this is the belt to those
+   braces — «Остановить» must be clickable wherever the page is scrolled. */
+.banner-share { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; position: relative; z-index: 9; }
+/* anchored to .stage-main, in the corner no other control uses and clear of the tool band */
+.share-preview {
+  position: absolute; left: 8px; bottom: 62px; z-index: 7; width: 200px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-lg);
+}
+.share-preview.preview-min { width: 148px; }
+.share-preview video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+.lesson-stage:fullscreen .stage-main video { max-height: calc(100vh - 96px); }
 /* phone: the strip runs along the BOTTOM, the board takes the full width */
 @media (max-width: 899px) {
   .lesson-stage { flex-direction: column; }
   .stage-strip { flex: 0 0 auto; width: 100%; max-height: none; flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .strip-cell { flex: 0 0 140px; }
+  /* the own camera floats in the PICTURE's corner on a phone: bottom-right is the strip there,
+     and the screen tool band sat under it (390 px screenshots, 2026-10-08) */
+  .lesson-pip.pip-local { top: 34px; right: 8px !important; bottom: auto !important; width: 128px; }
+  /* the preview would cover half a 390 px picture: keep only its bar */
+  .share-preview { width: 148px; }
 }
 
 /* ── app bar (legacy top nav; sidebar replaces it ≥768px) ───────────────── */

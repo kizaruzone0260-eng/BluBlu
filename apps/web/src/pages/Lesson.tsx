@@ -7,7 +7,8 @@ import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
 import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
-import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey } from '@klass/shared';
+import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
+import ScreenStage from '../components/ScreenStage';
 
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
@@ -32,6 +33,13 @@ const LS_PIP = 'blublu.pip'; // task B: remembered floating-camera position + fl
 // method signatures so the constraint chain below type-checks without casts to any
 type CamOpts = NonNullable<Parameters<Room['localParticipant']['setCameraEnabled']>[1]>;
 type MicOpts = NonNullable<Parameters<Room['localParticipant']['setMicrophoneEnabled']>[1]>;
+/**
+ * Same trick for the screen: deriving the type from the method signature proves at compile time
+ * which getDisplayMedia options this livekit-client version forwards (2.22.3 does carry
+ * selfBrowserSurface / surfaceSwitching / systemAudio / contentHint — checked in
+ * dist/src/room/track/options.d.ts and screenCaptureToDisplayMediaStreamOptions).
+ */
+type ShareOpts = NonNullable<Parameters<Room['localParticipant']['setScreenShareEnabled']>[1]>;
 
 /** LiveKit/RTCException name → localized sentence with the browser's reason appended. */
 function useMediaErrorText() {
@@ -43,7 +51,12 @@ function useMediaErrorText() {
   };
 }
 
-function VideoTile({ tile, track, big = false }: { tile: Tile; track?: LkTrack; big?: boolean }) {
+function VideoTile({ tile, track, big = false, hideName = false }: {
+  tile: Tile; track?: LkTrack; big?: boolean;
+  /** the screen stage paints its own caption band, so the tile must not add a second one */
+  hideName?: boolean;
+}) {
+  const { t } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   useEffect(() => {
@@ -57,7 +70,7 @@ function VideoTile({ tile, track, big = false }: { tile: Tile; track?: LkTrack; 
       data-local={tile.local ? '1' : '0'} data-screen={tile.screen ? '1' : undefined}
       // remote audio must NOT take a grid slot — it plays silently in the background
       style={tile.kind === 'audio' ? { display: 'none' } : undefined}>
-      <div className="muted">{tile.name}{tile.screen ? ' · screen' : ''}</div>
+      {!hideName && <div className="muted">{tile.name}{tile.screen ? ` · ${t('lesson.stageScreen')}` : ''}</div>}
       {tile.kind === 'video'
         ? <video ref={videoRef} autoPlay playsInline muted={tile.local} />
         : <audio ref={audioRef} autoPlay />}
@@ -89,6 +102,15 @@ export default function Lesson() {
   const [boardFull, setBoardFull] = useState(false); // local: browser fullscreen for the stage
   const [pinnedKey, setPinnedKey] = useState<string | null>(null); // local: click-to-pin
   const [activeSid, setActiveSid] = useState<string | null>(null); // auto: who is speaking
+  // ── screen demonstration (task 1, 2026-10-08) ──
+  // local: the viewer picked «Доска» in the Экран | Доска switch while a screen is live
+  const [showBoardInstead, setShowBoardInstead] = useState(false);
+  // local: the presenter's own preview window (collapsed by default, see 1.3)
+  const [sharePreview, setSharePreview] = useState(false);
+  // the shared surface turned out to be a browser tab/window → the mirror-corridor warning
+  const [shareSurface, setShareSurface] = useState<'window' | 'browser' | 'monitor' | ''>('');
+  // in fullscreen the participant strip can be hidden away
+  const [stripOpen, setStripOpen] = useState(true);
   const [pip, setPip] = useState<{ x: number; y: number; min: boolean; hidden: boolean }>(
     () => { try { return { x: 12, y: 12, min: false, hidden: false, ...JSON.parse(localStorage.getItem(LS_PIP) || '{}') }; } catch { return { x: 12, y: 12, min: false, hidden: false }; } });
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -377,8 +399,21 @@ export default function Lesson() {
         // local AUDIO is never attached — the speaker already hears themselves via
         // the physical microphone; re-playing it is the echo users reported.
         if (track.kind === 'audio') return;
+        // what kind of surface the presenter actually picked (Chromium and Firefox report it;
+        // Safari does not, and then the warning simply never appears — which is honest)
+        if (pub.source === Track.Source.ScreenShare) {
+          const s = (track.mediaStreamTrack?.getSettings?.() ?? {}) as { displaySurface?: string };
+          const surface = s.displaySurface === 'browser' || s.displaySurface === 'window' || s.displaySurface === 'monitor'
+            ? s.displaySurface : '';
+          setShareSurface(surface);
+          // collapsed by default (task: «по умолчанию свёрнут, разворачивается»); when the shared
+          // surface is a browser tab the warning below explains why it stays collapsed
+          setSharePreview(false);
+        }
         addTile(
-          { key: `local:${pub.trackSid}`, kind: 'video', name: `${t('lesson.you')}${pub.source === Track.Source.ScreenShare ? ' · screen' : ''}`, local: true, screen: pub.source === Track.Source.ScreenShare, sid: room.localParticipant.sid },
+          // the '· Экран' suffix belongs to VideoTile (localized); a second one here measured
+          // «Вы · screen · screen» in the 2026-10-08 screenshot review
+          { key: `local:${pub.trackSid}`, kind: 'video', name: t('lesson.you'), local: true, screen: pub.source === Track.Source.ScreenShare, sid: room.localParticipant.sid },
           track,
         );
       });
@@ -457,6 +492,36 @@ export default function Lesson() {
     setLocalCamOn(false);
     setLocalMicOn(false);
     setScreenOn(false);
+  }
+
+  /**
+   * Task 1.3: start / stop demonstrating the screen.
+   *
+   * `selfBrowserSurface: 'exclude'` asks the browser not to offer THIS tab as a source — sharing
+   * the page you are watching yourself in is the mirror corridor (you see your own tile seeing
+   * your screen). livekit-client 2.22.3 forwards it, plus `surfaceSwitching` and `systemAudio`,
+   * straight into getDisplayMedia (verified in dist/src/room/track/options.d.ts and
+   * screenCaptureToDisplayMediaStreamOptions). Browsers that ignore the hint are covered by the
+   * `displaySurface` check in LocalTrackPublished, which warns and keeps the preview off.
+   * The screen audio is never attached locally (see LocalTrackPublished), so the presenter does
+   * not hear their own system sound as an echo.
+   */
+  async function toggleShare() {
+    const room = roomRef.current;
+    if (!room) return;
+    const on = !screenOn;
+    const opts: ShareOpts = {
+      audio: true, selfBrowserSurface: 'exclude', surfaceSwitching: 'include',
+      systemAudio: 'include', contentHint: 'detail',
+    };
+    try {
+      await room.localParticipant.setScreenShareEnabled(on, on ? opts : undefined);
+      if (!on) { setShareSurface(''); setSharePreview(false); }
+    } catch {
+      // the key existed in all three locales but was shown RAW here (the render prints `error`
+      // untranslated) — the same trap the join path avoids with t(`lesson.${code}`)
+      setError(t('lesson.screenShareFailed'));
+    }
   }
 
   async function toggleCameraInRoom() {
@@ -540,43 +605,52 @@ export default function Lesson() {
   const gridClass = useMemo(() => `videos layout-${layout === 'auto' ? 'gallery' : layout}`, [layout]);
 
   // ── task B: the stage model ─────────────────────────────────────────────────
-  // main window priority: board (shared) > pinned > screen share > spotlight /
-  // active speaker (auto). Everything else lives in the compact strip; the own
-  // camera floats above the stage (draggable, snapping, remembered).
+  // Which content owns the main window is decided by pickStageContent() in @klass/shared
+  // (unit-tested in apps/api/test/unit/stage-model.test.ts): a screen share wins over the
+  // board and over the teacher's layout choice, a pin wins over the screen, and with no
+  // share in force the previous layout rules apply unchanged.
   const videoTiles = useMemo(() => tiles.filter((x) => x.kind === 'video'), [tiles]);
   const localTile = videoTiles.find((x) => x.local && !x.screen) ?? null;
   const teacherTile = videoTiles.find((x) => !x.local && !x.screen) ?? null;
+  const screenTile = videoTiles.find((x) => x.screen) ?? null;
+  const pinnedTile = pinnedKey ? videoTiles.find((x) => x.key === pinnedKey) ?? null : null;
+  const speakerTile = activeSid ? videoTiles.find((x) => !x.local && x.sid === activeSid) ?? null : null;
+  const personTile = videoTiles.find((x) => !x.local) ?? localTile;
+  const content = pickStageContent({
+    boardOpen, layout, hasScreen: Boolean(screenTile), hasPinned: Boolean(pinnedTile),
+    hasSpeaker: Boolean(speakerTile), hasPerson: Boolean(personTile), showBoardInstead,
+  });
+  // the switch has nothing to switch back to once the share stops; the board's own
+  // fullscreen must not survive the board leaving the stage
+  useEffect(() => { if (!screenTile) setShowBoardInstead(false); }, [screenTile]);
+  useEffect(() => { if (content !== 'board') setBoardFull(false); }, [content]);
   const stage = useMemo(() => {
-    if (boardOpen) return { kind: 'board' as const, tile: null as Tile | null };
-    if (layout === 'gallery') return { kind: 'grid' as const, tile: null };
-    const pinned = pinnedKey ? videoTiles.find((x) => x.key === pinnedKey) ?? null : null;
-    if (pinned) return { kind: 'tile' as const, tile: pinned };
-    const screen = videoTiles.find((x) => x.screen) ?? null;
-    if (screen) return { kind: 'tile' as const, tile: screen };
-    if (layout === 'teacher') { // spotlight: one person fills the stage
-      const first = videoTiles.find((x) => !x.local) ?? localTile;
-      return first ? { kind: 'tile' as const, tile: first } : { kind: 'grid' as const, tile: null };
+    switch (content) {
+      case 'board': return { kind: 'board' as const, tile: null as Tile | null };
+      case 'screen': return { kind: 'tile' as const, tile: screenTile };
+      case 'pinned': return { kind: 'tile' as const, tile: pinnedTile };
+      case 'speaker': return { kind: 'tile' as const, tile: speakerTile };
+      case 'spotlight': return { kind: 'tile' as const, tile: personTile };
+      default: return { kind: 'grid' as const, tile: null as Tile | null };
     }
-    if (layout === 'auto') {
-      const speaker = activeSid ? videoTiles.find((x) => !x.local && x.sid === activeSid) : null;
-      if (speaker) return { kind: 'tile' as const, tile: speaker };
-      return { kind: 'grid' as const, tile: null }; // nobody talking → honest grid
-    }
-    const first = videoTiles.find((x) => !x.local) ?? localTile;
-    return first ? { kind: 'tile' as const, tile: first } : { kind: 'grid' as const, tile: null };
-  }, [boardOpen, layout, videoTiles, pinnedKey, activeSid, localTile]);
+  }, [content, screenTile, pinnedTile, speakerTile, personTile]);
 
   const hasStage = stage.kind !== 'grid';
+  const screenIsMain = content === 'screen';
   // when the board owns the stage, the teacher's camera floats for students too
   const teacherFloats = !isTeacher && stage.kind === 'board' && Boolean(teacherTile);
   const stripTiles = useMemo(() => {
-    const exclude = new Set<string>();
-    if (stage.tile) exclude.add(stage.tile.key);
-    if (hasStage && localTile) exclude.add(localTile.key); // own camera = the PiP, not a strip slot
-    if (teacherTile && teacherFloats) exclude.add(teacherTile.key);
-    return videoTiles.filter((x) => !exclude.has(x.key));
-  }, [videoTiles, stage.tile, hasStage, localTile, teacherTile, teacherFloats]);
+    const keep = new Set(stripKeys(videoTiles, {
+      stageKey: stage.tile?.key ?? null, hasStage, localCameraKey: localTile?.key ?? null,
+      teacherFloats, teacherKey: teacherTile?.key ?? null,
+    }));
+    return videoTiles.filter((x) => keep.has(x.key));
+  }, [videoTiles, stage.tile, hasStage, localTile, teacherFloats, teacherTile]);
   const STRIP_MAX = 6;
+  const showSwitch = stageSwitchVisible({
+    boardOpen, layout, hasScreen: Boolean(screenTile), hasPinned: false,
+    hasSpeaker: false, hasPerson: true, showBoardInstead,
+  }) && !pinnedTile;
 
   function toggleBoard() {
     const s = session;
@@ -603,6 +677,9 @@ export default function Lesson() {
   // pip.x / pip.y are offsets from the RIGHT and BOTTOM edges (CSS right/bottom).
   const PIP_W = 180, PIP_H = 140;
   function pipDown(e: React.PointerEvent) {
+    // on a phone the self-view is pinned to the picture's corner by CSS (it would otherwise sit
+    // on the screen tool band), so a drag there has nothing to move — do not pretend it does
+    if (window.matchMedia('(max-width: 899px)').matches) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
     dragRef.current = { x0: e.clientX, y0: e.clientY, px0: pip.x, py0: pip.y };
   }
@@ -655,6 +732,27 @@ export default function Lesson() {
     <>
       {camErr && <p className="error" data-testid="cam-error">{camErr}</p>}
       {micErr && <p className="error" data-testid="mic-error">{micErr}</p>}
+    </>
+  );
+
+  /**
+   * Task 1.2: the controls that must stay reachable while the shared screen covers the whole
+   * display — mute, camera, the participant strip, and leaving the lesson.
+   */
+  const stageControls = (
+    <>
+      <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="ov-mic"
+        aria-label={t('lesson.toggleMic')} aria-pressed={localMicOn} onClick={() => void toggleMicInRoom()}>
+        {localMicOn ? '🎙' : '🔇'}
+      </button>
+      <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="ov-cam"
+        aria-label={t('lesson.toggleCamera')} aria-pressed={localCamOn} onClick={() => void toggleCameraInRoom()}>
+        {localCamOn ? '📹' : '🚫'}
+      </button>
+      <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="ov-strip"
+        aria-label={t('lesson.stageStrip')} aria-pressed={stripOpen} onClick={() => setStripOpen((v) => !v)}>👥</button>
+      <button type="button" className="danger" style={{ marginTop: 0 }} data-testid="ov-leave"
+        aria-label={t('lesson.leave')} onClick={() => void leaveRoom()}>{t('lesson.leave')}</button>
     </>
   );
 
@@ -785,13 +883,9 @@ export default function Lesson() {
                       ))}
                     </details>
                     <div className="spacer" />
-                    <button className="secondary" style={{ marginTop: 0 }} onClick={async () => {
-                      const room = roomRef.current;
-                      if (!room) return;
-                      const on = !screenOn;
-                      try { await room.localParticipant.setScreenShareEnabled(on, { audio: true }); } catch { setError('screenShareFailed'); }
-                    }}>
-                      {t('lesson.shareScreen')}
+                    <button className={`secondary${screenOn ? ' chip-active' : ''}`} style={{ marginTop: 0 }}
+                      data-testid="share-toggle" aria-pressed={screenOn} onClick={() => void toggleShare()}>
+                      {screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
                     </button>
                     <button className="danger" style={{ marginTop: 0 }} onClick={() => {
                       act.mutate({ path: `/api/lessons/${session.id}/end` });
@@ -812,23 +906,86 @@ export default function Lesson() {
               {/* student banners (task 3): why the mic is off — restored on reconnect */}
               {!isTeacher && muteAll && <p className="banner" data-testid="banner-muted">{t('lesson.bannerMuted')}</p>}
               {!isTeacher && lectureMode && !muteAll && <p className="banner" data-testid="banner-lecture">{t('lesson.bannerLecture')}</p>}
+              {/* task 1.3: the presenter always knows what they are showing and can stop it here
+                  (the browser's own Stop button works too — LiveKit unpublishes the track and the
+                  layout returns by itself, see zz13-screen-stage.spec.ts) */}
+              {screenOn && (
+                <div className="banner banner-share" role="status" data-testid="share-banner">
+                  <span>🖥 {t('lesson.shareShowing')}</span>
+                  {shareSurface === 'browser' && (
+                    <span className="muted" data-testid="share-mirror-warn">{t('lesson.shareMirrorWarn')}</span>
+                  )}
+                  <div className="spacer" />
+                  <button type="button" className="danger" style={{ marginTop: 0 }} data-testid="share-stop"
+                    onClick={() => void toggleShare()}>{t('lesson.shareStop')}</button>
+                </div>
+              )}
               {/* ── task B: Meet-style stage. Board/screen/spotlight own the main
                    window; cameras shrink to a compact strip (right on desktop,
                    bottom on phones); the own camera is a draggable floating PiP. ── */}
               {hasStage ? (
-                <div className="lesson-stage" ref={stageRef} data-testid="lesson-stage">
+                <div className={`lesson-stage${stripOpen ? '' : ' strip-closed'}`} ref={stageRef} data-testid="lesson-stage">
                   <div className="stage-main" data-testid="stage-main">
+                    {/* «Экран | Доска»: inside the stage's own caption band while the screen is up
+                        (an absolutely positioned pill over the picture covered its title bar —
+                        seen in the 2026-10-08 screenshot review), a normal row above the board. */}
+                    {showSwitch && !screenIsMain && (
+                      <div className="stage-switch stage-switch-flow" role="group" data-testid="stage-switch"
+                        aria-label={t('lesson.stageSwitchAria')}>
+                        <button type="button" className={`ghost${showBoardInstead ? '' : ' chip-active'}`}
+                          style={{ marginTop: 0 }} data-testid="stage-switch-screen" aria-pressed={!showBoardInstead}
+                          onClick={() => setShowBoardInstead(false)}>{t('lesson.stageScreen')}</button>
+                        <button type="button" className={`ghost${showBoardInstead ? ' chip-active' : ''}`}
+                          style={{ marginTop: 0 }} data-testid="stage-switch-board" aria-pressed={showBoardInstead}
+                          onClick={() => setShowBoardInstead(true)}>{t('lesson.stageBoard')}</button>
+                      </div>
+                    )}
                     {stage.kind === 'board' ? (
                       <>
                         <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
                         <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
                           onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
                       </>
+                    ) : screenIsMain && stage.tile ? (
+                      <ScreenStage
+                        presenter={Boolean(stage.tile.local)}
+                        caption={`${stage.tile.local ? t('lesson.you') : stage.tile.name} · ${t('lesson.stageScreen')}`}
+                        controls={stageControls}
+                        lead={showSwitch ? (
+                          <div className="stage-switch" role="group" data-testid="stage-switch"
+                            aria-label={t('lesson.stageSwitchAria')}>
+                            <button type="button" className={`ghost${showBoardInstead ? '' : ' chip-active'}`}
+                              style={{ marginTop: 0 }} data-testid="stage-switch-screen" aria-pressed={!showBoardInstead}
+                              onClick={() => setShowBoardInstead(false)}>{t('lesson.stageScreen')}</button>
+                            <button type="button" className={`ghost${showBoardInstead ? ' chip-active' : ''}`}
+                              style={{ marginTop: 0 }} data-testid="stage-switch-board" aria-pressed={showBoardInstead}
+                              onClick={() => setShowBoardInstead(true)}>{t('lesson.stageBoard')}</button>
+                          </div>
+                        ) : null}
+                      >
+                        <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big hideName />
+                      </ScreenStage>
                     ) : stage.tile ? (
                       <div className="stage-tile" onClick={() => setPinnedKey(stage.tile!.key)} data-testid="stage-tile">
                         <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big />
                       </div>
                     ) : null}
+                    {/* task 1.3: the presenter's own share — proof of what leaves the machine, in a
+                        corner of the main window that no other control uses, above the tool band */}
+                    {screenOn && screenTile && (
+                      <div className={`share-preview${sharePreview ? '' : ' preview-min'}`} data-testid="share-preview">
+                        <div className="pip-bar" data-testid="share-preview-bar">
+                          <span>{t('lesson.sharePreview')}</span>
+                          <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }}
+                            data-testid="share-preview-toggle" aria-pressed={sharePreview}
+                            aria-label={t('lesson.sharePreview')}
+                            onClick={() => setSharePreview((v) => !v)}>{sharePreview ? '—' : '⤢'}</button>
+                        </div>
+                        {sharePreview && (
+                          <VideoTile tile={screenTile} track={tracksRef.current.get(screenTile.key)} />
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="stage-strip" data-testid="stage-strip">
                     {stripTiles.slice(0, STRIP_MAX).map((tile) => (
@@ -868,6 +1025,8 @@ export default function Lesson() {
                     <button type="button" className="pip-restore" style={{ marginTop: 0 }} data-testid="pip-restore"
                       onClick={() => setPip((p) => ({ ...p, hidden: false }))}>📹</button>
                   )}
+                  {/* the presenter's own share moved INSIDE .stage-main (see above): anchored to the
+                      stage it belongs to, where it cannot cover the strip or the tool band */}
                 </div>
               ) : (
                 <>
