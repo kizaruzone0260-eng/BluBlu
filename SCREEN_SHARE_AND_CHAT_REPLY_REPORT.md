@@ -206,7 +206,7 @@ pinned > screen > board > gallery-grid > teacher-spotlight > auto-speaker > stag
 | `pnpm --filter @klass/web build` | ок | **ок**, 46 s |
 | `pnpm audit --prod --audit-level=high` | 2 находки | **те же 2** (transitive `@excalidraw/excalidraw → sass → chokidar → braces`), новых зависимостей **0** — `package.json` ни в одном коммите не менялся |
 | Сканы на секреты в diff | — | совпадения только в комментариях и тестовых фикстурах (`Secret1234` из e2e); `.env` не читался и не печатался |
-| CI (`overnight`) | — | часть 1: run **37833441434** на `95b6d0b` — **success**; часть 2: run **37841440911** на `f1c25a3` — attempt 1 **failure** на `zz10-richtext-boot.spec.ts:144`, attempt 2 (перезапуск той же коммитки) — **success** на обоих джобах |
+| CI (`overnight`) | — | часть 1: run **37833441434** на `95b6d0b` — **success**; часть 2: run **37841440911** на `f1c25a3` — attempt 1 **failure** на `zz10-richtext-boot.spec.ts:144`, attempt 2 (перезапуск той же коммитки) — **success** на обоих джобах; HEAD ветки (`bfa00a2`, только отчёт): run **37846806135** — **success** без перезапусков |
 
 Одна красная строка полного e2e-прогона требует честного разбора:
 `redesign.spec.ts:177 › class settings (C.2): rename + archive` —
@@ -244,6 +244,15 @@ tiptap (0 совпадений), сам тест последний раз ме�
 Итого **+10.6 kB raw / +2.75 kB gzip** (≈ +1.0 %). Прирост — строки трёх локалей и CSS сцены/
 цитат; новых библиотек нет, тяжёлые чанки (Excalidraw, pdf-lib, tiptap) как лежали в ленивых,
 так и лежат.
+
+Две вещи, которые прогон оставил в рабочем дереве и которые я **не** включал в коммиты:
+
+* `docs/screenshots/board-text-390.png` — побочный артефакт самого e2e-теста
+  (`zz12-board-pdf.spec.ts` пишет этот файл в `docs/screenshots`); он возвращён к закоммиченной
+  версии, к задаче отношения не имеет;
+* `apps/api/scripts/cloud-{fixtures,tokens-del}.mjs`, `apps/e2e/scripts/{camera-repro,cloud-call-repro}.mjs`
+  — неотредактированные отладочные скрипты прошлых сессий (были untracked до этой задачи);
+  не трогал и не коммитил.
 
 ## 10. Скриншоты
 
