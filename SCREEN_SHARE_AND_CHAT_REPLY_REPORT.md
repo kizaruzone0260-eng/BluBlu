@@ -206,17 +206,33 @@ pinned > screen > board > gallery-grid > teacher-spotlight > auto-speaker > stag
 | `pnpm --filter @klass/web build` | ок | **ок**, 46 s |
 | `pnpm audit --prod --audit-level=high` | 2 находки | **те же 2** (transitive `@excalidraw/excalidraw → sass → chokidar → braces`), новых зависимостей **0** — `package.json` ни в одном коммите не менялся |
 | Сканы на секреты в diff | — | совпадения только в комментариях и тестовых фикстурах (`Secret1234` из e2e); `.env` не читался и не печатался |
-| CI (`overnight`) | — | часть 1: run **37833441434** на `95b6d0b` — **success** |
+| CI (`overnight`) | — | часть 1: run **37833441434** на `95b6d0b` — **success**; часть 2: run **37841440911** на `f1c25a3` — attempt 1 **failure** на `zz10-richtext-boot.spec.ts:144`, attempt 2 (перезапуск той же коммитки) — **success** на обоих джобах |
 
 Одна красная строка полного e2e-прогона требует честного разбора:
 `redesign.spec.ts:177 › class settings (C.2): rename + archive` —
 `Tearing down "context" exceeded the test timeout of 150000ms`, то есть тело теста прошло, а
 закрытие контекста браузера не уложилось в таймаут. Тот же тест в этом же прогоне был
 `[19/66]` и в предыдущем полном прогоне (63 passed) прошёл; отдельно
-`npx playwright test redesign.spec.ts` — **5 passed (32 s)**. Утверждений он не ломает, и
-связи с изменениями задачи нет (классы/архив не трогались), но и «флейком» я его не записываю:
-это невоспроизведённый таймаут teardown на этой машине (Edge + общая нагрузка), и CI на
-chromium — третий независимый прогон.
+`npx playwright test redesign.spec.ts` — **5 passed (32 s)**, и в CI он зелёный в **обоих**
+попытках прогона 37841440911. Утверждений он не ломает, и связи с изменениями задачи нет
+(классы/архив не трогались), но и «флейком» я его не записываю: это невоспроизведённый
+таймаут teardown на этой машине (Edge + общая нагрузка).
+
+Красный CI на первой попытке — `zz10-richtext-boot.spec.ts:144` (задача 6, tiptap), и он тоже
+разобран, а не списан:
+
+```
+Expected substring: "жирный"
+Received string:    "Проверка редактораирныйж"
+```
+
+то есть `page.keyboard.type()` без паузы попал в ре-рендер контролируемого контента — ровно
+в тот путь, который тест и сторожит, — и символы приехали не по порядку. Проверено, что это
+не от моих правок: `git diff 5af61de..HEAD --name-only` не содержит ни одного файла material /
+tiptap (0 совпадений), сам тест последний раз менялся в `a281930`, и он был зелёным на двух
+предыдущих прогонах CI (`37742701414`, `37833441434`) с этим же исходником. Перезапуск
+упавшего джобы на том же коммите — **success**; осознанно таймделай в чужой тест я не
+вставлял: это не предмет задачи, а гонка на медленном раннере.
 
 ### Начальный бандл (то же, что грузится до первого перехода)
 
@@ -280,22 +296,23 @@ b24203b feat(shared): the lesson stage model — a demonstrated screen owns the 
 95b6d0b docs(screens): 40 shots of the stage, the presenter view and the switch
 ```
 
-Часть 2:
+Часть 2 (в `origin/overnight`, CI 37841440911 — success):
 
 ```
-feat(shared): the reply quote the server builds for a chat message
-feat(api): migration 0023 — what a chat message answers
-feat(api): answering a message in the class chat
-feat(web): «Ответить» in the class chat — menu, swipe, bar and a clickable quote
-test: chat replies on the server and in two browsers
+93ea777 feat(shared): the reply quote the server builds for a chat message
+8cd7810 feat(api): migration 0023 — what a chat message answers
+c3067b6 feat(api): answering a message in the class chat
+daa4daa feat(web): «Ответить» in the class chat — menu, swipe, bar and a clickable quote
+4a8257a test: chat replies on the server and in two browsers
+f1c25a3 docs: report for the screen stage and the chat reply
 ```
 
 Откат — по частям, обратным порядком (`git revert`, без force-push):
 
-1. `git revert <test-коммит части 2> <web-коммит части 2>` — клиент снова без ответов;
+1. `git revert 4a8257a daa4daa` — клиент снова без ответов;
    колонки в БД остаются, но они nullable и никем не читаются, так что откат не ломает
    существующие сообщения;
-2. `git revert <api-коммиты части 2>` — API перестаёт принимать `replyToId` (лишнее поле в
+2. `git revert c3067b6 8cd7810 93ea777` — API перестаёт принимать `replyToId` (лишнее поле в
    теле и раньше отбрасывалось бы схемой zod), `replyTo` просто исчезает из ответов;
 3. миграцию **откатывать.sql-скриптом не нужно**: `DROP TABLE`/`DROP COLUMN` не выполняется,
    обе колонки nullable и без данных у старых сообщений. Если всё-таки понадобится —
