@@ -9,18 +9,35 @@ import { resolveClass } from '../services/classes.js';
 import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
 import {
-  loadPage, listPages, mergeElements, type ExEl,
+  loadPage, listPages, listPagesWithTitles, mergeElements, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
 
 const BROADCAST_MS = 30;   // §3.7 throttle
 const AUTOSAVE_MS = 10_000; // §3.7 autosave every 10 s
 
+/** Task 1г: a lesson gets at most this many boards — enforced here, on the server. */
+export const MAX_BOARD_PAGES = 20;
+/** Task 1б: the label length cap, in characters. */
+export const MAX_BOARD_TITLE = 40;
+
+/**
+ * A board title is PLAIN TEXT: control characters and line breaks are collapsed, the value is
+ * trimmed and cut to 40 chars. Nothing is interpreted as markup anywhere — the client renders it
+ * as a React text child — and an empty result means "no label", so the localized «Доска N» shows.
+ */
+export function sanitizeBoardTitle(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const flat = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return [...flat].slice(0, MAX_BOARD_TITLE).join('');
+}
+
 interface BoardRoom {
   sessionId: string;
   teacherId: string;
   current: number;
   pages: number[];
+  titles: Record<number, string>;
   elements: Record<string, ExEl>;
   sockets: Map<WebSocket, { role: 'teacher' | 'student' }>;
   pending: ExEl[];
@@ -37,11 +54,14 @@ async function getBoardRoom(db: DB, sessionId: string): Promise<BoardRoom> {
   if (r) return r;
   const [s] = await db.select().from(lessonSessions).where(eq(lessonSessions.id, sessionId)).limit(1);
   if (!s) throw new Error('no session');
-  const pages = await listPages(db, sessionId);
+  const rows = await listPagesWithTitles(db, sessionId);
+  const pages = rows.map((x) => x.pageNo);
+  const titles: Record<number, string> = {};
+  for (const x of rows) titles[x.pageNo] = x.title;
   const first = pages[0]!;
   const snap = await loadPage(db, sessionId, first);
   r = {
-    sessionId, teacherId: s.createdBy, current: first, pages,
+    sessionId, teacherId: s.createdBy, current: first, pages, titles,
     elements: snap.elements, sockets: new Map(), pending: [],
     broadcastTimer: null, autosaveTimer: null, dirty: false, saving: null,
   };
@@ -93,12 +113,20 @@ function queueBroadcast(db: DB, r: BoardRoom, els: ExEl[], from: WebSocket) {
   r.broadcastTimer.unref?.();
 }
 
-async function switchPage(db: DB, r: BoardRoom, pageNo: number, from?: WebSocket) {
+async function switchPage(db: DB, r: BoardRoom, pageNo: number) {
   await persist(db, r);
   const snap = await loadPage(db, r.sessionId, pageNo);
   r.current = pageNo;
   r.elements = snap.elements;
-  broadcast(r, { type: 'current', page: pageNo, elements: Object.values(snap.elements) }, from);
+  // EVERY socket gets the new scene — including the one that asked for the switch. It used to be
+  // excluded (`except: from`), and the measurement of 2026-10-08 showed what that cost: the
+  // teacher's own canvas was never replaced, so after «+ стр.» the previous page's ink stayed on
+  // screen and the two pages were shown as one merged picture. Students were right, the teacher
+  // was wrong — and anything they then drew landed on the page the server had switched to.
+  broadcast(r, {
+    type: 'current', page: pageNo, title: r.titles[pageNo] ?? '',
+    elements: Object.values(snap.elements),
+  });
 }
 
 export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
@@ -111,13 +139,13 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s) return reply.code(404).send({ error: 'notFound' });
     const cls = await resolveClass(db, req.user!.id, req.user!.role, s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
-    const pages = await listPages(db, id);
-    const out: { pageNo: number; elements: unknown[] }[] = [];
-    for (const p of pages) {
-      const snap = await loadPage(db, id, p);
-      out.push({ pageNo: p, elements: Object.values(snap.elements) });
+    const rows = await listPagesWithTitles(db, id);
+    const out: { pageNo: number; title: string; elements: unknown[] }[] = [];
+    for (const row of rows) {
+      const snap = await loadPage(db, id, row.pageNo);
+      out.push({ pageNo: row.pageNo, title: row.title, elements: Object.values(snap.elements) });
     }
-    return { pages: out };
+    return { pages: out, maxPages: MAX_BOARD_PAGES };
   });
 
   // Teacher saves a page snapshot directly (offline editing after the lesson)
@@ -128,14 +156,29 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     const p = z.object({
-      pageNo: z.number().int().min(1).max(50),
+      pageNo: z.number().int().min(1).max(MAX_BOARD_PAGES),
+      title: z.string().optional(),
       elements: z.array(z.object({ id: z.string() }).passthrough()),
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const snapshot = { elements: p.data.elements, appState: {} };
+    // A label is written only when the caller sent one — an edit to the drawing must never clear
+    // the teacher's page name.
+    const title = p.data.title === undefined ? undefined : sanitizeBoardTitle(p.data.title);
     await db.insert(whiteboards)
-      .values({ sessionId: id, pageNo: p.data.pageNo, snapshot: snapshot as never, updatedAt: new Date() })
-      .onConflictDoUpdate({ target: [whiteboards.sessionId, whiteboards.pageNo], set: { snapshot: snapshot as never, updatedAt: new Date() } });
+      .values({
+        sessionId: id, pageNo: p.data.pageNo, snapshot: snapshot as never,
+        ...(title === undefined ? {} : { title }), updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: [whiteboards.sessionId, whiteboards.pageNo],
+        set: {
+          snapshot: snapshot as never, updatedAt: new Date(),
+          ...(title === undefined ? {} : { title }),
+        },
+      });
+    const r = rooms.get(id);
+    if (r && title !== undefined) r.titles[p.data.pageNo] = title;
     return { ok: true };
   });
 
@@ -197,39 +240,115 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
       });
       socket.send(JSON.stringify({
         type: 'init', canEdit: role === 'teacher',
-        page: r.current, pages: r.pages, elements: Object.values(r.elements),
+        page: r.current, pages: r.pages, titles: r.titles, elements: Object.values(r.elements),
       }));
 
       socket.on('message', (raw: Buffer) => {
         void (async () => {
-          let msg: { type?: string; page?: number; elements?: ExEl[] };
+          let msg: { type?: string; page?: number; title?: unknown; elements?: ExEl[] };
           try { msg = JSON.parse(raw.toString()); } catch { return; }
-          // SERVER-SIDE PERMISSION GATE: only the owning teacher may write (§3.7/§7)
+          // SERVER-SIDE PERMISSION GATE: only the owning teacher may write (§3.7/§7). This covers
+          // every page-management verb too — a student's newpage/rename/duplicate/delpage/switch
+          // returns here, before any state is touched (task 1г).
           const who = r.sockets.get(socket);
           if (!who || who.role !== 'teacher' || consumed.userId !== r.teacherId) return;
+          const notice = (code: string, extra: Record<string, unknown> = {}) =>
+            socket.send(JSON.stringify({ type: 'notice', code, ...extra }));
+
           if (msg.type === 'edits' && Array.isArray(msg.elements)) {
             const { changed } = mergeElements(r.elements, msg.elements.filter((e) => e && typeof e.id === 'string'));
             if (changed.length) queueBroadcast(db, r, changed, socket);
             return;
           }
           if (msg.type === 'switch' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
-            await switchPage(db, r, msg.page, socket);
+            await switchPage(db, r, msg.page);
             return;
           }
           if (msg.type === 'newpage') {
-            await persist(db, r);
+            if (r.pages.length >= MAX_BOARD_PAGES) {
+              notice('boardLimit', { max: MAX_BOARD_PAGES, pages: r.pages.length });
+              return;
+            }
+            // RESERVE SYNCHRONOUSLY. Every message handler here is its own async task
+            // (`socket.on('message')` fires one after another without waiting), so a check placed
+            // before an `await` and a mutation placed after it is not atomic: 25 «newpage» frames
+            // in one batch all saw `pages.length === 1` while they were waiting for the persist,
+            // and the session ended up with 26 boards over a cap of 20. The push happens before
+            // any await, and the row insert undoes it if it fails.
             const np = Math.max(...r.pages) + 1;
             r.pages.push(np);
-            await db.insert(whiteboards).values({ sessionId: r.sessionId, pageNo: np, snapshot: { elements: [], appState: {} } as never });
+            r.titles[np] = '';
+            try {
+              await persist(db, r);
+              await db.insert(whiteboards).values({
+                sessionId: r.sessionId, pageNo: np, title: '', snapshot: { elements: [], appState: {} } as never,
+              });
+            } catch {
+              r.pages = r.pages.filter((x) => x !== np);
+              delete r.titles[np];
+              return;
+            }
             r.current = np; r.elements = {}; r.dirty = false;
-            broadcast(r, { type: 'pages', pages: r.pages, current: np });
+            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles });
             return;
           }
-          if (msg.type === 'delpage' && typeof msg.page === 'number' && r.pages.length > 1 && r.pages.includes(msg.page)) {
+          /**
+           * Task 1б/1в: a page label. Plain text only — sanitizeBoardTitle flattens line breaks,
+           * collapses whitespace and cuts to 40 chars. Empty is a legal value ("no label", the
+           * client shows the localized «Доска N»).
+           */
+          if (msg.type === 'rename' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
+            const title = sanitizeBoardTitle(msg.title);
+            r.titles[msg.page] = title;
+            await db.update(whiteboards).set({ title })
+              .where(and(eq(whiteboards.sessionId, r.sessionId), eq(whiteboards.pageNo, msg.page)));
+            broadcast(r, { type: 'titles', titles: r.titles });
+            return;
+          }
+          /**
+           * Task 1в: duplicate the page's scene into a new board. The copies keep their element
+           * ids — two boards never share a screen (the client replaces the scene on every
+           * switch), so ids only ever have to be unique inside one page. No localized suffix is
+           * stored: the copy has the same label as its source, or none.
+           */
+          if (msg.type === 'duplicate' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
+            if (r.pages.length >= MAX_BOARD_PAGES) {
+              notice('boardLimit', { max: MAX_BOARD_PAGES, pages: r.pages.length });
+              return;
+            }
+            const np = Math.max(...r.pages) + 1;
+            const title = r.titles[msg.page] ?? '';
+            r.pages.push(np);            // reserve before the first await — see newpage
+            r.titles[np] = title;
+            try {
+              await persist(db, r);
+              const snap = await loadPage(db, r.sessionId, msg.page);
+              await db.insert(whiteboards).values({
+                sessionId: r.sessionId, pageNo: np, title,
+                snapshot: { elements: Object.values(snap.elements), appState: {} } as never,
+              });
+              r.current = np; r.elements = snap.elements; r.dirty = false;
+            } catch {
+              r.pages = r.pages.filter((x) => x !== np);
+              delete r.titles[np];
+              return;
+            }
+            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles });
+            return;
+          }
+          if (msg.type === 'delpage' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
+            // task 1в: the last board cannot be deleted — only cleared
+            if (r.pages.length <= 1) {
+              notice('boardLastPage', { page: msg.page });
+              return;
+            }
+            const next = r.pages.filter((x) => x !== msg.page);
+            if (!next.length) return;
+            r.pages = next;              // reserve before the first await — see newpage
+            delete r.titles[msg.page];
             await db.delete(whiteboards).where(and(eq(whiteboards.sessionId, r.sessionId), eq(whiteboards.pageNo, msg.page)));
-            r.pages = r.pages.filter((x) => x !== msg.page);
-            if (r.current === msg.page) { await switchPage(db, r, r.pages[0]!); }
-            broadcast(r, { type: 'pages', pages: r.pages, current: r.current });
+            if (r.current === msg.page) { await switchPage(db, r, next[0]!); }
+            broadcast(r, { type: 'pages', pages: r.pages, current: r.current, titles: r.titles });
             return;
           }
         })().catch(() => undefined);

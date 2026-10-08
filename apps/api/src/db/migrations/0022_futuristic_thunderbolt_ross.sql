@@ -1,0 +1,11 @@
+-- Board pages (task 1б): a page label the teacher can rename.
+-- Plain text, ≤ 40 chars — sanitized server-side in routes/board.ts (sanitizeBoardTitle), and it
+-- is never rendered as HTML by the client (React text children), so markup cannot reach the DOM.
+-- Empty string = "no label"; the client falls back to the localized «Доска N».
+--
+-- Security posture: this adds a COLUMN to an existing table. `whiteboards` is already RLS-enabled
+-- (0019 loops every base table) and 0021 removed the permissive policies; no new table, no GRANT,
+-- no role is created, so `anon`/`authenticated` still hold zero privileges on it. The backend
+-- connects as the table owner with rolbypassrls, which is what every measurement in
+-- docs/DECISIONS.md (2026-10-07) proved.
+ALTER TABLE "whiteboards" ADD COLUMN "title" text DEFAULT '' NOT NULL;

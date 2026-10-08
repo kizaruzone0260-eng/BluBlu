@@ -41,6 +41,17 @@ export async function listPages(db: DB, sessionId: string) {
   return nums.length ? nums : [1];
 }
 
+/**
+ * Pages with the teacher's labels (board-pages task 1б). A session whose board was never
+ * written has no rows at all, so page 1 is synthesised — it exists conceptually and gets its
+ * row on the first persist.
+ */
+export async function listPagesWithTitles(db: DB, sessionId: string) {
+  const rows = await db.select({ pageNo: whiteboards.pageNo, title: whiteboards.title }).from(whiteboards)
+    .where(eq(whiteboards.sessionId, sessionId)).orderBy(whiteboards.pageNo);
+  return rows.length ? rows : [{ pageNo: 1, title: '' }];
+}
+
 export function getRoom(sessionId: string, teacherIdentity: string): BoardRoom {
   let r = rooms.get(sessionId);
   if (!r) {

@@ -155,6 +155,13 @@
       "when": 1791310000000,
       "tag": "0021_rls_drop_app_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791428449463,
+      "tag": "0022_futuristic_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

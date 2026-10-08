@@ -232,10 +232,13 @@ export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;
 
-/** §3.7 whiteboard: merged Excalidraw snapshot per (session, page). */
+/** §3.7 whiteboard: merged Excalidraw snapshot per (session, page).
+ *  `title` is the teacher's label for the page (plain text, ≤40 chars, board-pages task 1б);
+ *  empty means "no label" and the client falls back to the localized «Доска N». */
 export const whiteboards = pgTable('whiteboards', {
   sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
   pageNo: integer('page_no').notNull(),
+  title: text('title').notNull().default(''),
   snapshot: jsonb('snapshot').$type<{ elements: unknown[]; appState: Record<string, unknown> }>().notNull().default({ elements: [], appState: {} }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.sessionId, t.pageNo] })]);
