@@ -11,6 +11,7 @@
     "@playwright/test": "^1.49.0",
     "drizzle-orm": "^0.45.3",
     "embedded-postgres": "^18.4.0-beta.17",
+    "pdf-lib": "1.17.1",
     "postgres": "^3.4.5"
   }
 }
