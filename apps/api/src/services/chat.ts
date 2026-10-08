@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { chatMessages, chatMutes, chatReads, chatWsTickets, classes, classMembers, users } from '../db/schema.js';
+import { deletedReply, liveReply, type ReplyRef } from '@klass/shared';
 
 /**
  * Item 8 — class chat. One shared thread per class; only members (students)
@@ -57,6 +58,32 @@ export interface ChatMessageRow {
   id: string; authorId: string; authorName: string; text: string; createdAt: string;
   /** item 7: set once by the author's PATCH; the client shows «изменено» */
   editedAt: string | null;
+  /** reply task 2: the message this one answers, or null. Built fresh on every read. */
+  replyTo: ReplyRef | null;
+}
+
+const authorName = sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`;
+
+/**
+ * The quotes of a page of messages, resolved in ONE extra query: the snippet always comes from
+ * the CURRENT text of the original (an edit therefore refreshes every quote of it), and an id
+ * that no longer resolves is a physically deleted original ⇒ `deleted: true`, empty snippet,
+ * no author name (nothing of the deleted message is kept anywhere — see migration 0023).
+ */
+async function repliesOf(db: DB, refIds: (string | null)[]): Promise<Map<string, ReplyRef>> {
+  const ids = [...new Set(refIds.filter((x): x is string => typeof x === 'string' && x.length > 0))];
+  const out = new Map<string, ReplyRef>();
+  if (!ids.length) return out;
+  const found = await db
+    .select({ id: chatMessages.id, text: chatMessages.text, authorName })
+    .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
+    .where(inArray(chatMessages.id, ids));
+  const byId = new Map(found.map((f) => [f.id, f]));
+  for (const id of ids) {
+    const f = byId.get(id);
+    out.set(id, f ? liveReply(id, f.authorName, f.text) : deletedReply(id));
+  }
+  return out;
 }
 
 /** newest-first page (client renders reversed), `before` cursor for older history */
@@ -67,17 +94,36 @@ export async function listMessages(db: DB, classId: string, before: Date | null,
   const rows = await db
     .select({
       id: chatMessages.id, authorId: chatMessages.authorId,
-      authorName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`, text: chatMessages.text, createdAt: chatMessages.createdAt, editedAt: chatMessages.editedAt,
+      authorName, text: chatMessages.text, createdAt: chatMessages.createdAt, editedAt: chatMessages.editedAt,
+      replyRefId: chatMessages.replyRefId,
     })
     .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
     .where(cond).orderBy(desc(chatMessages.createdAt)).limit(limit);
-  return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString(), editedAt: r.editedAt ? r.editedAt.toISOString() : null }));
+  const replies = await repliesOf(db, rows.map((r) => r.replyRefId));
+  return rows.map((r) => ({
+    id: r.id, authorId: r.authorId, authorName: r.authorName, text: r.text,
+    createdAt: r.createdAt.toISOString(), editedAt: r.editedAt ? r.editedAt.toISOString() : null,
+    replyTo: r.replyRefId ? replies.get(r.replyRefId) ?? deletedReply(r.replyRefId) : null,
+  }));
 }
 
-export async function postMessage(db: DB, classId: string, authorId: string, authorName: string, text: string): Promise<ChatMessageRow> {
-  const [row] = await db.insert(chatMessages).values({ classId, authorId, text })
-    .returning({ id: chatMessages.id, createdAt: chatMessages.createdAt });
-  return { id: row!.id, authorId, authorName, text, createdAt: row!.createdAt.toISOString(), editedAt: null };
+/**
+ * Post a message. `replyTarget` is the ORIGINAL, already validated by the route (same class,
+ * still present): the id goes into both columns — `reply_to_id` as the live FK, `reply_ref_id`
+ * as the tombstone-safe reference that survives the FK's ON DELETE SET NULL.
+ */
+export async function postMessage(
+  db: DB, classId: string, authorId: string, authorName: string, text: string,
+  replyTarget: { id: string; authorName: string; text: string } | null = null,
+): Promise<ChatMessageRow> {
+  const [row] = await db.insert(chatMessages).values({
+    classId, authorId, text,
+    ...(replyTarget ? { replyToId: replyTarget.id, replyRefId: replyTarget.id } : {}),
+  }).returning({ id: chatMessages.id, createdAt: chatMessages.createdAt });
+  return {
+    id: row!.id, authorId, authorName, text, createdAt: row!.createdAt.toISOString(), editedAt: null,
+    replyTo: replyTarget ? liveReply(replyTarget.id, replyTarget.authorName, replyTarget.text) : null,
+  };
 }
 
 /**
@@ -95,16 +141,34 @@ export async function editMessage(
   const [full] = await db
     .select({
       id: chatMessages.id, authorId: chatMessages.authorId,
-      authorName: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))`,
-      text: chatMessages.text, createdAt: chatMessages.createdAt, editedAt: chatMessages.editedAt,
+      authorName, text: chatMessages.text, createdAt: chatMessages.createdAt, editedAt: chatMessages.editedAt,
+      replyRefId: chatMessages.replyRefId,
     })
     .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
     .where(eq(chatMessages.id, messageId)).limit(1);
   if (!full) return null;
+  const replies = await repliesOf(db, [full.replyRefId]);
   return {
     id: full.id, authorId: full.authorId, authorName: full.authorName, text: full.text,
     createdAt: full.createdAt.toISOString(), editedAt: full.editedAt ? full.editedAt.toISOString() : null,
+    replyTo: full.replyRefId ? replies.get(full.replyRefId) ?? deletedReply(full.replyRefId) : null,
   };
+}
+
+/**
+ * Reply task 2: the original a new message wants to quote. Returns it ONLY when it exists in the
+ * SAME class — the route answers the same 404 for "another class" and "no such message", so a
+ * student cannot probe ids of classes they do not belong to.
+ */
+export async function findReplyTarget(
+  db: DB, classId: string, messageId: string,
+): Promise<{ id: string; authorName: string; text: string } | null> {
+  const [row] = await db
+    .select({ id: chatMessages.id, authorName, text: chatMessages.text })
+    .from(chatMessages).innerJoin(users, eq(users.id, chatMessages.authorId))
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.classId, classId)))
+    .limit(1);
+  return row ?? null;
 }
 
 export async function deleteMessage(db: DB, classId: string, messageId: string, authorId: string): Promise<boolean> {
@@ -193,8 +257,6 @@ export async function chatAccess(
     .where(and(eq(classMembers.classId, classId), eq(classMembers.userId, userId))).limit(1);
   return c ?? null;
 }
-
-void inArray; // reserved
 
 /** moderation list for the teacher's chat settings */
 export async function listMutes(db: DB, classId: string): Promise<{ userId: string; name: string; until: string | null }[]> {

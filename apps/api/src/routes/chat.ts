@@ -8,7 +8,8 @@ import { audit } from '../services/audit.js';
 import { wsOriginAllowed } from '../lib/wsOrigin.js';
 import {
   chatAccess, clearMute, consumeChatTicket, createChatTicket, deleteMessage, deleteMessageAny,
-  editMessage, isMuted, listMessages, markRead, postMessage, setMute, chatSummary, type ChatMessageRow,
+  editMessage, findReplyTarget, isMuted, listMessages, markRead, postMessage, setMute, chatSummary,
+  type ChatMessageRow,
 } from '../services/chat.js';
 
 /**
@@ -19,6 +20,11 @@ import {
 
 const CHAT_MAX_LEN = 2000;
 const bodySchema = z.object({ text: z.string().min(1, 'empty').max(CHAT_MAX_LEN) });
+/**
+ * Reply task 2: only POST accepts a target — PATCH must never move a message's quote, and the
+ * edit route keeps the plain body schema for that reason.
+ */
+const postSchema = bodySchema.extend({ replyToId: z.string().uuid().nullable().optional() });
 const muteSchema = z.object({ userId: z.string().uuid(), until: z.string().datetime().nullable().optional() });
 const modeSchema = z.object({ mode: z.enum(['on', 'off', 'announce']) });
 const uuidP = z.object({ id: z.string().uuid(), messageId: z.string().uuid().optional(), userId: z.string().uuid().optional() });
@@ -89,14 +95,21 @@ export async function chatRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (access.chatMode === 'off') return reply.code(403).send({ error: 'chatDisabled' });
     if (access.chatMode === 'announce' && !isTeacher) return reply.code(403).send({ error: 'chatAnnounceOnly' });
     if (!isTeacher && await isMuted(db, p.data.id, req.user!.id)) return reply.code(403).send({ error: 'chatMuted' });
-    const parsed = bodySchema.safeParse(req.body);
+    const parsed = postSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.code === 'too_small' ? 'chatEmpty' : 'invalidInput' });
     const text = parsed.data.text.trim();
     if (!text) return reply.code(400).send({ error: 'chatEmpty' });
     const rate = chatRateCheck(req.user!.id);
     if (!rate.allowed) return reply.code(429).header('retry-after', String(rate.retryAfterSec)).send({ error: 'chatRateLimited' });
+    // Reply task 2: the target must be a message OF THIS CLASS. Another class and a nonexistent
+    // id answer identically (404 notFound), so this endpoint cannot be used to probe ids.
+    let replyTarget: { id: string; authorName: string; text: string } | null = null;
+    if (parsed.data.replyToId) {
+      replyTarget = await findReplyTarget(db, p.data.id, parsed.data.replyToId);
+      if (!replyTarget) return reply.code(404).send({ error: 'notFound' });
+    }
     const w = await who(req.user!.id);
-    const msg = await postMessage(db, p.data.id, req.user!.id, w.name, text);
+    const msg = await postMessage(db, p.data.id, req.user!.id, w.name, text, replyTarget);
     broadcast(p.data.id, { type: 'message', message: msg });
     return reply.code(201).send(msg);
   });
