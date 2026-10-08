@@ -289,7 +289,10 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               return;
             }
             r.current = np; r.elements = {}; r.dirty = false;
-            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles });
+            // `elements` travels with the page list: the client that created the board has to
+            // drop the previous board's scene from its canvas too (see switchPage) — otherwise
+            // the teacher keeps seeing the old drawing on top of the new board.
+            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles, elements: [] });
             return;
           }
           /**
@@ -333,7 +336,10 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               delete r.titles[np];
               return;
             }
-            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles });
+            broadcast(r, {
+              type: 'pages', pages: r.pages, current: np, titles: r.titles,
+              elements: Object.values(r.elements),
+            });
             return;
           }
           if (msg.type === 'delpage' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
@@ -347,8 +353,16 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
             r.pages = next;              // reserve before the first await — see newpage
             delete r.titles[msg.page];
             await db.delete(whiteboards).where(and(eq(whiteboards.sessionId, r.sessionId), eq(whiteboards.pageNo, msg.page)));
-            if (r.current === msg.page) { await switchPage(db, r, next[0]!); }
-            broadcast(r, { type: 'pages', pages: r.pages, current: r.current, titles: r.titles });
+            if (r.current === msg.page) {
+              // switchPage already sends the new scene to everyone, including this socket
+              await switchPage(db, r, next[0]!);
+              broadcast(r, { type: 'pages', pages: r.pages, current: r.current, titles: r.titles });
+            } else {
+              broadcast(r, {
+                type: 'pages', pages: r.pages, current: r.current, titles: r.titles,
+                elements: Object.values(r.elements),
+              });
+            }
             return;
           }
         })().catch(() => undefined);
