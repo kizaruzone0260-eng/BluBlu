@@ -820,7 +820,7 @@ export default function Lesson() {
                   <div className="stage-main" data-testid="stage-main">
                     {stage.kind === 'board' ? (
                       <>
-                        <Board sessionId={session.id} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                        <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
                         <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
                           onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
                       </>
@@ -884,7 +884,7 @@ export default function Lesson() {
           )}
           {/* board is WS-based: while a session exists it is reachable even before
                RTC — as the stage when open, as a card under the grid otherwise */}
-          {session && !(connected && boardOpen) && <Board sessionId={session.id} height={layout === 'stage' ? '40vh' : '60vh'} />}
+          {session && !(connected && boardOpen) && <Board sessionId={session.id} classId={session.classId} height={layout === 'stage' ? '40vh' : '60vh'} />}
           {!isTeacher && session && (
             <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
           )}

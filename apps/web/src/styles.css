@@ -476,3 +476,38 @@ button.danger-text { color: var(--danger); }
    link-in-text-block). Underline content links; nav/brand links live outside
    .card/.muted so they keep their own styling. */
 .card a, .muted a, .error-screen a, .consent-row a { text-decoration: underline; }
+
+/* ── board pages (task 1б / 1в): our own strip of board tabs ───────────────────
+   The strip scrolls horizontally so a 20-board lesson stays usable at 390 px, and
+   the active tab is scrolled into view by the component. Every control keeps the
+   --tap minimum target. */
+.board-tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1 1 auto; min-width: 0; padding-bottom: 2px; scrollbar-width: thin; }
+.board-tab { position: relative; display: flex; align-items: stretch; flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.board-tab.active { border-color: var(--accent); background: var(--accent-soft); }
+.board-tab-name { border: 0; background: transparent; color: var(--text); margin: 0; min-height: var(--tap); max-width: 170px; padding: 0 8px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board-tab-menu { border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--text-muted); margin: 0; min-height: var(--tap); width: 38px; font-weight: 700; }
+/* The global `button:hover { background: var(--accent-hover) }` paints a solid accent block
+   under these two, and dark text on dark teal is unreadable — seen on the 390 px menu shot.
+   They are quiet controls inside a tab, so they get the soft accent instead. */
+.board-tab-name:hover:not(:disabled), .board-tab-menu:hover:not(:disabled),
+.board-tab-menu[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.board-tab input { margin: 0; min-height: var(--tap); width: 150px; border: 0; border-radius: var(--r-md); background: var(--surface-2); color: var(--text); }
+.board-tab-pop { position: fixed; top: 0; left: 0; z-index: 50; display: flex; flex-direction: column; gap: 2px; min-width: 200px; max-width: calc(100vw - 16px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-lg); padding: 4px; }
+.board-tab-pop button { text-align: left; margin: 0; min-height: var(--tap); background: transparent; border: 0; color: var(--text); border-radius: var(--r-md); padding: 8px 10px; }
+.board-tab-pop button:hover:not([disabled]) { background: var(--accent-soft); }
+.board-tab-pop button[disabled] { color: var(--text-muted); cursor: not-allowed; }
+.board-current { font-weight: 600; }
+.board-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+@media (max-width: 520px) { .board-tab-name { max-width: 110px; } }
+
+/* ── board → PDF dialog (task 2) ────────────────────────────────────────────── */
+.modal-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, .55); padding: 12px; }
+.modal { width: min(560px, 100%); max-height: 88vh; overflow: auto; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); padding: var(--sp-3); }
+.pdf-boards { list-style: none; display: flex; flex-direction: column; gap: 6px; margin: 10px 0; padding: 0; }
+.pdf-board label { width: 100%; margin: 0; }
+.pdf-thumb { width: 96px; height: 60px; object-fit: contain; background: #fff; border: 1px solid var(--border); border-radius: var(--r-md); flex: 0 0 auto; }
+.pdf-thumb-empty { display: inline-block; }
+.pdf-progress { position: relative; display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: var(--r-md); padding: 6px 8px; overflow: hidden; }
+.pdf-progress .pdf-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: .28; transition: width var(--tr); }
+.pdf-progress > span { position: relative; }
+@media (max-width: 520px) { .pdf-thumb { width: 64px; height: 44px; } }
