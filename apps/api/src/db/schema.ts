@@ -1,5 +1,6 @@
 import {
   pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb, boolean, bigint, integer,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -393,7 +394,23 @@ export const chatMessages = pgTable('chat_messages', {
   text: text('text').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   editedAt: timestamp('edited_at', { withTimezone: true }),
-}, (t) => [index('chat_messages_class_time_idx').on(t.classId, t.createdAt)]);
+  /**
+   * Reply task 2 (2026-10-08). The live link to the quoted message: ON DELETE SET NULL, so
+   * deleting an original never fails and never takes the answer with it.
+   */
+  replyToId: uuid('reply_to_id').references((): AnyPgColumn => chatMessages.id, { onDelete: 'set null' }),
+  /**
+   * The same id WITHOUT a constraint. Message deletion is PHYSICAL (it is part of `eraseAccount`),
+   * and after the SET NULL above nothing in the row would say that a quote was ever there — this
+   * column is what lets the API answer `replyTo.deleted = true` and the client show
+   * «Сообщение удалено». It stores an id only: no author name, no text of the deleted message.
+   */
+  replyRefId: uuid('reply_ref_id'),
+}, (t) => [
+  index('chat_messages_class_time_idx').on(t.classId, t.createdAt),
+  index('chat_messages_reply_to_idx').on(t.replyToId),
+  index('chat_messages_reply_ref_idx').on(t.replyRefId),
+]);
 
 export const chatMutes = pgTable('chat_mutes', {
   id: uuid('id').primaryKey().defaultRandom(),

@@ -162,6 +162,13 @@
       "when": 1791428449463,
       "tag": "0022_futuristic_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791474121055,
+      "tag": "0023_known_wolf_cub",
+      "breakpoints": true
     }
   ]
 }
