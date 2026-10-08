@@ -41,7 +41,15 @@ async function waitHealth() {
   throw new Error('stack did not come up');
 }
 await waitHealth();
-const creds = JSON.parse(fs.readFileSync(path.join(root, 'apps/e2e/.stack.json'), 'utf8'));
+// .stack.json is written only after the migrations + seeding, while /api/health/live already
+// answers — reading it once made this script die with ENOENT (measured again on 2026-10-09)
+const credsFile = path.join(root, 'apps/e2e/.stack.json');
+let creds = null;
+for (let i = 0; i < 120 && !creds; i++) {
+  try { creds = JSON.parse(fs.readFileSync(credsFile, 'utf8')); }
+  catch { await new Promise((r) => setTimeout(r, 1000)); }
+}
+if (!creds) { console.error('screenshots: .stack.json never appeared'); await bye(1); }
 
 // ── fixtures via the real API ───────────────────────────────────────────────
 const login = await (await fetch(`${BASE}/api/auth/login`, {
@@ -151,6 +159,18 @@ if (!(chatMsgs.messages?.length >= 3)) {
   const say = async (tok, text) => { await fetch(`${BASE}/api/classes/${cls.id}/chat/messages`, { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' }, body: JSON.stringify({ text }) }); };
   await say(login.accessToken, 'Всем привет! В четверг повторяем дроби — доска будет открыта за 5 минут до старта.');
   if (stuToken) { await say(stuToken, 'Хорошо, подготовлю листок №4 📄'); await say(stuToken, 'А домашку можно сдавать до пятницы?'); await say(login.accessToken, 'Да, до 23:59 пятницы.'); }
+}
+// reply fixture (task 2, 2026-10-08): one answer that QUOTES a question, for chat-quote/chat-reply
+const withReplies = await (await fetch(`${BASE}/api/classes/${cls.id}/chat/messages?limit=50`, { headers: { authorization: `Bearer ${login.accessToken}` } })).json().catch(() => ({ messages: [] }));
+if (!(withReplies.messages ?? []).some((m) => m.replyTo)) {
+  const asked = (withReplies.messages ?? []).find((m) => m.text.includes('домашку'))
+    ?? (withReplies.messages ?? [])[0];
+  if (asked) {
+    await fetch(`${BASE}/api/classes/${cls.id}/chat/messages`, {
+      method: 'POST', headers: { authorization: `Bearer ${login.accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Да, до 23:59 пятницы — успеем проверить.', replyToId: asked.id }),
+    });
+  }
 }
 
 // ── material fixture (task A): topic + file/link/youtube/drive attachments ──
@@ -274,7 +294,9 @@ for (const locale of locales) {
       }
       // notes: OPEN the showcase note so the editor + drawing (item 3) are visible
       await shot('notes', '/notes');
-      {
+      // guarded: with SHOT_ONLY=chatroom this block used to click a note that was never shot and
+      // crash the whole run (measured 2026-10-09: locator.click timeout on note-item)
+      if (!only || only.includes('notes')) {
         await page.getByTestId('note-item').first().click();
         await page.waitForTimeout(900);
         await page.screenshot({ path: path.join(outDir, `notes-${locale}-${width}-${theme}.png`) });
@@ -311,6 +333,32 @@ for (const locale of locales) {
             await page.keyboard.press('Escape');
             await page.getByTestId('chat-menu-backdrop').click({ position: { x: 2, y: 2 } }).catch(() => undefined);
           }
+        }
+      }
+      // task 2 (2026-10-08): the quote inside a bubble, and the «Ответить» bar above the composer
+      if (!only || only.includes('chatroom')) {
+        await page.goto(`${BASE}/chat/${cls.id}`);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+        await page.waitForTimeout(900);
+        const quote = page.getByTestId('chat-quote').first();
+        if (await quote.count()) {
+          await quote.scrollIntoViewIfNeeded().catch(() => undefined);
+          await page.waitForTimeout(300);
+          await page.screenshot({ path: path.join(outDir, `chat-quote-${locale}-${width}-${theme}.png`) });
+          count++;
+        }
+        const anyMsg = page.locator('[data-testid=chat-msg]').first();
+        if (await anyMsg.count()) {
+          await anyMsg.hover();
+          await anyMsg.getByTestId('chat-more').click().catch(() => undefined);
+          await page.waitForTimeout(250);
+          await page.getByTestId('chat-act-reply').click().catch(() => undefined);
+          await page.waitForTimeout(400);
+          await page.screenshot({ path: path.join(outDir, `chat-reply-${locale}-${width}-${theme}.png`) });
+          count++;
+          // Esc must cancel the pending answer — the same key the tests assert on
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(250);
         }
       }
       await shot('profile', '/profile');
