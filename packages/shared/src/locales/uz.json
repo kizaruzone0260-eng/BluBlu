@@ -504,7 +504,12 @@
     "copy": "Nusxalash",
     "copied": "Nusxalandi",
     "edit": "Tahrirlash",
-    "edited": "tahrirlangan"
+    "edited": "tahrirlangan",
+    "reply": "Javob berish",
+    "replyCancel": "Javobni bekor qilish",
+    "replyDeleted": "Xabar o‘chirilgan",
+    "replyTooOld": "Bu juda eski xabar — uni yuklab bo‘lmadi",
+    "sendReply": "Javobni yuborish"
   },
   "material": {
     "newTitle": "Material yaratish",

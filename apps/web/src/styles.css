@@ -496,6 +496,38 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .chat-unread { background: var(--accent); color: var(--accent-text); }
 button.danger-text { color: var(--danger); }
 
+/* ── replies in the class chat (task 2, 2026-10-08) ─────────────────────────────
+   The quote inside a bubble is a button (keyboard reachable) and shows the CURRENT
+   snippet the server built; the bar above the composer is the draft's target. */
+.chat-quote {
+  display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px; padding: 4px 8px;
+  border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--surface);
+  cursor: pointer; text-align: left;
+}
+.chat-quote:hover, .chat-quote:focus-visible { background: var(--accent-soft); }
+.chat-quote-author { font-size: .78rem; font-weight: 700; color: var(--accent); }
+.chat-quote-text {
+  font-size: .85rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.chat-reply-bar {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px;
+  border-left: 3px solid var(--accent); border-radius: var(--r-sm); background: var(--accent-soft);
+}
+.chat-reply-bar-icon { color: var(--accent); }
+.chat-reply-bar-author { font-weight: 700; }
+.chat-reply-bar-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch;
+}
+.chat-msg.chat-flash { animation: chatFlash 1.6s ease-out; }
+@keyframes chatFlash {
+  0%, 60% { background: var(--accent-soft); border-color: var(--accent); }
+  100% { background: var(--surface-2); border-color: var(--border); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg.chat-flash { animation: none; background: var(--accent-soft); border-color: var(--accent); }
+}
+
 /* visually hidden but available to screen readers */
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;

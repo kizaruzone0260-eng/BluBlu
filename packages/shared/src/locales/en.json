@@ -504,7 +504,12 @@
     "copy": "Copy",
     "copied": "Copied",
     "edit": "Edit",
-    "edited": "edited"
+    "edited": "edited",
+    "reply": "Reply",
+    "replyCancel": "Cancel the reply",
+    "replyDeleted": "Message deleted",
+    "replyTooOld": "That message is too old — it could not be loaded",
+    "sendReply": "Send reply"
   },
   "material": {
     "newTitle": "Create material",

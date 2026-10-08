@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { replySnippet, type ReplyRef } from '@klass/shared';
 import { api } from '../lib/api';
 import { useChatUnread } from '../lib/chat';
 import { fmtDateTime } from '../lib/format';
 import { useAuth } from '../App';
 
-interface Msg { id: string; authorId: string; authorName: string; text: string; createdAt: string; editedAt: string | null }
+interface Msg {
+  id: string; authorId: string; authorName: string; text: string; createdAt: string; editedAt: string | null;
+  /** reply task 2: the message this one quotes, or null */
+  replyTo: ReplyRef | null;
+}
 
 /** item 8 — «Чат»: one shared thread per class, members only. */
 
@@ -63,6 +68,17 @@ export default function ChatRoom() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const pagesRef = useRef<{ messages: Msg[]; hasMore: boolean }>({ messages: [], hasMore: false });
   const [older, setOlder] = useState<{ messages: Msg[]; hasMore: boolean }[]>([]);
+  // ── reply task 2 (2026-10-08) ──
+  /** the message the draft answers; local only, cleared on send / Esc / ✕ */
+  const [replyTo, setReplyTo] = useState<Msg | null>(null);
+  /** set while a quote's original is briefly highlighted */
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  /** true between «клик по цитате» and its highlight: the pin-to-bottom effect stands down */
+  const revealPending = useRef(false);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  /** one touch-swipe gesture per pointer down, so a swipe cannot fire twice */
+  const swipe = useRef<{ id: string; x: number; y: number; done: boolean } | null>(null);
 
   const summaries = useChatUnread();
   const meta = (summaries.data ?? []).find((s) => s.classId === id) ?? null;
@@ -75,7 +91,10 @@ export default function ChatRoom() {
   });
 
   // reset the older-pages stack when the class changes
-  useEffect(() => { pagesRef.current = { messages: [], hasMore: false }; setOlder([]); setBefore(null); }, [id]);
+  useEffect(() => {
+    pagesRef.current = { messages: [], hasMore: false }; setOlder([]); setBefore(null);
+    revealPending.current = false;
+  }, [id]);
 
   const loadEarlier = useMutation({
     mutationFn: async () => {
@@ -87,7 +106,10 @@ export default function ChatRoom() {
     },
     onSuccess: (page) => {
       setBefore(page.messages[0]?.createdAt ?? before);
-      setOlder((prev) => [...prev, page]);
+      // PREPEND: every page fetched here is older than everything already stacked, and the thread
+      // renders `older` in array order. With one page the old append looked right; clicking a
+      // quote (which can load several pages) would have shown the second-oldest page last.
+      setOlder((prev) => [page, ...prev]);
     },
   });
 
@@ -101,9 +123,12 @@ export default function ChatRoom() {
   };
 
   const send = useMutation({
-    mutationFn: (text: string) => api<Msg>(`/api/classes/${id}/chat/messages`, { method: 'POST', body: JSON.stringify({ text }) }),
+    mutationFn: (text: string) => api<Msg>(`/api/classes/${id}/chat/messages`, {
+      // reply task 2: the id only — the server validates it and builds the snippet itself
+      method: 'POST', body: JSON.stringify({ text, ...(replyTo ? { replyToId: replyTo.id } : {}) }),
+    }),
     onSuccess: () => {
-      setDraft(''); setError('');
+      setDraft(''); setReplyTo(null); setError('');
       void qc.invalidateQueries({ queryKey: ['chat-latest', id] });
       void qc.invalidateQueries({ queryKey: ['chat-summary'] });
     },
@@ -180,14 +205,21 @@ export default function ChatRoom() {
   const scrollBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, []);
-  useEffect(() => { scrollBottom(); }, [latest.data, older.length, scrollBottom]);
+  useEffect(() => {
+    // while a quote jump is in flight the thread must stay where it was taken, not snap back
+    if (revealPending.current) return;
+    scrollBottom();
+  }, [latest.data, older.length, scrollBottom]);
 
   const flat = [...older.flatMap((p) => p.messages), ...(latest.data?.messages ?? [])];
   const seen = new Set<string>();
   const messages = flat.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
-  const hasMore = (latest.data?.hasMore ?? false) || (older[older.length - 1]?.hasMore ?? false);
+  const hasMore = (latest.data?.hasMore ?? false) || (older[0]?.hasMore ?? false);
   const isTeacher = me?.role === 'teacher';
   const canPost = isTeacher ? meta?.chatMode !== 'off' : meta?.chatMode === 'on';
+  /** the reply UI's author label — «Вы» for one's own message, in the bar AND the placeholder */
+  const replyName = (m: { authorId: string; authorName: string }) =>
+    (m.authorId === me?.id ? t('chat.you') : m.authorName);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -214,7 +246,83 @@ export default function ChatRoom() {
   function pressCancel() {
     if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = undefined; }
   }
-  useEffect(() => () => { pressCancel(); window.clearTimeout(toastTimer.current); }, []);
+  useEffect(() => () => {
+    pressCancel();
+    window.clearTimeout(toastTimer.current);
+    window.clearTimeout(flashTimer.current);
+  }, []);
+
+  // ── reply task 2: starting an answer, and jumping to a quote ───────────────
+  function startReply(m: Msg) {
+    setMenuFor(null);
+    setReplyTo(m);
+    // the draft must keep working: focus goes to the input, its content is untouched
+    inputRef.current?.focus();
+  }
+  function flash(msgId: string) {
+    setFlashId(msgId);
+    window.clearTimeout(flashTimer.current);
+    // once the highlight is over the thread behaves normally again (a new message pins it down)
+    flashTimer.current = window.setTimeout(() => { setFlashId(null); revealPending.current = false; }, 1_600);
+  }
+  function scrollToMsg(msgId: string) {
+    // a jump to an original must not be undone by the "keep the thread pinned to the
+    // bottom" effect that fires when the newly loaded page lands
+    revealPending.current = true;
+    document.getElementById(`chat-msg-${msgId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    flash(msgId);
+  }
+  /**
+   * Click on a quote: show its original. If it is not loaded yet, older pages are fetched until
+   * it appears — capped at 8 pages, after which the user gets «Старое сообщение» instead of a
+   * spinner that never ends or a crash.
+   */
+  async function revealQuote(msgId: string) {
+    if (messages.some((m) => m.id === msgId)) { scrollToMsg(msgId); return; }
+    let cursor = messages[0]?.createdAt ?? new Date().toISOString();
+    for (let page = 0; page < 8; page++) {
+      let got: { messages: Msg[]; hasMore: boolean } | null = null;
+      try {
+        got = await api<{ messages: Msg[]; hasMore: boolean }>(
+          `/api/classes/${id}/chat/messages?limit=30&before=${encodeURIComponent(cursor)}`);
+      } catch { got = null; }
+      if (!got || got.messages.length === 0) break;
+      setOlder((prev) => [got!, ...prev]);
+      // «Сообщения раньше» continues from here; without this the button kept its old cursor and
+      // re-fetched pages this click had already loaded
+      setBefore(got.messages[0]!.createdAt);
+      if (got.messages.some((m) => m.id === msgId)) {
+        // one tick for React to paint the newly loaded page
+        window.setTimeout(() => scrollToMsg(msgId), 150);
+        return;
+      }
+      if (!got.hasMore) break;
+      cursor = got.messages[0]!.createdAt;
+    }
+    showToast(t('chat.replyTooOld'));
+  }
+  // a right swipe on a message bubble answers it (touch only, and only when the move is
+  // horizontal — a vertical drag must keep scrolling the thread)
+  function swipeStart(e: React.PointerEvent, msgId: string) {
+    if (e.pointerType === 'mouse') return;
+    swipe.current = { id: msgId, x: e.clientX, y: e.clientY, done: false };
+  }
+  function swipeMove(e: React.PointerEvent, m: Msg) {
+    const s = swipe.current;
+    if (!s || s.done || s.id !== m.id) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (dx > 56 && Math.abs(dy) < 40) {
+      s.done = true;
+      swipe.current = null;
+      if (canPost) {
+        navigator.vibrate?.(10);   // absent on iOS — no error, the swipe still works
+        startReply(m);
+      }
+    }
+  }
+  function swipeEnd() { swipe.current = null; }
+
   // keyboard: Escape closes the open action menu
   useEffect(() => {
     if (!menuFor) return;
@@ -241,10 +349,15 @@ export default function ChatRoom() {
         {messages.map((m) => {
           const mine = m.authorId === me?.id;
           const canAct = mine || isTeacher; // author edits own; teacher moderates (copy/delete)
+          // reply task 2: «Ответить» is for anybody who may post, on ANY message of the class —
+          // so the ⋯ button opens for a student on the teacher's bubble too (with only that item)
+          const canMenu = canAct || canPost;
           const editing = editingId === m.id;
           return (
-            <div key={m.id} className={mine ? 'chat-msg mine' : 'chat-msg'} data-testid="chat-msg"
-              onContextMenu={(e) => { if (canAct) { e.preventDefault(); setMenuFor(m.id); } }}>
+            <div key={m.id} id={`chat-msg-${m.id}`}
+              className={[mine ? 'chat-msg mine' : 'chat-msg', flashId === m.id ? 'chat-flash' : ''].filter(Boolean).join(' ')}
+              data-testid="chat-msg"
+              onContextMenu={(e) => { if (canMenu) { e.preventDefault(); setMenuFor(m.id); } }}>
               <div className="chat-msg-head">
                 <strong>{mine ? t('chat.you') : m.authorName}</strong>
                 <span className="muted">{fmtDateTime(m.createdAt, i18n.language)}</span>
@@ -268,7 +381,7 @@ export default function ChatRoom() {
                       mute.mutate({ userId: m.authorId, until });
                     }}>🔇</button>
                 )}
-                {canAct && !editing && (
+                {canMenu && !editing && (
                   <button className="ghost chat-more" style={{ marginTop: 0, padding: 2 }} data-testid="chat-more"
                     aria-label={t('chat.menu')} aria-haspopup="menu" aria-expanded={menuFor === m.id}
                     onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>⋯</button>
@@ -293,25 +406,57 @@ export default function ChatRoom() {
                   </div>
                 </div>
               ) : (
-                /* plain text — React escapes; chat never renders HTML (XSS-safe by construction) */
-                <div className="chat-msg-text" data-testid="chat-text"
-                  onPointerDown={() => canAct && pressStart(m.id)}
-                  onPointerUp={pressCancel} onPointerLeave={pressCancel} onPointerMove={pressCancel}
-                  onPointerCancel={pressCancel}>{m.text}</div>
+                <>
+                  {/* reply task 2: the quoted original above the answer; plain text again, and it
+                      is a real button for the keyboard */}
+                  {m.replyTo && (
+                    <div id={`chat-quote-${m.id}`} className="chat-quote" data-testid="chat-quote"
+                      role="button" tabIndex={0}
+                      aria-label={m.replyTo.deleted ? t('chat.replyDeleted') : `${m.replyTo.authorName}: ${m.replyTo.snippet}`}
+                      onClick={() => void revealQuote(m.replyTo!.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void revealQuote(m.replyTo!.id); }
+                      }}>
+                      <span className="chat-quote-author">
+                        {m.replyTo.deleted ? t('chat.replyDeleted') : m.replyTo.authorName}
+                      </span>
+                      {!m.replyTo.deleted && <span className="chat-quote-text">{m.replyTo.snippet}</span>}
+                    </div>
+                  )}
+                  {/* plain text — React escapes it; the chat never renders HTML (XSS-safe by
+                      construction). Kept as a JSX child comment on purpose: a bare C-style comment
+                      in this position is text and would print inside every bubble. */}
+                  <div className="chat-msg-text" data-testid="chat-text"
+                    onPointerDown={(e) => { if (canMenu) pressStart(m.id); swipeStart(e, m.id); }}
+                    onPointerMove={(e) => { pressCancel(); swipeMove(e, m); }}
+                    onPointerUp={() => { pressCancel(); swipeEnd(); }}
+                    onPointerLeave={() => { pressCancel(); swipeEnd(); }}
+                    onPointerCancel={() => { pressCancel(); swipeEnd(); }}>{m.text}</div>
+                </>
               )}
               {menuFor === m.id && !editing && (
                 <div className="chat-menu card" role="menu" aria-label={t('chat.menu')} data-testid="chat-menu">
-                  <button type="button" role="menuitem" data-testid="chat-act-copy" style={{ marginTop: 0 }}
-                    onClick={() => void copyText(m.text)}>{t('chat.copy')}</button>
+                  {canPost && (
+                    <button type="button" role="menuitem" data-testid="chat-act-reply" style={{ marginTop: 0 }}
+                      onClick={() => startReply(m)}>{t('chat.reply')}</button>
+                  )}
+                  {/* copy/delete keep the item-7 audience exactly (author or teacher) — the menu
+                      now also opens for a member who may only answer, so they are gated here */}
+                  {canAct && (
+                    <button type="button" role="menuitem" data-testid="chat-act-copy" style={{ marginTop: 0 }}
+                      onClick={() => void copyText(m.text)}>{t('chat.copy')}</button>
+                  )}
                   {mine && (
                     <button type="button" role="menuitem" data-testid="chat-act-edit" style={{ marginTop: 0 }}
                       onClick={() => { setMenuFor(null); setEditingId(m.id); setEditText(m.text); }}>{t('chat.edit')}</button>
                   )}
-                  <button type="button" role="menuitem" className="danger-text" data-testid="chat-act-del" style={{ marginTop: 0 }}
-                    onClick={() => {
-                      setMenuFor(null);
-                      if (window.confirm(t('chat.deleteConfirm'))) del.mutate(m.id);
-                    }}>{t('common.delete')}</button>
+                  {canAct && (
+                    <button type="button" role="menuitem" className="danger-text" data-testid="chat-act-del" style={{ marginTop: 0 }}
+                      onClick={() => {
+                        setMenuFor(null);
+                        if (window.confirm(t('chat.deleteConfirm'))) del.mutate(m.id);
+                      }}>{t('common.delete')}</button>
+                  )}
                 </div>
               )}
             </div>
@@ -328,21 +473,44 @@ export default function ChatRoom() {
           {meta.chatMode === 'off' ? t('chat.disabled') : t('chat.announceNote')}
         </p>
       )}
+      {/* reply task 2: the bar above the composer — author, snippet, ✕, and Esc cancels */}
+      {replyTo && (
+        <div className="chat-reply-bar" data-testid="chat-reply-bar">
+          <span className="chat-reply-bar-icon">↩</span>
+          <span className="chat-reply-bar-author" data-testid="chat-reply-author">
+            {replyName(replyTo)}
+          </span>
+          <span className="muted chat-reply-bar-text" data-testid="chat-reply-snippet">{replySnippet(replyTo.text)}</span>
+          <div className="spacer" />
+          <button type="button" className="ghost" data-testid="chat-reply-cancel" style={{ marginTop: 0, padding: 2 }}
+            aria-label={t('chat.replyCancel')} onClick={() => setReplyTo(null)}>✕</button>
+        </div>
+      )}
       <form
         className="row"
         style={{ alignItems: 'flex-end', gap: 8 }}
         onSubmit={(e) => { e.preventDefault(); if (draft.trim()) send.mutate(draft.trim()); }}
       >
-        <label className="sr-only" htmlFor="chat-input">{t('chat.placeholder')}</label>
+        {/* the name belongs to the accessible label, not the visible hint: «Ответить Вы» /
+            «Reply You» read badly in every language, and the bar above already shows whose
+            message is being answered */}
+        <label className="sr-only" htmlFor="chat-input">
+          {replyTo ? `${t('chat.reply')}: ${replyName(replyTo)}` : t('chat.placeholder')}
+        </label>
         <textarea
-          id="chat-input" data-testid="chat-input" rows={2} value={draft} maxLength={2000}
-          placeholder={t('chat.placeholder')} disabled={!canPost || send.isPending}
+          id="chat-input" ref={inputRef} data-testid="chat-input" rows={2} value={draft} maxLength={2000}
+          placeholder={replyTo ? t('chat.reply') : t('chat.placeholder')}
+          disabled={!canPost || send.isPending}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (draft.trim()) send.mutate(draft.trim()); } }}
+          onKeyDown={(e) => {
+            // Esc drops the answer first and leaves the draft (and the focus) alone
+            if (e.key === 'Escape' && replyTo) { e.preventDefault(); setReplyTo(null); return; }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (draft.trim()) send.mutate(draft.trim()); }
+          }}
           style={{ flex: 1, resize: 'vertical' }}
         />
         <button type="submit" data-testid="chat-send" disabled={!draft.trim() || !canPost || send.isPending} style={{ marginTop: 0 }}>
-          {t('chat.send')}
+          {replyTo ? t('chat.sendReply') : t('chat.send')}
         </button>
       </form>
     </div>
