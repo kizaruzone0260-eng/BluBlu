@@ -29,9 +29,9 @@ async function seed(url, teacherHash) {
   const admin = postgres(url, { max: 2 });
   try {
     await admin.unsafe(`
-      insert into users (id, role, name, last_name, email, password_hash, locale, tz, created_at, profile_completed_at)
+      insert into users (id, role, name, last_name, email, password_hash, locale, locale_explicit, tz, created_at, profile_completed_at)
       values ('00000000-0000-4000-8000-00000000e2e1', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io',
-              '${teacherHash}', 'ru', 'Asia/Tashkent', now(), now())
+              '${teacherHash}', 'ru', true, 'Asia/Tashkent', now(), now())
       on conflict (email) do update set last_name = 'E2E', profile_completed_at = now()`);
     await admin.unsafe(`
       insert into policy_acceptances (user_id, version, accepted_at)

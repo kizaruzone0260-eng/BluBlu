@@ -34,11 +34,14 @@ async function apiLogin(api: any): Promise<string> {
   throw new Error('teacher api login failed after retries (rate limit?)');
 }
 
-async function forceRuProfile() {
+async function forceRuProfile(email?: string, password?: string) {
   // separate context: page.request would share (and race) the browser cookie jar
   const api = await pw.newContext({ baseURL: BASE });
-  const token = await apiLogin(api);
+  const token = email ? (await (await api.post('/api/auth/login', { data: { email, password } })).json()).accessToken as string
+    : await apiLogin(api);
   const me = await (await api.get('/api/me', { headers: { authorization: `Bearer ${token}` } })).json();
+  // this file asserts Russian UI text, and since task 1 a fresh account is English by default —
+  // so the language is SET here (a profile PATCH is an explicit choice), not assumed
   await api.patch('/api/me/profile', { headers: { authorization: `Bearer ${token}` }, data: { name: me.name, locale: 'ru', tz: me.tz } });
   await api.dispose();
 }
@@ -135,7 +138,10 @@ test.describe.serial('klass core flows', () => {
     // create fresh code for this student
     const inv = await api.post(`/api/classes/${cls.id}/invites`, { headers: { authorization: `Bearer ${token}` }, data: {} });
     const code = (await inv.json()).code as string;
-    await registerStudent(page, 'Листок', 'Тест', `e2esheet${Date.now()}@x.io`, 'Secret1234', code);
+    const sheetStudent = `e2esheet${Date.now()}@x.io`;
+    await registerStudent(page, 'Листок', 'Тест', sheetStudent, 'Secret1234', code);
+    // the assertions below read Russian UI strings («Сохранено»), so this account chooses Russian
+    await forceRuProfile(sheetStudent, 'Secret1234');
 
     // open lesson page by classId → session active, board visible to student (view-mode), drawer exists
     // task 4: the board must not reach out to excalidraw.com / libraries.excalidraw.com

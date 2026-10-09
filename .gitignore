@@ -17,6 +17,7 @@ deploy/backups/
 apps/e2e/e2edata/
 apps/e2e/files/
 apps/e2e/.stack.json
+apps/e2e/.e2e-stack.lock
 apps/e2e/test-results/
 apps/api/test/.files/
 playwright-report/

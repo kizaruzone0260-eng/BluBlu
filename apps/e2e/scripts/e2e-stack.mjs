@@ -12,7 +12,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { initUtf8Cluster } from '../../api/scripts/pg-init-utf8.mjs';
 import postgres from 'postgres';
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -27,6 +27,30 @@ const PGPORT = 5455;
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 // Stale hand-off file: readers must wait for THIS run, not reuse the previous one.
 try { rmSync(path.join(ROOT, 'apps/e2e/.stack.json'), { force: true }); } catch { /* none */ }
+
+/**
+ * One stack per dataDir (traced 2026-10-09). Both `taskkill /IM postgres.exe` below and
+ * embedded-postgres' `pg.stop()` act on whatever postmaster owns `e2edata`, so two overlapping
+ * runs destroy each other's database: the API then answers ECONNRESET and Playwright workers
+ * abort with `code=3221226091` — nine different spec files lost one test each, files this task
+ * never touched. Refuse to start while a live stack holds the lock.
+ */
+const lockFile = path.join(ROOT, 'apps/e2e/.e2e-stack.lock');
+function liveHolder() {
+  let pid;
+  try {
+    pid = Number(readFileSync(lockFile, 'utf8'));
+  } catch { return null; } // no lock file — nobody is running
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return null;
+  try { process.kill(pid, 0); return pid; } catch (e) { return e?.code === 'EPERM' ? pid : null; }
+}
+const holder = liveHolder();
+if (holder) {
+  console.error(`[e2e-stack] another stack (pid ${holder}) owns ${dataDir} — wait for it, or delete ${lockFile} if it is a leftover`);
+  process.exit(1);
+}
+writeFileSync(lockFile, String(process.pid));
+process.on('exit', () => { try { rmSync(lockFile, { force: true }); } catch { /* none */ } });
 
 // Windows: an orphaned postmaster from a failed run keeps the shm block; clear it.
 if (process.platform === 'win32') {
@@ -101,8 +125,8 @@ if (!up) { console.error('api did not become healthy'); process.exit(1); }
 const [t0] = await admin`select id from users limit 1`;
 if (!t0) {
   await admin.unsafe(`
-    insert into users (id, role, name, last_name, email, password_hash, locale, tz, created_at, profile_completed_at)
-    values ('${teacherId}', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io', '${teacherHash}', 'ru', 'Asia/Tashkent', now(), now())
+    insert into users (id, role, name, last_name, email, password_hash, locale, locale_explicit, tz, created_at, profile_completed_at)
+    values ('${teacherId}', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io', '${teacherHash}', 'ru', true, 'Asia/Tashkent', now(), now())
     on conflict do nothing`);
 }
 // name-screen spec (task 2): accounts WITHOUT a completed name pair — they must
