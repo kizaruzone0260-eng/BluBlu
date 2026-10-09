@@ -41,6 +41,12 @@ export const registerByCodeSchema = z.object({
   email,
   password: passwordPolicy,
   code: z.string().trim().toUpperCase(),
+  /**
+   * Language (task 1): the register screen has a language switch too, and a choice made BEFORE
+   * the account exists used to be thrown away — the INSERT took the column default instead.
+   * Optional, so an older client still registers.
+   */
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
 /** Item 9 — step 1 validation only; never consumes the code. */

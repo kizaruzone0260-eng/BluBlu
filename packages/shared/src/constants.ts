@@ -20,6 +20,15 @@ export const DEFAULT_TIMEZONE = 'Asia/Tashkent';
 export const SUPPORTED_LOCALES = ['ru', 'uz', 'en'] as const;
 
 /**
+ * Language (task 1, 2026-10-09). The product default is English: a visitor who never picked a
+ * language gets English whatever `navigator.language` says, and so does an account whose owner
+ * never picked one (`users.locale` defaults here, `users.locale_explicit` says whether the
+ * choice was ever made). Russian and Uzbek stay fully available — they are just no longer the
+ * silent fallback for someone who never asked for them.
+ */
+export const DEFAULT_LOCALE: Locale = 'en';
+
+/**
  * Legal/consent (Hardening Phase 2). One version string covers the privacy
  * policy + terms bundle shown at registration and on first login. Bump it (and
  * the texts) whenever the legal documents change; every user is then asked to
