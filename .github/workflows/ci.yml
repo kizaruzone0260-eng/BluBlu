@@ -42,17 +42,28 @@ jobs:
     timeout-minutes: 25
     needs: build-test
     services:
-      # The media server the RTC specs need, so they stop self-skipping (see .github/livekit-ci.yaml).
-      # If this container ever fails to come up the specs skip again rather than turn the run red —
-      # the skip count is reported in the task report, not hidden.
+      # The media server the RTC specs need, so they stop self-skipping. Eight of the 81 tests
+      # skipped on every CI run before this (zz-camera, zz2-moderation, zz4-layout, four of
+      # zz13-screen-stage, zz16's compact button). The config goes in through LIVEKIT_CONFIG —
+      # the documented alternative to `--config` — because a job service has no `args` key
+      # (measured: run 37968027051 failed as a workflow-file problem on exactly that).
+      # If the container ever fails to start, the specs skip again with the URL in the message
+      # instead of turning the run red; the skip count is what the report tracks.
       livekit:
         image: livekit/livekit-server:v1.13.9
-        ports: ['7880:7880', '7881:7881', '50000-50099:50000-50099/udp']
-        volumes:
-          - ${{ github.workspace }}/.github/livekit-ci.yaml:/etc/livekit.yaml:ro
-        args: --config /etc/livekit.yaml
+        ports: ['7880:7880', '7881:7881', '50000-50019:50000-50019/udp']
+        env:
+          # test-only key pair, matching apps/e2e/scripts/e2e-stack.mjs — not a secret
+          LIVEKIT_CONFIG: |
+            port: 7880
+            rtc:
+              tcp_port: 7881
+              port_range_start: 50000
+              port_range_end: 50019
+              use_external_ip: false
+            keys:
+              e2ekey: e2esecrete2esecrete2esecrete2esecret
     env:
-      # test-only values, matching apps/e2e/scripts/e2e-stack.mjs and livekit-ci.yaml
       LIVEKIT_URL: ws://127.0.0.1:7880
       LIVEKIT_WS_URL: ws://127.0.0.1:7880
       LIVEKIT_API_KEY: e2ekey
