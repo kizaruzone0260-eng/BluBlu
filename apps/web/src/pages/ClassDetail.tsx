@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
@@ -19,8 +19,21 @@ export default function ClassDetail() {
   const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const qc = useQueryClient();
+  const nav = useNavigate();
   const [newCode, setNewCode] = useState<string | null>(null);
   const [ttlDays, setTtlDays] = useState(7);
+  // feedback is a toast, not `window.alert` (task 3, 2026-10-10): a native modal blocks the
+  // renderer until somebody dismisses it, and a page that still has one open when the client
+  // wants to leave it cannot finish closing — measured as `page.close` taking 235 s in the e2e
+  // run. The rest of the product already uses this pattern (Chat.tsx, Lesson.tsx).
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<number | undefined>(undefined);
+  const say = (text: string) => {
+    window.clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = window.setTimeout(() => setToast(''), 2_000);
+  };
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   const classesQ = useQuery({ queryKey: ['classes'], queryFn: () => api<ClassView[]>('/api/classes') });
   const cls = (classesQ.data ?? []).find((c) => c.id === id) ?? null;
@@ -32,11 +45,14 @@ export default function ClassDetail() {
   const saveClass = useMutation({
     mutationFn: (p: { name: string; description: string; color: string }) =>
       api(`/api/classes/${id}`, { method: 'PATCH', body: JSON.stringify(p) }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); window.alert(t('notes.saved')); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); say(t('notes.saved')); },
   });
   const archiveClass = useMutation({
     mutationFn: () => api(`/api/classes/${id}/archive`, { method: 'POST' }),
-    onSuccess: () => { window.location.href = '/classes'; },
+    // the router moves, and the list cache is refreshed for it: `window.location.href` was a full
+    // document reload started the same instant the client began to leave the page (see the toast
+    // comment above for what that did to `page.close` in the e2e run)
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); nav('/classes'); },
   });
   // bot task §3 — public schedule switch
   const botSchedule = useMutation({
@@ -217,6 +233,7 @@ export default function ClassDetail() {
           )}
         </>
       )}
+      {toast && <div className="toast" role="status" data-testid="class-toast">{toast}</div>}
     </div>
   );
 }

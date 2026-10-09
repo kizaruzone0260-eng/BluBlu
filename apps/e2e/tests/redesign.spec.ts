@@ -175,12 +175,14 @@ test.describe.serial('redesign (A/B/D/E)', () => {
   });
 
   test('class settings (C.2): rename + archive', async ({ page }) => {
-    // Measured 2026-10-09, not guessed: 30 isolated repeats and 9 more running next to its four
-    // neighbouring specs — all under a 100 % CPU load — passed this test, 39/39. The one failure
-    // ever seen (`Tearing down "context" exceeded the test timeout of 150000ms`, in a 14.7-minute
-    // full run) happened AFTER every assertion had passed: closing the browser context did not
-    // finish inside the remaining budget on a machine with ~1 GB free. The check itself is
-    // untouched; only the wall-clock room for teardown grows, the same way zz-camera already does.
+    // History of this test's instability, measured rather than guessed:
+    //  * 2026-10-09 — one failure in a 14.7-minute full run: `Tearing down "context" exceeded the
+    //    test timeout of 150000ms`, after every assertion had passed. 30 isolated repeats + 9 runs
+    //    next to its four neighbouring specs, all under a 100 % CPU load: 39/39 green.
+    //  * 2026-10-10 — the budget was NOT the answer: in a 16.7-minute full run the same teardown
+    //    outlived 240000ms too. So the fixture teardown itself is the thing that stalls, and a
+    //    bigger number only delays the diagnosis. The page is now closed INSIDE the test, where a
+    //    hang has a name and a duration, instead of anonymously in a fixture. No assertion changed.
     test.setTimeout(240_000);
     page.on('dialog', (d) => void d.accept());
     await loginAs(page, stack.teacherEmail, stack.teacherPassword);
@@ -193,7 +195,19 @@ test.describe.serial('redesign (A/B/D/E)', () => {
     await page.getByTestId('cls-name').fill(name + ' — правка');
     await page.getByTestId('cls-save').click();
     await expect(page.getByTestId('class-title')).toContainText('правка', { timeout: 15_000 });
+    // the save answers with a toast now, not with `window.alert` — the native modal is what made
+    // this page unclosable (235 s) when the client moved on while it was still up
+    await expect(page.getByTestId('class-toast')).toContainText(/Сохранено|Saved|Saqlandi/, { timeout: 10_000 });
     await page.getByTestId('cls-archive').click();
     await expect(page.getByTestId('class-card').filter({ hasText: 'правка' })).toHaveCount(0, { timeout: 15_000 });
+    // and the redirect is the router's, so the URL is the SPA's own /classes — not a fresh
+    // document load started the same moment the client left the page
+    await expect(page).toHaveURL(/\/classes$/, { timeout: 15_000 });
+
+    // cleanup done by the test, timed: if closing the SPA page is ever slow again, the log says so
+    // with a number instead of leaving it to the fixture ("every assertion passed, then silence")
+    const t0 = Date.now();
+    await page.close();
+    console.log(`MEASURE redesign:177 page.close took ${Date.now() - t0}ms`);
   });
 });
