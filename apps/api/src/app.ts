@@ -26,6 +26,7 @@ import { boardRoutes } from './routes/board.js';
 import { studentNoteRoutes } from './routes/studentNotes.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { chatRoutes } from './routes/chat.js';
+import { lessonCommentRoutes } from './routes/lessonComments.js';
 
 /** Strip query strings from request logs — tickets/tokens must never hit logs. */
 export function sanitizeRequestUrl(url: string | undefined): string {
@@ -252,6 +253,7 @@ export async function buildApp(db: DB): Promise<FastifyInstance> {
   await app.register(studentNoteRoutes, { db });
   await app.register(telegramRoutes, { db });
   await app.register(chatRoutes, { db }); // item 8
+  await app.register(lessonCommentRoutes, { db }); // task 2 (2026-10-09): comments during a lesson
 
   // SPA static serving in production (web bundle baked into the image).
   // The build stamp (task 1) is injected into the HTML shell here — Render

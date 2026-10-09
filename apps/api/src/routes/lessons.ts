@@ -22,6 +22,7 @@ const withRoom = (s: LessonSession) => ({
   muteAll: s.muteAll, // task 3: student banners survive reconnects
   layout: s.layoutState.layout,
   boardOpen: s.layoutState.boardOpen ?? false, // task B: the board as the main window
+  commentsMode: s.commentsMode, // task 2: the comments panel learns the mode with the session
 });
 
 /** RoomService failures must not 500 the API (media server may be starting). */
