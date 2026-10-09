@@ -190,6 +190,26 @@ if (!feedAll.some((x) => x.title === 'Дроби: конспект')) {
   await fetch(`${BASE}/api/classes/${cls.id}/materials`, { method: 'POST', headers: { authorization: `Bearer ${login.accessToken}` }, body: fd });
 }
 
+// ── lesson comments fixture (task 2): a live session with a pinned and an answered note ──
+let lessonSession = (await api('GET', `/api/lessons/active?classId=${cls.id}`))?.session;
+if (!lessonSession) lessonSession = await api('POST', '/api/lessons/start', { classId: cls.id });
+if (lessonSession) {
+  const say = async (text) => (await api('POST', `/api/lessons/${lessonSession.id}/comments`, { text }))?.id;
+  const FIXTURES = ['А дробь 2/4 надо сокращать?', 'У меня не видно, что на доске'];
+  const seen = (await api('GET', `/api/lessons/${lessonSession.id}/comments`))?.comments ?? [];
+  // the e2e database survives between runs, so the fixture set is rebuilt from scratch each time:
+  // without this the panel fills up with duplicates of the same two lines
+  for (const c of seen.filter((x) => FIXTURES.includes(x.text))) {
+    await api('DELETE', `/api/lessons/${lessonSession.id}/comments/${c.id}`);
+  }
+  const q1 = await say(FIXTURES[0]);
+  await say(FIXTURES[1]);
+  if (q1) {
+    await api('POST', `/api/lessons/${lessonSession.id}/comments/${q1}/pin`, { on: true });
+    await api('POST', `/api/lessons/${lessonSession.id}/comments/${q1}/answered`, { on: true });
+  }
+}
+
 // ── capture ───────────────────────────────────────────────────────────────────
 const browser = await chromium.launch({ channel: 'msedge' });
 const widths = process.env.SHOT_WIDTHS ? process.env.SHOT_WIDTHS.split(',').map(Number) : [390, 768, 1280];
@@ -276,6 +296,19 @@ for (const locale of locales) {
       };
       await shot('home');
       await shot('class', `/classes/${cls.id}`);
+      // task 2: the comments panel open, with a pinned and an answered comment
+      if (!only || only.includes('lesson-comments')) {
+        await page.goto(`${BASE}/lesson?classId=${cls.id}`);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+        const openBtn = page.getByTestId('comments-open');
+        if (await openBtn.count()) {
+          await openBtn.click();
+          await page.waitForTimeout(1_000);
+          await page.screenshot({ path: path.join(outDir, `lesson-comments-${locale}-${width}-${theme}.png`) });
+          count++;
+          fs.writeFileSync(path.join(outDir, 'LAST.txt'), `lesson-comments-${locale}-${width}-${theme}.png`);
+        }
+      }
       // task A: the «Создать материал» page (form + right panel)
       await shot('material', `/classes/${cls.id}/material/new`);
       await shot('calendar', '/calendar');
