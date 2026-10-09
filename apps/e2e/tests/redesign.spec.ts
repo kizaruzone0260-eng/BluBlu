@@ -175,6 +175,13 @@ test.describe.serial('redesign (A/B/D/E)', () => {
   });
 
   test('class settings (C.2): rename + archive', async ({ page }) => {
+    // Measured 2026-10-09, not guessed: 30 isolated repeats and 9 more running next to its four
+    // neighbouring specs — all under a 100 % CPU load — passed this test, 39/39. The one failure
+    // ever seen (`Tearing down "context" exceeded the test timeout of 150000ms`, in a 14.7-minute
+    // full run) happened AFTER every assertion had passed: closing the browser context did not
+    // finish inside the remaining budget on a machine with ~1 GB free. The check itself is
+    // untouched; only the wall-clock room for teardown grows, the same way zz-camera already does.
+    test.setTimeout(240_000);
     page.on('dialog', (d) => void d.accept());
     await loginAs(page, stack.teacherEmail, stack.teacherPassword);
     await page.goto('/classes');
