@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import postgres from 'postgres';
 
 function readStack() {
   for (let i = 0; i < 80; i++) {
@@ -15,6 +16,27 @@ function readStack() {
 const stack = readStack();
 const BASE = `http://127.0.0.1:${stack.port}`;
 const PW = 'Passw0rd123'; // same e2e hash seeded for every gate account
+const DB = 'postgres://klass:klass@127.0.0.1:5455/klass';
+
+/**
+ * The precondition this spec is built on, checked against the database instead of assumed from
+ * the seed: these accounts must arrive at the name screen. When the first login of a run lands on
+ * Home instead (seen twice on this box in full runs, never in isolation), the message says which
+ * account carried a completed profile into the test — that is a seeding problem, and it must not
+ * be readable as "the name screen is broken".
+ */
+async function expectNameIncomplete(email: string) {
+  const sql = postgres(DB, { max: 1 });
+  let row: { name: string; last_name: string; profile_completed_at: Date | null } | undefined;
+  try {
+    [row] = await sql`select name, last_name, profile_completed_at from users where email = ${email}`;
+  } finally { await sql.end({ timeout: 5 }); }
+  console.log(`MEASURE name-screen precondition ${email} ${JSON.stringify({
+    name: row?.name, lastName: row?.last_name, completedAt: row?.profile_completed_at ? 'set' : null,
+  })}`);
+  expect(row, `no fixture account ${email}`).toBeTruthy();
+  expect(row!.profile_completed_at, `${email}: profile_completed_at must be NULL at boot (scripts/e2e-stack.mjs resets it)`).toBeNull();
+}
 
 async function loginNew(browser: import('@playwright/test').Browser, email: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -37,6 +59,7 @@ async function loginNew(browser: import('@playwright/test').Browser, email: stri
 
 test.describe.serial('name screen after login (task 2)', () => {
   test('teacher first login: name screen blocks the app, save lands on Home', async ({ browser }) => {
+    await expectNameIncomplete('gate@e2e.io');
     const { ctx, page, landed } = await loginNew(browser, 'gate@e2e.io');
     expect(landed).toBe('gate');
     await expect(page.getByTestId('home-title')).toBeHidden();
@@ -56,6 +79,7 @@ test.describe.serial('name screen after login (task 2)', () => {
   });
 
   test('old student without a family name sees the screen once', async ({ browser }) => {
+    await expectNameIncomplete('old@e2e.io');
     const a = await loginNew(browser, 'old@e2e.io');
     expect(a.landed).toBe('gate');
     await a.page.getByTestId('gate-first').fill('Старый');
@@ -69,6 +93,7 @@ test.describe.serial('name screen after login (task 2)', () => {
   });
 
   test('logout from the name screen works and re-login shows it again — no redirect loop', async ({ browser }) => {
+    await expectNameIncomplete('loop@e2e.io');
     const { ctx, page, landed } = await loginNew(browser, 'loop@e2e.io');
     expect(landed).toBe('gate');
     await page.getByTestId('gate-logout').click();
