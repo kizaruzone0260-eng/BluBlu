@@ -1,4 +1,9 @@
-CREATE TYPE "public"."app_locale" AS ENUM('ru', 'uz');--> statement-breakpoint
+-- 'en' is listed here (and 0007 made idempotent) because drizzle applies the whole journal in ONE
+-- transaction on a fresh database, and PostgreSQL refuses to USE an enum value added in that same
+-- transaction (55P04). 0024 sets `users.locale` DEFAULT 'en', so a fresh install — CI, or a new
+-- production database — failed until the value stopped being "new". Databases created before this
+-- note already ran 0007 and are unaffected: an applied migration is never replayed.
+CREATE TYPE "public"."app_locale" AS ENUM('ru', 'uz', 'en');--> statement-breakpoint
 CREATE TYPE "public"."user_role" AS ENUM('teacher', 'student');--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "audit_log" (
 	"id" bigserial PRIMARY KEY NOT NULL,
