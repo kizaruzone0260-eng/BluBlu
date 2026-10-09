@@ -7,6 +7,7 @@ import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
 import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
+import LessonComments, { CommentsFab, useCommentFrames } from '../components/LessonComments';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
 
@@ -14,6 +15,8 @@ interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
   startedAt: string; endedAt: string | null; lectureMode: boolean; muteAll: boolean;
   layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen: boolean; wsUrl: string;
+  /** task 2: who may write comments in this lesson */
+  commentsMode: 'on' | 'off' | 'slow';
 }
 
 interface PeerView {
@@ -120,6 +123,18 @@ export default function Lesson() {
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
+  // task 2: the comments panel is one piece of state, because the toolbar tab and the compact
+  // button that stays over the full-screen stage open the same panel
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  /**
+   * Task 2: the teacher keeps the transcript after the lesson ends. `session` goes away with the
+   * lesson (the status query says "not running"), so the id of the lesson this page actually saw
+   * is remembered — the server decides who may still read it (only the teacher of that class),
+   * and a student's panel disappears with the lesson exactly as their access does.
+   */
+  const [lastSessionId, setLastSessionId] = useState<string | null>(null);
+  useEffect(() => { if (session?.id) setLastSessionId(session.id); }, [session?.id]);
+  const onCommentFrame = useCommentFrames(session?.id ?? null);
   const roomRef = useRef<Room | null>(null);
   // Part 4а: heartbeat that keeps the LiveKit join-token fresh during a long lesson.
   const tokenRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -177,6 +192,7 @@ export default function Lesson() {
       setLayout(status.data.session.layout);
       setMuteAll(status.data.session.muteAll); // restored on reload/reconnect
       setBoardOpen(status.data.session.boardOpen); // task B: the board survives a reload
+      setLectureMode(status.data.session.lectureMode); // task 2: the comments banner is shown before any RTC join
     }
   }, [status.data]);
 
@@ -201,7 +217,10 @@ export default function Lesson() {
           if (msg.type === 'board') setBoardOpen(!!msg.on); // task B: teacher opened/closed the board for all
           if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
           if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
-          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); }
+          // task 2: comments arrive on this same socket — the panel's query is the single source
+          // for the mode, so the frame only has to invalidate it (see useCommentFrames)
+          onCommentFrame(msg.type);
+          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); setLectureMode(msg.session.lectureMode); }
         };
         ws.onclose = (ev) => {
           if (disposed) return;
@@ -882,6 +901,11 @@ export default function Lesson() {
                         </div>
                       ))}
                     </details>
+                    {/* task 2: «Комментарии» sits next to «Участники» for the teacher too */}
+                    <LessonComments
+                      sessionId={session.id} isTeacher lectureMode={lectureMode}
+                      open={commentsOpen} onToggle={setCommentsOpen}
+                    />
                     <div className="spacer" />
                     <button className={`secondary${screenOn ? ' chip-active' : ''}`} style={{ marginTop: 0 }}
                       data-testid="share-toggle" aria-pressed={screenOn} onClick={() => void toggleShare()}>
@@ -896,6 +920,11 @@ export default function Lesson() {
                 {!isTeacher && (
                   <>
                     <button className="secondary" style={{ marginTop: 0 }} onClick={() => void leaveRoom()}>{t('lesson.leave')}</button>
+                    {/* task 2: the same panel, for the student side of the lesson */}
+                    <LessonComments
+                      sessionId={session.id} isTeacher={false} lectureMode={lectureMode}
+                      open={commentsOpen} onToggle={setCommentsOpen}
+                    />
                     <div className="spacer" />
                     <span className="muted">{peers.length + 1} {t('lesson.inRoom')}</span>
                   </>
@@ -999,6 +1028,12 @@ export default function Lesson() {
                       <div className="strip-more" data-testid="strip-more">+{stripTiles.length - STRIP_MAX}</div>
                     )}
                   </div>
+                  {/* task 2: when the screen or the board owns the window (and in its full-screen
+                      mode) the toolbar is gone, so the comments stay reachable as a compact
+                      button with the same unread counter */}
+                  {(screenIsMain || stage.kind === 'board' || boardFull) && (
+                    <CommentsFab sessionId={session.id} open={commentsOpen} onToggle={setCommentsOpen} />
+                  )}
                   {/* teacher's camera for students: a small floating window (§B3) */}
                   {teacherFloats && teacherTile && (
                     <div className="lesson-pip pip-teacher" data-testid="pip-teacher" style={{ right: pip.x, top: 12 }}>
@@ -1044,10 +1079,32 @@ export default function Lesson() {
           {/* board is WS-based: while a session exists it is reachable even before
                RTC — as the stage when open, as a card under the grid otherwise */}
           {session && !(connected && boardOpen) && <Board sessionId={session.id} classId={session.classId} height={layout === 'stage' ? '40vh' : '60vh'} />}
+          {/* task 2: the panel for a live lesson the user has not joined with media (the toolbar
+              instance only exists once RTC is up, so this covers the pre-join student) */}
+          {session && !connected && (
+            <div className="row" style={{ marginTop: 8 }}>
+              <LessonComments
+                sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode}
+                open={commentsOpen} onToggle={setCommentsOpen}
+              />
+            </div>
+          )}
           {!isTeacher && session && (
             <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
           )}
         </>
+      )}
+      {/* task 2: comments do not need media at all — a student who never got a camera works the
+          same panel, so it is rendered for a live session whether or not RTC connected. It sits
+          OUTSIDE the `session &&` block on purpose: after the lesson ends the session is gone but
+          the teacher keeps reading the transcript (the server decides who may). */}
+      {!connected && !session && (isTeacher ? lastSessionId : null) && (
+        <div className="row" style={{ marginTop: 8 }}>
+          <LessonComments
+            sessionId={lastSessionId!} isTeacher lectureMode={false}
+            open={commentsOpen} onToggle={setCommentsOpen}
+          />
+        </div>
       )}
     </div>
   );

@@ -66,6 +66,8 @@ export async function lessonCommentRoutes(app: FastifyInstance, opts: { db: DB }
     void markCommentsRead(db, req.user!.id, a.sessionId).catch(() => undefined);
     return {
       comments, unread, mode: a.mode, ended: Boolean(a.endedAt),
+      // a student is told whether THEY are muted (the list of muted authors is the teacher's view)
+      mutedSelf: a.isTeacher ? false : await isCommentMuted(db, a.sessionId, req.user!.id),
       pinned: comments.filter((c) => c.pinned).map((c) => c.id),
       mutes: a.isTeacher ? await listCommentMutes(db, a.sessionId) : undefined,
     };
