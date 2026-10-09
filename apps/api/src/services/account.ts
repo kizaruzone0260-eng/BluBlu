@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import {
   users, refreshTokens, wsTickets, chatWsTickets, chatMessages, chatReads, chatMutes,
+  lessonComments, lessonCommentReads, lessonCommentMutes,
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
   notifications, policyAcceptances, classMembers, loginAttempts,
 } from '../db/schema.js';
@@ -41,6 +42,11 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     await tx.delete(chatReads).where(eq(chatReads.userId, userId));
     await tx.delete(chatMutes).where(eq(chatMutes.userId, userId));
     await tx.delete(chatWsTickets).where(eq(chatWsTickets.userId, userId));
+    // lesson comments (task 2, 2026-10-09): same rule as the class chat — the person's own words
+    // go physically (a SOFT delete would keep them), and so does their read/mute state.
+    await tx.delete(lessonComments).where(eq(lessonComments.authorId, userId));
+    await tx.delete(lessonCommentReads).where(eq(lessonCommentReads.userId, userId));
+    await tx.delete(lessonCommentMutes).where(eq(lessonCommentMutes.userId, userId));
     // notes / sheets (private by design)
     await tx.delete(studentNotes).where(eq(studentNotes.userId, userId));
     await tx.delete(teacherNotes).where(eq(teacherNotes.teacherId, userId));

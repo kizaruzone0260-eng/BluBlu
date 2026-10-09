@@ -15,6 +15,11 @@ export const attachmentKindEnum = pgEnum('attachment_kind', ['file', 'link', 'yo
 export const eventKindEnum = pgEnum('event_kind', ['lesson', 'deadline', 'other']);
 /** item 8 — per-class chat state: open / closed / announcements only. */
 export const chatModeEnum = pgEnum('chat_mode', ['on', 'off', 'announce']);
+/**
+ * Task 2 (2026-10-09) — «комментарии во время урока»: on = everyone writes, off = nobody,
+ * slow = a student writes at most once per 10 s (the teacher is never rate-limited by mode).
+ */
+export const commentsModeEnum = pgEnum('comments_mode', ['on', 'off', 'slow']);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -235,8 +240,50 @@ export const lessonSessions = pgTable('lesson_sessions', {
    * stage window for ALL participants (jsonb — no migration needed).
    */
   layoutState: jsonb('layout_state').$type<{ layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen?: boolean }>().notNull().default({ layout: 'gallery' }),
+  /** task 2 (2026-10-09): who may write comments during THIS lesson */
+  commentsMode: commentsModeEnum('comments_mode').notNull().default('on'),
   createdBy: uuid('created_by').notNull().references(() => users.id),
 }, (t) => [index('lessons_class_idx').on(t.classId, t.startedAt)]);
+
+/**
+ * Task 2 (2026-10-09) — comments written while a lesson runs. They belong to the SESSION, not to
+ * the class: a finished lesson keeps its own transcript, and access is decided through the
+ * session's class (see `commentAccess`), so a foreign session and a nonexistent one answer
+ * identically. Text is plain (never HTML-rendered on the client) and deletion is SOFT —
+ * `deleted_at` keeps the fact that something was removed while the content goes away; the
+ * author is kept for the teacher's moderation view, and `eraseAccount` deletes rows physically.
+ */
+export const lessonComments = pgTable('lesson_comments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  /** the teacher's «закрепить»: max 3 per session, shown above the rest */
+  pinned: boolean('pinned').notNull().default(false),
+  /** the teacher's «отвечено» marker — a workflow flag, not a read receipt */
+  answered: boolean('answered').notNull().default(false),
+}, (t) => [index('lesson_comments_session_idx').on(t.sessionId, t.createdAt)]);
+
+/**
+ * «Заглушить ученика на урок» (task 2). Keyed by the session, so the mute cannot leak into the
+ * next lesson and needs no expiry column; the class chat keeps its own, longer-lived mutes.
+ */
+export const lessonCommentMutes = pgTable('lesson_comment_mutes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  mutedBy: uuid('muted_by').notNull().references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('lesson_comment_mutes_session_user_idx').on(t.sessionId, t.userId)]);
+
+/** Per-user «last read» so the unread counter survives a reload and follows to another device. */
+export const lessonCommentReads = pgTable('lesson_comment_reads', {
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  lastReadAt: timestamp('last_read_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.userId, t.sessionId] })]);
 
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;

@@ -176,6 +176,13 @@
       "when": 1791513700758,
       "tag": "0024_english_default",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791536427204,
+      "tag": "0025_lesson_comments",
+      "breakpoints": true
     }
   ]
 }
