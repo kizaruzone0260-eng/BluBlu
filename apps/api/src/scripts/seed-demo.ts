@@ -22,7 +22,10 @@ async function main() {
     .limit(1);
   if (!existing) {
     const passwordHash = await hashPassword(TEACHER.password);
-    await db.insert(users).values({ role: 'teacher', name: TEACHER.name, email, passwordHash, locale: 'ru' });
+    // The demo data is Russian (class names, materials, notes), so this account is deliberately
+    // Russian — an explicit choice, which is exactly what `locale_explicit` records. A brand-new
+    // visitor still gets the product default (English).
+    await db.insert(users).values({ role: 'teacher', name: TEACHER.name, email, passwordHash, locale: 'ru', localeExplicit: true });
   }
   console.log(JSON.stringify({
     teacherEmail: TEACHER.email,

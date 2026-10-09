@@ -154,6 +154,9 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
         locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
+        // Language (task 1): the SPA may only apply this locale over the device's own choice
+        // when somebody actually picked it.
+        localeExplicit: user.localeExplicit,
         mustChangePassword: user.mustChangePassword,
         // Legal (Phase 2): the SPA shows the accept gate when this is false.
         policyAccepted: acc?.version === POLICY_VERSION,
@@ -208,9 +211,16 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
     app.patch('/api/me/profile', { preHandler: app.authenticate }, async (req, reply) => {
       const parsed = profileUpdateSchema.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
+      // Language (task 1): a PATCH that carries a DIFFERENT locale is a person choosing a
+      // language — that is what `locale_explicit` records. A PATCH that merely re-sends the
+      // stored value (the name screen, the timezone auto-detect, a profile save that changed
+      // only the name) must not pretend somebody chose it.
+      const [before] = await db.select({ locale: users.locale }).from(users)
+        .where(eq(users.id, req.user!.id)).limit(1);
+      const changedLocale = parsed.data.locale !== undefined && parsed.data.locale !== before?.locale;
       let [user] = await db
         .update(users)
-        .set(parsed.data)
+        .set({ ...parsed.data, ...(changedLocale ? { localeExplicit: true } : {}) })
         .where(eq(users.id, req.user!.id))
         .returning();
       if (!user) return reply.code(401).send({ error: 'unauthorized' });
@@ -225,6 +235,7 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName,
         email: user.email, locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
+        localeExplicit: user.localeExplicit,
       };
     });
 

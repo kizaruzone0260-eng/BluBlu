@@ -14,7 +14,7 @@ import {
   auditLog, botSessions, classes, classMembers, contactBlocklist, contactReports,
   notifications, posts, telegramLinks, telegramTokens, users,
 } from '../../src/db/schema.js';
-import { handleUpdate, type BotDeps } from '../../src/services/bot.js';
+import { handleUpdate, T, type BotDeps } from '../../src/services/bot.js';
 import { CapturingApi, signCb } from '../../src/services/botApi.js';
 import { hashPassword } from '../../src/lib/password.js';
 import { hashToken, newOpaqueToken } from '../../src/services/notify.js';
@@ -67,6 +67,8 @@ suite('telegram bot (mocked api)', () => {
     const [stu] = await t.db.insert(users).values({
       role: 'student', name: 'Сидор', lastName: 'Сидоров', email: `bots${Date.now()}@x.io`,
       passwordHash: await hashPassword('Secret1234'), profileCompletedAt: new Date(),
+      // the assertions below read Russian bot texts, so this account chose Russian (task 1)
+      locale: 'ru', localeExplicit: true,
     }).returning().then((r) => [r[0]]);
     studentId = stu!.id;
     await t.db.insert(classMembers).values({ classId, userId: studentId });
@@ -138,10 +140,12 @@ suite('telegram bot (mocked api)', () => {
     const name = pub!.name;
     clear();
     await go(msg(920, '/schedule')); // unbound chat
-    expect(lastText()).toContain('название класса');
+    // an unbound chat has no profile, so the bot answers in the product default — English
+    // since task 1 (it used to be Russian for everybody). The assertion itself is unchanged.
+    expect(lastText()).toContain('exact class name');
     clear();
     await go(msg(920, name));
-    expect(lastText()).toContain('не найден или расписание не открыто');;
+    expect(lastText()).toContain('Class not found');;  // unbound chat → default language (task 1)
     await t.db.update(classes).set({ botPublicSchedule: true }).where(eq(classes.id, pub!.id));
     await t.db.insert(classMembers).values({ classId: pub!.id, userId: studentId });
     const d = new Date();
@@ -163,7 +167,7 @@ suite('telegram bot (mocked api)', () => {
     await go(msg(922, '/schedule'));
     clear();
     await go(msg(922, 'нет-такого-класса'));
-    expect(lastText()).toContain('не найден или расписание не открыто');;
+    expect(lastText()).toContain('Class not found');;  // unbound chat → default language (task 1)
   });
 
   it('/announce: pick → text → preview → send (post + notify + audit), double-press deduped', async () => {
@@ -234,16 +238,16 @@ suite('telegram bot (mocked api)', () => {
   });
 
   it('/contact: three steps, escaped HTML report to the owner teacher, reply + block', async () => {
-    const sender = 930; // unbound user
+    const sender = 930; // unbound user → the bot speaks the product default (English) since task 1
     clear();
     await go(msg(sender, '/contact'));
-    expect(lastText()).toContain('Шаг 1/3');
+    expect(lastText()).toContain('Step 1/3');
     clear();
     await go(msg(sender, 'Аноним Вопросов'));
-    expect(lastText()).toContain('Шаг 2/3');
+    expect(lastText()).toContain('Step 2/3');
     clear();
     await go(msg(sender, '7Q')); // class hint as typed
-    expect(lastText()).toContain('Шаг 3/3');
+    expect(lastText()).toContain('Step 3/3');
     clear();
     await go(msg(sender, 'Здравствуйте! <script>alert(1)</script>'));
     const report = api.calls.find((c) => c.kind === 'send' && c.chatId === String(T_CHAT));
@@ -271,7 +275,7 @@ suite('telegram bot (mocked api)', () => {
     expect(bl?.blockedBy).toBe(teacherId);
     clear();
     await go(msg(sender, '/contact'));
-    expect(lastText()).toContain('заблокированы');
+    expect(lastText()).toContain('blocked');   // anonymous (unbound) sender → default language (task 1)
     // unblock through /settings button
     clear();
     await go(msg(T_CHAT, '/settings'));
@@ -289,7 +293,7 @@ suite('telegram bot (mocked api)', () => {
     await go(msg(sender, 'Бросил Диалог'));
     clear();
     await go(msg(sender, '/cancel'));
-    expect(lastText()).toContain('Отменено');
+    expect(lastText()).toContain('Cancelled');   // unbound sender → default language (task 1)
     clear();
     await go(msg(sender, 'это уже не диалог')); // plain text outside a dialog → ignored
     expect(api.calls.length).toBe(0);
@@ -307,7 +311,7 @@ suite('telegram bot (mocked api)', () => {
       await go(msg(sender, '/contact'));
       lastReply = lastText();
     }
-    expect(lastReply).toContain('Не больше 3 обращений');
+    expect(lastReply).toContain('At most 3 messages per hour');   // unbound sender → default language (task 1)
     // a teacher may not use /contact
     clear();
     await go(msg(T_CHAT, '/contact'));
@@ -348,7 +352,7 @@ suite('telegram bot (mocked api)', () => {
       update_id: ++uid,
       message: { message_id: 9, chat: { id: sender, type: 'private' }, from: { id: sender }, text: '7Q' },
     });
-    expect((api2.calls[api2.calls.length - 1]?.text ?? '')).toContain('Шаг 3/3');
+    expect((api2.calls[api2.calls.length - 1]?.text ?? '')).toContain('Step 3/3'); // unbound sender → default language (task 1)
     clear();
     await t.db.delete(botSessions).where(eq(botSessions.chatId, String(sender)));
   });
@@ -378,13 +382,39 @@ suite('telegram bot (mocked api)', () => {
     void isNull;
   });
 
+  it('the bot speaks the profile language, and English when nobody chose one (task 1)', async () => {
+    // a dedicated account: the shared student is deliberately Russian for the tests above
+    const chat = 707;
+    const [fresh] = await t.db.insert(users).values({
+      role: 'student', name: 'Дефолт', lastName: 'Тил', email: `botdef${Date.now()}@x.io`,
+      passwordHash: await hashPassword('Secret1234'), profileCompletedAt: new Date(),
+    }).returning();
+    await t.db.insert(telegramLinks).values({ userId: fresh!.id, chatId: String(chat) });
+
+    clear();
+    await go(msg(chat, '/help'));
+    expect(lastText(), 'an account that never chose gets the English default').toBe(T.helpStudent.en);
+
+    clear();
+    await t.db.update(users).set({ locale: 'uz', localeExplicit: true }).where(eq(users.id, fresh!.id));
+    await go(msg(chat, '/help'));
+    expect(lastText(), 'a chosen profile language is what the bot answers in').toBe(T.helpStudent.uz);
+
+    // /language is a choice too: it must leave the account explicit, not just answer once
+    clear();
+    await go(cbq(chat, { u: fresh!.id, a: 'lang', l: 'ru' }));
+    const [after] = await t.db.select({ locale: users.locale, explicit: users.localeExplicit })
+      .from(users).where(eq(users.id, fresh!.id)).limit(1);
+    expect(after).toMatchObject({ locale: 'ru', explicit: true });
+  });
+
   it('command budget: >20 commands/min per user is politely refused', async () => {
     const sender = 970;
     clear();
     let limited = 0;
     for (let i = 0; i < 24; i++) {
       await go(msg(sender, '/help'));
-      if ((api.calls[api.calls.length - 1]?.text ?? '').includes('Слишком много команд')) limited++;
+      if ((api.calls[api.calls.length - 1]?.text ?? '').includes('Too many commands')) limited++;  // unbound sender → default language (task 1)
     }
     expect(limited).toBeGreaterThanOrEqual(1);
   });

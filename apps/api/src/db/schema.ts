@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import { DEFAULT_LOCALE } from '@klass/shared';
 
 export const userRoleEnum = pgEnum('user_role', ['teacher', 'student']);
 export const localeEnum = pgEnum('app_locale', ['ru', 'uz', 'en']);
@@ -36,7 +37,15 @@ export const users = pgTable('users', {
    * successful change or self-set password clears it.
    */
   mustChangePassword: boolean('must_change_password').notNull().default(false),
-  locale: localeEnum('locale').notNull().default('ru'),
+  /**
+   * Language (task 1, 2026-10-09). The DEFAULT is what an account gets when nobody chose
+   * anything — English, like every other default in the product. `localeExplicit` is the part
+   * that makes the bug fixable: 'en' in this column means "default", "en" next to
+   * locale_explicit=true means "this person asked for English", and only the second one may
+   * override what the browser already shows.
+   */
+  locale: localeEnum('locale').notNull().default(DEFAULT_LOCALE),
+  localeExplicit: boolean('locale_explicit').notNull().default(false),
   tz: text('tz').notNull().default('Asia/Tashkent'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),

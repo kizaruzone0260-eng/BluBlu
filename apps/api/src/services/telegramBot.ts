@@ -1,4 +1,5 @@
 import { Bot } from 'grammy';
+import { DEFAULT_LOCALE } from '@klass/shared';
 import { and, eq, gt } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
@@ -68,7 +69,14 @@ type Key = keyof typeof T;
 
 async function localeForUserId(db: DB, userId: string): Promise<'ru' | 'uz' | 'en'> {
   const [u] = await db.select({ locale: usersTable.locale }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  return u?.locale ?? 'ru';
+  return u?.locale ?? DEFAULT_LOCALE;
+}
+
+/** the language of whoever is writing: their linked account, or nothing if this chat is unbound */
+async function localeForChat(db: DB, chatId: string): Promise<'ru' | 'uz' | 'en' | null> {
+  const [link] = await db.select({ userId: telegramLinks.userId }).from(telegramLinks)
+    .where(eq(telegramLinks.chatId, chatId)).limit(1);
+  return link ? await localeForUserId(db, link.userId) : null;
 }
 
 const msg = (k: Key, loc: 'ru' | 'uz' | 'en') => T[k][loc];
@@ -88,9 +96,12 @@ export async function processUpdate(
 
   if (text.startsWith('/start')) {
     const token = text.split(/\s+/)[1] ?? '';
-    if (!token) return { handled: true, reply: msg('usage', 'ru') };
+    if (!token) return { handled: true, reply: msg('usage', DEFAULT_LOCALE) };
     const ok = await consumeLinkToken(deps.db, token, chatId);
-    let loc: 'ru' | 'uz' | 'en' = 'ru';
+    // A rejected token is answered in the language of the chat that already exists — a person
+    // retrying an expired link should not suddenly get English (or Russian) because the failure
+    // path had no profile to ask. Unbound chat ⇒ product default.
+    let loc = (await localeForChat(deps.db, chatId)) ?? DEFAULT_LOCALE;
     if (ok) {
       const [link] = await deps.db.select({ userId: telegramLinks.userId }).from(telegramLinks)
         .where(eq(telegramLinks.chatId, chatId)).limit(1);
@@ -100,20 +111,25 @@ export async function processUpdate(
   }
 
   if (text.startsWith('/stop')) {
+    // answer BEFORE the unlink, in the language of the account that is being unlinked
+    const who = (await localeForChat(deps.db, chatId)) ?? DEFAULT_LOCALE;
     await unlinkUserByChat(deps.db, chatId);
-    return { handled: true, reply: msg('stopped', 'ru') };
+    return { handled: true, reply: msg('stopped', who) };
   }
 
   if (text.startsWith('/link') && (m.chat.type === 'group' || m.chat.type === 'supergroup')) {
     const code = (text.split(/\s+/)[1] ?? '').toUpperCase();
-    if (!code) return { handled: true, reply: msg('needCode', 'ru') };
-    // §3.9: only a group administrator may link
+    // §3.9: only a group administrator may link. The ACTOR is identifiable even in a group —
+    // their private chat id equals their tg user id — so the refusal is answered in their
+    // language, not in the product default; an unlinked actor gets the default, which is English.
     const tgUserId = m.from?.id ?? 0;
-    if (!(await deps.isGroupAdmin(chatId, tgUserId))) return { handled: true, reply: msg('notAdmin', 'ru') };
+    const actorLoc = (await localeForChat(deps.db, String(tgUserId))) ?? DEFAULT_LOCALE;
+    if (!code) return { handled: true, reply: msg('needCode', actorLoc) };
+    if (!(await deps.isGroupAdmin(chatId, tgUserId))) return { handled: true, reply: msg('notAdmin', actorLoc) };
     // the acting teacher must have a personal link (chat_id of the private chat equals their tg user id)
     const [personal] = await deps.db.select({ userId: telegramLinks.userId }).from(telegramLinks)
       .where(eq(telegramLinks.chatId, String(tgUserId))).limit(1);
-    if (!personal) return { handled: true, reply: msg('needPersonal', 'ru') };
+    if (!personal) return { handled: true, reply: msg('needPersonal', actorLoc) };
     const loc = await localeForUserId(deps.db, personal.userId);
     const rows = await deps.db.select().from(classLinkTokens)
       .where(and(eq(classLinkTokens.tokenHash, hashToken(code)), gt(classLinkTokens.expiresAt, new Date())))

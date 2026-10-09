@@ -1,4 +1,5 @@
 import { eq, and, isNull } from 'drizzle-orm';
+import type { Locale } from '@klass/shared';
 import { users, classMembers, refreshTokens, loginAttempts } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
@@ -20,6 +21,8 @@ export interface PublicUser {
   lastName: string;
   email: string;
   locale: string;
+  /** task 1: was this language ever chosen by the person, or is it the column default? */
+  localeExplicit: boolean;
   tz: string;
   /** name screen (task 2): false → the «Имя и фамилия» gate must be shown. */
   profileCompleted: boolean;
@@ -31,6 +34,7 @@ function toPublic(u: typeof users.$inferSelect): PublicUser {
   return {
     id: u.id, role: u.role, name: u.name, lastName: u.lastName, email: u.email,
     locale: u.locale, tz: u.tz, profileCompleted: u.profileCompletedAt != null,
+    localeExplicit: u.localeExplicit,
     mustChangePassword: u.mustChangePassword,
   };
 }
@@ -45,7 +49,7 @@ class InvalidCodeError extends Error {}
 
 export async function registerStudentByCode(
   db: DB,
-  input: { firstName: string; lastName: string; email: string; password: string; code: string },
+  input: { firstName: string; lastName: string; email: string; password: string; code: string; locale?: Locale },
 ): Promise<AuthResult> {
   const passwordHash = await hashPassword(input.password);
   try {
@@ -56,6 +60,9 @@ export async function registerStudentByCode(
           role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash,
           // registration step 2 already collected BOTH names → no gate later
           profileCompletedAt: new Date(),
+          // Language (task 1): the register screen's own switch used to be thrown away here —
+          // the row took the column default, and the app then applied THAT over the user's pick.
+          ...(input.locale ? { locale: input.locale, localeExplicit: true } : {}),
         })
         .returning();
       if (!u) throw new InvalidCodeError();

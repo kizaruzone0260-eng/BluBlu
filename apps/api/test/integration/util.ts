@@ -23,7 +23,10 @@ export async function makeTeacher(sql: postgres.Sql, email = 't@x.io', name = 'T
   const id = crypto.randomUUID();
   const lower = email.toLowerCase(); // register/login normalize to lowercase — helpers must too
   const hash = await (await import('../../src/lib/password.js')).hashPassword('Passw0rd123');
-  await sql`insert into users (id, role, name, email, password_hash, locale, tz, created_at)
-            values (${id}, 'teacher', ${name}, ${lower}, ${hash}, 'ru', 'Asia/Tashkent', now())`;
+  // The fixture speaks Russian on purpose (its texts and assertions are Russian), and since
+  // migration 0024 that has to be SAID: `locale` alone now means "nobody chose, this is the
+  // English default", so an un-marked 'ru' row would answer in English.
+  await sql`insert into users (id, role, name, email, password_hash, locale, locale_explicit, tz, created_at)
+            values (${id}, 'teacher', ${name}, ${lower}, ${hash}, 'ru', true, 'Asia/Tashkent', now())`;
   return { id, email: lower, password: 'Passw0rd123' };
 }

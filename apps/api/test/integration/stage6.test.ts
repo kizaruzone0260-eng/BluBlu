@@ -43,7 +43,7 @@ suite('stage 6: telegram queue, quiet hours, dedupe, rights', () => {
     const [cls] = await t.db.insert(classes).values({ teacherId, name: 'Telegram class' }).returning();
     classId = cls!.id;
     const [stu] = await t.db.insert(users).values({
-      role: 'student', name: 'Pupil', email: `tgs${Date.now()}@x.io`, passwordHash: 'x', locale: 'ru', tz: 'Asia/Tashkent',
+      role: 'student', name: 'Pupil', email: `tgs${Date.now()}@x.io`, passwordHash: 'x', locale: 'ru', localeExplicit: true, tz: 'Asia/Tashkent',
     }).returning();
     studentId = stu!.id;
     await t.db.insert(classMembers).values({ classId, userId: studentId });

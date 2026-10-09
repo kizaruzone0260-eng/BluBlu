@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, createHash } from 'node:crypto';
 import { SignJWT, jwtVerify } from 'jose';
 import { env } from '../env.js';
-import type { UserRole } from '@klass/shared';
+import { DEFAULT_LOCALE, type UserRole } from '@klass/shared';
 
 const secretKey = () => new TextEncoder().encode(env.JWT_SECRET);
 
@@ -27,7 +27,9 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
     return {
       sub: payload.sub,
       role: payload.role as UserRole,
-      locale: typeof payload.locale === 'string' ? payload.locale : 'ru',
+      // task 1 (2026-10-09): a token without a locale claim is answered in the product default.
+      // It used to say 'ru', which quietly reintroduced the Russian fallback the task removes.
+      locale: typeof payload.locale === 'string' ? payload.locale : DEFAULT_LOCALE,
     };
   } catch {
     return null;

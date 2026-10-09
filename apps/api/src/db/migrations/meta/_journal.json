@@ -169,6 +169,13 @@
       "when": 1791474121055,
       "tag": "0023_known_wolf_cub",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791513700758,
+      "tag": "0024_english_default",
+      "breakpoints": true
     }
   ]
 }

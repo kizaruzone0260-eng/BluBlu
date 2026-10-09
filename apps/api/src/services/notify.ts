@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, lte, sql, or } from 'drizzle-orm';
 import { randomBytes, createHash } from 'node:crypto';
+import { DEFAULT_LOCALE } from '@klass/shared';
 import {
   notifications, notificationPrefs, telegramLinks, telegramTokens,
   classTelegramChats, classNotifyPrefs, users, classMembers,
@@ -189,7 +190,11 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
       const chats = await db.select().from(classTelegramChats).where(eq(classTelegramChats.classId, a.classId));
       for (const chat of chats) {
         const key = `${a.dedupeBase}|g:${chat.chatId}`;
-        const did = await tryInsert(db, a, key, null, chat.chatId, 'ru', a.when);
+        // task 1 (2026-10-09): a group chat has no profile and no language column, so it used to
+        // get the silent Russian template. The product default is now English; private messages to
+        // people keep their own profile language (below), and `class_telegram_chats` stays
+        // language-less — adding a group language is a separate decision, not a default flip.
+        const did = await tryInsert(db, a, key, null, chat.chatId, DEFAULT_LOCALE, a.when);
         if (did) inserted.push(did);
       }
     }

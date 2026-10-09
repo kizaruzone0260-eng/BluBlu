@@ -24,6 +24,7 @@ import { listEventsInRange } from './events.js';
 import { consumeLinkToken, getPrefs, hashToken, siteUrl, unlinkUser, enqueueNotification } from './notify.js';
 import { applyMenu, esc, removeMenu, verifyCb, signCb, type BotApi, type InlineButton } from './botApi.js';
 import { audit } from './audit.js';
+import { DEFAULT_LOCALE } from '@klass/shared';
 
 export interface BotDeps {
   db: DB;
@@ -43,7 +44,9 @@ type Lang = 'ru' | 'uz' | 'en';
 type Loc = Record<Lang, string>;
 
 // ─── texts ────────────────────────────────────────────────────────────────────
-const T: Record<string, Loc> = {
+/** exported for tests: the bot's own text table, so a language assertion compares against the
+ *  source instead of re-typing a sentence that is free to be reworded. */
+export const T: Record<string, Loc> = {
   helloBasic: {
     ru: 'Привет! Это бот BluBlu. Свяжи аккаунт ссылкой из профиля BluBlu (сообщение вида /start <код>), тогда станут доступны твоё расписание и настройки.',
     uz: 'Salom! Bu BluBlu boti. Proildagi havola orqali hisobingizni boglang (/start <kod>) — shunda jadval va sozlamalar ochiladi.',
@@ -308,7 +311,7 @@ export async function handleUpdate(deps: BotDeps, update: TgUpdate): Promise<voi
   }
 
   const sess = await loadSession(db, chatId);
-  const id = await identify(db, chatId, (sess?.data.lang as Lang) ?? 'ru');
+  const id = await identify(db, chatId, (sess?.data.lang as Lang) ?? DEFAULT_LOCALE);
 
   // in a dialog? plain text goes to the dialog first (commands still work,
   // EXCEPT /cancel which belongs to the dialog — §5)
@@ -336,7 +339,7 @@ export async function handleUpdate(deps: BotDeps, update: TgUpdate): Promise<voi
 }
 
 async function send(deps: BotDeps, chatId: string, key: string, vars: Record<string, string | number>, lang?: Lang) {
-  const l = lang ?? 'ru';
+  const l = lang ?? DEFAULT_LOCALE;
   await deps.api.sendMessage(chatId, t(key as keyof typeof T, l, vars));
 }
 
@@ -345,7 +348,7 @@ async function onStart(deps: BotDeps, chatId: string, id: Identity, arg: string)
   if (arg) {
     const ok = await consumeLinkToken(db, arg, chatId);
     if (!ok) { await send(deps, chatId, 'badLink', {}, id.lang); return; }
-    const nid = await identify(db, chatId, 'ru');
+    const nid = await identify(db, chatId, DEFAULT_LOCALE);
     await applyMenu(api, nid.role ?? 'basic', chatId);
     await send(deps, chatId, 'linked', {}, nid.lang);
     await send(deps, chatId, nid.role === 'teacher' ? 'helloTeacher' : 'helloStudent', {}, nid.lang);
@@ -732,17 +735,22 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
   const data = cbq.data ?? '';
   const payload = verifyCb(data);
   const chatId = String(cbq.message?.chat.id ?? cbq.from.id);
-  if (!payload) { await api.sendMessage(chatId, t('badCallback', 'ru')); return; }
-  if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, 'ru'); return; }
-  const id = await identify(db, chatId, 'ru');
+  // the identity is resolved FIRST: a pressed button carries no language, but the chat does
+  // (its linked account), so "this button is stale" must not arrive in the product default
+  // when the person reads the bot in Russian
+  const id = await identify(db, chatId, DEFAULT_LOCALE);
+  if (!payload) { await api.sendMessage(chatId, t('badCallback', id.lang)); return; }
+  if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, id.lang); return; }
   // the signed payload must belong to the acting account (§1)
   if ((payload.u || '') !== (id.userId ?? '')) { await api.sendMessage(chatId, t('badCallback', id.lang)); return; }
 
   switch (payload.a) {
     case 'lang': {
-      const lang = (payload.l === 'uz' || payload.l === 'en' || payload.l === 'ru') ? payload.l as Lang : 'ru';
+      const lang = (payload.l === 'uz' || payload.l === 'en' || payload.l === 'ru') ? payload.l as Lang : DEFAULT_LOCALE;
       if (id.userId) {
-        await db.update(users).set({ locale: lang }).where(eq(users.id, id.userId));
+        // choosing in the bot IS choosing — the profile says so, and the web app then
+        // honours it on every device instead of falling back to the browser
+        await db.update(users).set({ locale: lang, localeExplicit: true }).where(eq(users.id, id.userId));
         await applyMenu(api, id.role ?? 'basic', chatId);
       } else {
         const s = await loadSession(db, chatId);
@@ -832,7 +840,7 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
 async function legacyGroupLink(deps: BotDeps, chatId: string, m: NonNullable<TgUpdate['message']>) {
   const { db } = deps;
   const code = ((m.text ?? '').split(/\s+/)[1] ?? '').toUpperCase();
-  const loc: Lang = 'ru';
+  const loc: Lang = DEFAULT_LOCALE;
   if (!code) { await api0(deps, chatId, t('needCodeLocal', loc)); return; }
   const tgUserId = m.from?.id ?? 0;
   if (!(await deps.isGroupAdmin(chatId, tgUserId))) { await api0(deps, chatId, t('notAdminLocal', loc)); return; }
