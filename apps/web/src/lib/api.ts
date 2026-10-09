@@ -89,6 +89,12 @@ export interface Me {
   lastName?: string;
   email: string;
   locale: 'ru' | 'uz' | 'en';
+  /**
+   * Language (task 1): did this person ever pick a language themselves? Only then may the
+   * profile override what the device is already showing — `locale` alone cannot tell a choice
+   * from the column default.
+   */
+  localeExplicit?: boolean;
   tz: string;
   /** name screen (task 2): false → show «Имя и фамилия» before the app */
   profileCompleted: boolean;
@@ -109,8 +115,17 @@ export async function changePassword(current: string, next: string): Promise<voi
 }
 
 /** Part 3: sign out of every device (revoke all refresh sessions). */
+/**
+ * «Выйти со всех устройств». The endpoint is behind `app.authenticate`, so it MUST go through
+ * `api()` — the raw fetch this used to make sent no Authorization header, the server answered
+ * 401, the refresh cookie stayed valid, and the next page load silently logged the user back in.
+ * (Found by apps/e2e/tests/zz15-locale.spec.ts, which logs out and signs in again: the trace is
+ * `POST /api/auth/logout-all → 401` followed by `POST /api/auth/refresh → 200`.)
+ * The local token is dropped even when the call fails: the user must never look "signed in"
+ * after asking to be signed out.
+ */
 export async function logoutAll(): Promise<void> {
-  await fetch('/api/auth/logout-all', { method: 'POST', credentials: 'include' }).catch(() => {});
+  try { await api('/api/auth/logout-all', { method: 'POST' }); } catch { /* still signed out locally */ }
   setAccessToken(null);
 }
 
@@ -146,9 +161,10 @@ export async function checkCode(code: string): Promise<void> {
   await api<{ ok: true }>('/api/auth/check-code', { method: 'POST', body: JSON.stringify({ code }) });
 }
 
-export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string) {
+export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string, locale?: string) {
   const j = await api<{ accessToken: string; user: Me }>('/api/auth/register', {
-    method: 'POST', body: JSON.stringify({ firstName, lastName, email, password, code }),
+    // the language picked on the register screen travels with the account (task 1)
+    method: 'POST', body: JSON.stringify({ firstName, lastName, email, password, code, ...(locale ? { locale } : {}) }),
   });
   setAccessToken(j.accessToken);
   return j.user;

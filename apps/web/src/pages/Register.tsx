@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { acceptPolicy, checkCode, registerByCode } from '../lib/api';
+import { storedLocale } from '../i18n';
 import { POLICY_VERSION } from '@klass/shared';
 
 /**
@@ -45,7 +46,9 @@ export default function Register({ onDone }: { onDone: () => void }) {
     if (!accepted) { setErr('mustAccept'); return; }
     setBusy(true);
     try {
-      await registerByCode(firstName.trim(), lastName.trim(), email, password, code);
+      // a language picked on this screen is a choice, so it belongs to the new account (task 1);
+      // storedLocale() is only set by an actual click, never by the app's own default
+      await registerByCode(firstName.trim(), lastName.trim(), email, password, code, storedLocale() ?? undefined);
       // record the acceptance for the freshly created account (already logged in)
       await acceptPolicy(POLICY_VERSION).catch(() => undefined);
       onDone();

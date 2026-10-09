@@ -5,6 +5,7 @@ import { api, type Me } from '../lib/api';
 import { APP_NAME } from '../lib/brand';
 import { useChatUnread } from '../lib/chat';
 import { getThemeChoice, setTheme, type ThemeChoice } from '../lib/theme';
+import { chooseLocale } from '../i18n';
 
 /** Minimal inline icon set (stroke-based, inherits currentColor). */
 export const Icon = ({ d, size = 22 }: { d: string; size?: number }) => (
@@ -47,7 +48,9 @@ export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?:
   const current = LOCALES.find((l) => l.code === i18n.language) ?? LOCALES[0];
   async function pick(code: string) {
     setOpen(false);
-    await i18n.changeLanguage(code);
+    // a click on a language IS the choice: it is stored on this device (task 1 — the old code
+    // stored every programmatic change too, so a device could not tell the two apart)
+    await chooseLocale(code);
     if (me) {
       // single source of truth: the profile follows the UI switch immediately (fixes
       // the old mismatch where the topbar caption showed the *target* language)
@@ -59,13 +62,13 @@ export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?:
   }
   return (
     <div className="lang-wrap" ref={ref}>
-      <button className="ghost" style={{ marginTop: 0 }} onClick={() => setOpen(!open)} aria-label={t('common.language')}>
+      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={() => setOpen(!open)} aria-label={t('common.language')}>
         <Icon d={icons.globe} size={18} /> {current.code.toUpperCase()}
       </button>
       {open && (
         <div className="lang-menu" role="menu">
           {LOCALES.map((l) => (
-            <button key={l.code} className={l.code === current.code ? 'sel' : ''} onClick={() => void pick(l.code)} role="menuitem">
+            <button key={l.code} data-testid={`lang-${l.code}`} className={l.code === current.code ? 'sel' : ''} onClick={() => void pick(l.code)} role="menuitem">
               {l.native}{l.code === current.code ? ' ✓' : ''}
             </button>
           ))}

@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DEFAULT_LOCALE, type Locale } from '@klass/shared';
 import { api, logoutAll } from '../lib/api';
 import { buildId } from '../lib/build';
 import { useAuth } from '../App';
+import { chooseLocale } from '../i18n';
 import ChangePasswordForm from '../components/ChangePasswordForm';
 
 export default function Profile() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { me, refresh } = useAuth();
   const [name, setName] = useState(me?.name ?? '');
   const [lastName, setLastName] = useState(me?.lastName ?? '');
-  const [locale, setLocale] = useState<'ru' | 'uz' | 'en'>(me?.locale ?? 'ru');
+  const [locale, setLocale] = useState<Locale>(me?.locale ?? DEFAULT_LOCALE);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -53,7 +55,9 @@ export default function Profile() {
       // item 4: no manual timezone — App syncs it from the device automatically
       const dev = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tashkent';
       await api('/api/me/profile', { method: 'PATCH', body: JSON.stringify({ name, lastName, locale, tz: dev }) });
-      await i18n.changeLanguage(locale);
+      // saving the profile with a language IS choosing it (task 1): the server flags the
+      // account, this device remembers it, and the UI follows at once
+      await chooseLocale(locale);
       refresh();
       setSaved(true);
     } finally {
@@ -95,7 +99,7 @@ export default function Profile() {
         <option value="en">English</option>
       </select>
       {/* item 4: timezone is detected automatically (Intl) — no manual field */}
-      <button onClick={save} disabled={saving}>{t('common.save')}</button>
+      <button onClick={save} disabled={saving} data-testid="profile-save">{t('common.save')}</button>
       {saved && <span className="ok"> ✓</span>}
       <hr />
       {/* Part 3: change your own password (verifies the current one server-side,

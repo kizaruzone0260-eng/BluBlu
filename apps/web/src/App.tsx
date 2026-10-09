@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useState, Suspense, lazy } from '
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
+import { resolveLocale, shouldCarryStoredChoice } from '@klass/shared';
+import { applyLocale, storedLocale } from './i18n';
 import { APP_NAME } from './lib/brand';
 import { Nav, LangDropdown, ThemeToggle } from './components/Nav';
 import Home, { useLiveClass } from './pages/Home';
@@ -40,7 +42,6 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [booted, setBooted] = useState(false);
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
-  const { i18n } = useTranslation();
 
   // Offline (Phase 3): surface a friendly translated screen when the browser
   // reports no connection, and recover automatically when it comes back.
@@ -72,9 +73,22 @@ export default function App() {
   async function refresh() {
     const u = await fetchMe();
     setMe(u);
-    // profile language is the source of truth once logged in; the switcher keeps
-    // the profile in sync, so this never fights with the user's choice.
-    if (u && u.locale !== i18n.language) void i18n.changeLanguage(u.locale);
+    if (!u) return;
+    /*
+     * Language (task 1, 2026-10-09). This line used to be
+     *   `if (u.locale !== i18n.language) changeLanguage(u.locale)`
+     * — every profile, including one nobody ever touched, over the device. The order is now
+     * profile-if-chosen > this device > default, and a choice made on the sign-in screen is
+     * carried into the account the first time it is seen, so it survives the next device too.
+     */
+    const sources = { profileLocale: u.locale, profileExplicit: u.localeExplicit, storedLocale: storedLocale() };
+    if (shouldCarryStoredChoice(sources)) {
+      void api('/api/me/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ name: u.name, tz: u.tz, locale: sources.storedLocale }),
+      }).then(() => refresh()).catch(() => undefined);
+    }
+    await applyLocale(resolveLocale(sources));
   }
 
   useEffect(() => {
