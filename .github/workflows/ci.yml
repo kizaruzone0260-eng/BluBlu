@@ -41,6 +41,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: build-test
+    services:
+      # The media server the RTC specs need, so they stop self-skipping (see .github/livekit-ci.yaml).
+      # If this container ever fails to come up the specs skip again rather than turn the run red —
+      # the skip count is reported in the task report, not hidden.
+      livekit:
+        image: livekit/livekit-server:v1.13.9
+        ports: ['7880:7880', '7881:7881', '50000-50099:50000-50099/udp']
+        volumes:
+          - ${{ github.workspace }}/.github/livekit-ci.yaml:/etc/livekit.yaml:ro
+        args: --config /etc/livekit.yaml
+    env:
+      # test-only values, matching apps/e2e/scripts/e2e-stack.mjs and livekit-ci.yaml
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_WS_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: e2ekey
+      LIVEKIT_API_SECRET: e2esecrete2esecrete2esecrete2esecret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
