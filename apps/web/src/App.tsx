@@ -60,9 +60,13 @@ export default function App() {
     const syncTz = () => {
       const dev = Intl.DateTimeFormat().resolvedOptions().timeZone;
       if (!dev || dev === me.tz) return;
+      // NO locale in this body (task 1, run 37974043289): the sync says nothing about a language,
+      // and re-sending `me.locale` from this snapshot raced the language carry-over below — on a
+      // UTC machine the two PATCHes land in either order, and the one that landed last looked
+      // like a person choosing the language they had never seen.
       void api('/api/me/profile', {
         method: 'PATCH',
-        body: JSON.stringify({ name: me.name, locale: me.locale, tz: dev }),
+        body: JSON.stringify({ name: me.name, tz: dev }),
       }).then(() => refresh()).catch(() => undefined);
     };
     syncTz();

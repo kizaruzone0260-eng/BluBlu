@@ -167,6 +167,64 @@ test.describe('language default and persistence (task 1)', () => {
     await ctx.close();
   });
 
+  /**
+   * The CI shape of the previous test, made deterministic.
+   *
+   * On a machine whose timezone differs from the profile (the GitHub runner is UTC, every fixture
+   * says 'Asia/Tashkent') the app fires TWO profile PATCHes right after login: the language
+   * carry-over above, and the automatic timezone sync. Whichever finishes last wins, and before
+   * this task the sync re-sent `locale` from a profile snapshot taken BEFORE the carry-over — so
+   * the server read a changed locale, treated the sync as a human language choice and wrote
+   * English back. That is run 37974043289 (`12a82fb`) failing here while the same spec passed
+   * locally: this machine IS in 'Asia/Tashkent', so `syncTz` returned early and never fired.
+   *
+   * `timezoneId: 'UTC'` recreates the runner, and the route handler delays the sync request so the
+   * bad interleave is forced instead of being left to luck. The check itself is the same as the
+   * task's: a timezone sync is not a language choice.
+   */
+  test('the automatic timezone sync cannot rewrite the language (the CI race, forced)', async ({ browser }) => {
+    const mail = await freshStudent();
+    const ctx = await browser.newContext({ timezoneId: 'UTC' });
+    const page = await ctx.newPage();
+    let syncs = 0;
+    let syncCarriedALocale: boolean | null = null;
+    const isSync = (req: import('@playwright/test').Request) => {
+      try {
+        const body = req.postDataJSON() as { tz?: string } | null;
+        return !!body && body.tz === 'UTC';
+      } catch { return false; }
+    };
+    await page.route('**/api/me/profile', async (route) => {
+      const body = route.request().postDataJSON() as { locale?: string } | null;
+      if (!isSync(route.request())) return route.continue();
+      syncs += 1;
+      syncCarriedALocale = body?.locale !== undefined;
+      await new Promise((r) => setTimeout(r, 1_500)); // land AFTER the carry-over, every time
+      await route.continue();
+    });
+    const syncLanded = page.waitForResponse((r) =>
+      r.url().endsWith('/api/me/profile') && r.request().method() === 'PATCH' && isSync(r.request()));
+    await page.goto('/login');
+    await pickLanguage(page, 'uz');
+    await signIn(page, mail, PW);
+    await syncLanded;
+    await page.waitForTimeout(1_500); // the app refreshes once the sync response arrives
+    const after = await uiLang(page);
+    m('after login + a timezone sync that landed second', { ...after, syncs, syncCarriedALocale });
+    expect(syncs, 'the timezone sync really fired — this is the runner environment, not a mock').toBeGreaterThan(0);
+    expect(syncCarriedALocale, 'a timezone sync says nothing about a language, so it must not carry one')
+      .toBe(false);
+    expect(after.visible, 'a timezone sync must not overwrite the language the person picked').toBe('uz');
+    expect(after.htmlLang, 'and <html lang> must not flip either').toBe('uz');
+    const relog = await api.post('/api/auth/login', { data: { email: mail, password: PW } });
+    const u = (await relog.json()) as { user: { locale: string; localeExplicit: boolean; tz: string } };
+    m('the account after the forced interleave', u.user);
+    expect(u.user.locale, 'the account keeps the picked language').toBe('uz');
+    expect(u.user.localeExplicit, 'and the sync did not forge a second “choice”').toBe(true);
+    expect(u.user.tz, 'the timezone sync itself still works').toBe('UTC');
+    await ctx.close();
+  });
+
   test('the choice survives a reload, a logout+login and a second device', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();

@@ -88,7 +88,15 @@ export const profileUpdateSchema = z.object({
   name,
   /** item 9 — family name; optional so pre-existing accounts (empty) keep working */
   lastName: z.string().trim().max(80).optional(),
-  locale: z.enum(['ru', 'uz', 'en']),
+  /**
+   * Language (task 1). Optional on purpose: a profile PATCH is also how the app stores the
+   * device timezone and the name screen's family name, and those requests used to re-send the
+   * locale from a snapshot taken before a concurrent write. Whichever PATCH landed last then
+   * looked like "the person changed the language" — run 37974043289 turned the automatic timezone
+   * sync into a forged English choice. Absent means "do not touch the language", present means
+   * "this is a choice" (see routes/auth.ts, which still flags `locale_explicit` only on a change).
+   */
+  locale: z.enum(['ru', 'uz', 'en']).optional(),
   tz: z.string().min(1).max(64).default(DEFAULT_TIMEZONE),
 });
 

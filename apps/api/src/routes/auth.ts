@@ -213,8 +213,10 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
       // Language (task 1): a PATCH that carries a DIFFERENT locale is a person choosing a
       // language — that is what `locale_explicit` records. A PATCH that merely re-sends the
-      // stored value (the name screen, the timezone auto-detect, a profile save that changed
-      // only the name) must not pretend somebody chose it.
+      // stored value must not pretend somebody chose it, and a PATCH that says nothing about
+      // the language (the timezone sync, the name screen) does not carry the field at all, so
+      // the column is left alone. The last part is the fix for run 37974043289: two profile
+      // PATCHes racing after login used to make the automatic sync overwrite a picked language.
       const [before] = await db.select({ locale: users.locale }).from(users)
         .where(eq(users.id, req.user!.id)).limit(1);
       const changedLocale = parsed.data.locale !== undefined && parsed.data.locale !== before?.locale;

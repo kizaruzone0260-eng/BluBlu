@@ -91,6 +91,41 @@ suite('language storage and migration 0024 (task 1)', () => {
     expect(after).toMatchObject({ locale: 'ru', localeExplicit: true });
   });
 
+  /**
+   * Regression for run 37974043289: on a UTC machine (the CI runner) the SPA sends a second
+   * profile PATCH right after login to sync the timezone, and it re-sent the language from a
+   * snapshot taken before the carry-over PATCH had written the picked one. The server then saw a
+   * "changed" locale and recorded an automatic sync as if a person had chosen English.
+   * A timezone sync must not be able to touch the language at all, so `locale` is optional in the
+   * body and absent means "leave the column alone".
+   */
+  it('a profile PATCH without a locale changes the rest of the profile and nothing else', async () => {
+    const j = await register({ firstName: 'Час', lastName: 'Пояс', email: email(), password: PW, code: await code() });
+    const a = { authorization: `Bearer ${j.accessToken}` };
+    // step 1 — the person's choice arrives (this is the carry-over the app does on login)
+    const pick = await app.inject({ method: 'PATCH', url: '/api/me/profile', headers: a, payload: { name: 'Час', locale: 'uz', tz: 'Asia/Tashkent' } });
+    const p = (await pick.json()) as { locale: string; localeExplicit: boolean; tz: string };
+    expect(p).toMatchObject({ locale: 'uz', localeExplicit: true, tz: 'Asia/Tashkent' });
+
+    // step 2 — the timezone sync lands second and carries no locale; it must not rewrite anything
+    const sync = await app.inject({ method: 'PATCH', url: '/api/me/profile', headers: a, payload: { name: 'Час', tz: 'UTC' } });
+    expect(sync.statusCode, `sync without a locale: ${JSON.stringify(await sync.json())}`).toBe(200);
+    const s = (await sync.json()) as { id: string; locale: string; localeExplicit: boolean; tz: string; name: string };
+    expect(s.tz, 'the timezone did sync').toBe('UTC');
+    expect(s.name, 'the name went through').toBe('Час');
+    expect(s.locale, 'the picked language survived the sync').toBe('uz');
+    expect(s.localeExplicit, 'and the flag still says the person chose it').toBe(true);
+    const [row] = await t.db.select({ locale: users.locale, explicit: users.localeExplicit, tz: users.tz })
+      .from(users).where(eq(users.id, s.id)).limit(1);
+    expect(row).toMatchObject({ locale: 'uz', explicit: true, tz: 'UTC' });
+
+    // validation is not weakened: an unknown language is still refused
+    const bad = await app.inject({ method: 'PATCH', url: '/api/me/profile', headers: a, payload: { name: 'Час', locale: 'de' } });
+    expect(bad.statusCode, 'a locale that is not ru/uz/en stays a 400').toBe(400);
+    const noName = await app.inject({ method: 'PATCH', url: '/api/me/profile', headers: a, payload: { tz: 'UTC' } });
+    expect(noName.statusCode, 'the name is still required').toBe(400);
+  });
+
   it('the database column itself defaults to English, and the data step moves un-chosen rows', async () => {
     const def = await t.sql`
       select pg_get_expr(d.adbin, d.adrelid) as def

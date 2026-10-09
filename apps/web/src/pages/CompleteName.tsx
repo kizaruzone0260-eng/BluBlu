@@ -29,7 +29,9 @@ export default function CompleteName({ me, onDone }: { me: Me; onDone: () => voi
     try {
       await api('/api/me/profile', {
         method: 'PATCH',
-        body: JSON.stringify({ name: first.trim(), lastName: last.trim(), locale: me.locale, tz: me.tz }),
+        // the name screen asks for names only; sending the locale here would be the same stale
+        // write the timezone sync used to be (task 1) — this account may be seconds old
+        body: JSON.stringify({ name: first.trim(), lastName: last.trim(), tz: me.tz }),
       });
       onDone();
       nav('/');
