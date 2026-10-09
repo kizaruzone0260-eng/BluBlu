@@ -248,11 +248,14 @@ export function CommentsFab({ sessionId, open, onToggle }: {
   const { t } = useTranslation();
   const { q } = useLessonComments(sessionId);
   const unread = q.data?.unread ?? 0;
+  // while the panel is open the button is behind it (the drawer and the bottom sheet both cover
+  // that corner), and a control you cannot reach is worse than no control: the panel has its own ✕
+  if (open) return null;
   return (
     <button
-      type="button" className={`lc-fab${open ? ' chip-active' : ''}`} style={{ marginTop: 0 }}
+      type="button" className="lc-fab" style={{ marginTop: 0 }}
       data-testid="comments-fab" aria-label={t('lesson.commentsTitle')} aria-expanded={open}
-      onClick={() => onToggle(!open)}
+      onClick={() => onToggle(true)}
     >
       💬{unread > 0 && <span className="badge lc-unread" data-testid="comments-fab-unread">{unread > 99 ? '99+' : unread}</span>}
     </button>

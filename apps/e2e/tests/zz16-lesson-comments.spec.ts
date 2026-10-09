@@ -25,8 +25,8 @@ const STUDENT_PW = 'Secret1234';
 const en = JSON.parse(readFileSync(new URL('../../../packages/shared/src/locales/en.json', import.meta.url), 'utf8')) as
   { lesson: Record<string, string> };
 
-async function livekitReachable(): Promise<boolean> {
-  const ws = process.env.LIVEKIT_WS_URL ?? process.env.LIVEKIT_URL ?? '';
+/** the same probe the other RTC specs use: the URL the API hands to the client on join */
+async function livekitReachable(ws: string): Promise<boolean> {
   if (!ws) return false;
   try {
     const u = new URL(ws);
@@ -216,11 +216,28 @@ test.describe('lesson comments (task 2)', () => {
   });
 
   test('the compact button stays reachable when the board is the main window', async ({ browser }) => {
-    test.skip(!(await livekitReachable()), 'LiveKit is not reachable — the board-as-main-window view needs a joined room (LIVEKIT_* env; CI skips it, the panel itself is covered by the tests above)');
+    const join = await api.post(`/api/lessons/${sessionId}/join`, { headers: { authorization: `Bearer ${token}` } });
+    expect(join.status()).toBe(200);
+    const wsUrl = String((await join.json()).wsUrl as string);
+    test.skip(!(await livekitReachable(wsUrl)), `LiveKit at ${wsUrl} is not reachable — the board-as-main-window view needs a joined room (LIVEKIT_* env; CI skips it, the panel itself is covered by the tests above)`);
     const t = await teacher(browser);
+    // joining media needs the device preview first (the button is disabled until it ran), and a
+    // real LiveKit round-trip on a loaded machine needs more than the default budget
+    test.setTimeout(240_000);
+    await t.page.getByTestId('check-devices').click();
+    await expect(t.page.getByTestId('join-lesson')).toBeEnabled({ timeout: 30_000 });
     await t.page.getByTestId('join-lesson').click();
     await expect(t.page.getByTestId('board-toggle')).toBeVisible({ timeout: 30_000 });
+    // diagnostic for this RTC-only path: what the board endpoint actually answered
+    t.page.on('response', (r) => {
+      if (!r.url().includes('/board')) return;
+      void r.text().then((b) => m('board response', { status: r.status(), body: b.slice(0, 80) }));
+    });
+    // the compact button replaces the tab while the board owns the window, and it steps aside
+    // for the panel it opens — so the panel has to be closed before the button is expected
+    await t.page.getByTestId('comments-close').click();
     await t.page.getByTestId('board-toggle').click();
+    await expect(t.page.getByTestId('lesson-stage')).toBeVisible({ timeout: 15_000 });
     await expect(t.page.getByTestId('comments-fab')).toBeVisible({ timeout: 25_000 });
     await t.page.getByTestId('comments-fab').click();
     await expect(t.page.getByTestId('comments-panel')).toBeVisible();
