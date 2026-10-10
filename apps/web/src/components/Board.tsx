@@ -287,11 +287,20 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
         <h2 style={{ margin: 0 }}>{t('lesson.board')}</h2>
         {canEdit ? (
           <>
-            <div className="board-tabs" data-testid="board-tabs" role="tablist" ref={tabsRef}
+            <div className="board-tabs" data-testid="board-tabs" role="group" ref={tabsRef}
               aria-label={t('lesson.boardsAria')}>
               {pages.map((p) => (
-                <div key={p} className={`board-tab${p === current ? ' active' : ''}`} data-testid={`board-tab-${p}`}
-                  role="tab" aria-selected={p === current}>
+                /*
+                 * axe поймал это новой проверкой нижней панели урока (2026-10-11), и поймал по делу:
+                 * полоска была `role=tablist`, а каждая вкладка — `role=tab`-КОНТЕЙНЕРОМ, внутри
+                 * которого жили кнопка имени и кнопка меню. Получалось то `nested-interactive`
+                 * (интерактивное внутри интерактивного), то `aria-required-children` (у tablist
+                 * теперь дочка — обёртка, а не tab). Настоящих ARIA-табов здесь и не было: у вкладки
+                 * нет aria-controls, потому что полотно рисует Excalidraw. Поэтому полоска — group,
+                 * вкладка — обычная кнопка с aria-current, а её меню остаётся role=menu рядом.
+                 * Клики, data-testid, подписи и стили не менялись (проверяет zz11).
+                 */
+                <div key={p} className={`board-tab${p === current ? ' active' : ''}`} data-testid={`board-tab-${p}`}>
                   {renaming?.page === p ? (
                     <input data-testid="board-rename-input" autoFocus maxLength={40} value={renaming.value}
                       aria-label={t('lesson.boardRenameAria')}
@@ -302,7 +311,8 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
                       }}
                       onBlur={() => commitRename()} />
                   ) : (
-                    <button type="button" className="board-tab-name" onClick={() => send({ type: 'switch', page: p })}
+                    <button type="button" aria-current={p === current ? 'true' : undefined}
+                      className="board-tab-name" onClick={() => send({ type: 'switch', page: p })}
                       title={label(p)}>
                       {label(p)}
                     </button>

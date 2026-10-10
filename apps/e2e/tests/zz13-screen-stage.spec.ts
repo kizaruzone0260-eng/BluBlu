@@ -13,6 +13,7 @@
  * Nothing about the app's own code path is stubbed.
  */
 import { test, expect, request as pw } from '@playwright/test';
+import { barClick } from './controlBar';
 import {
   BASE, loginUi, m, stack, urlHost, type Ctx,
 } from './boardFixtures';
@@ -174,7 +175,7 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
       if (raced === 'up') return;
       tried.push(await err.first().innerText().catch(() => '(no message)'));
       // the share is off again (the publish failed), so this click is a fresh start, not a toggle
-      await pT.getByTestId('share-toggle').click().catch(() => undefined);
+      await barClick(pT, 'share-toggle').catch(() => undefined);
     }
     throw new Error(`the screen share did not start after 3 attempts: ${tried.join(' | ')}`);
   }
@@ -182,6 +183,15 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
   /** Where the stop button, the floating camera and the stage actually are — for layout bugs. */
   async function geometry(pT: import('@playwright/test').Page) {
     return pT.evaluate(() => {
+      /*
+       * Задача 2026-10-10: страница урока теперь оканчивается нижней панелью управления, которая
+       * резервирует свои 76 px в потоке (`.bar-slot`) — из-за этого документ стал выше вьюпорта, и
+       * кнопка «Остановить» после кликов по предпросмотру могла остаться за верхней кромкой экрана.
+       * Проверка «над кнопкой ничего не висит» имеет смысл там, где человек её реально видит,
+       * поэтому кнопку сначала заводим в центр экрана; координаты и elementFromPoint берутся уже
+       * после этого, то есть замер соответствует клику мышью.
+       */
+      document.querySelector('[data-testid=share-stop]')?.scrollIntoView({ block: 'center' });
       const box = (sel: string) => {
         const el = document.querySelector(sel);
         if (!el) return null;
@@ -213,7 +223,7 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
       const hosts = new Set<string>();
       pT.on('request', (r) => hosts.add(urlHost(r.url())));
 
-      await pT.getByTestId('share-toggle').click();
+      await barClick(pT, 'share-toggle');
       await expectShared(pT);
       await expect(pT.getByTestId('screen-stage')).toBeVisible({ timeout: 20_000 });
       // the presenter's own screen owns the main window too (task: «у показывающего тоже»)
@@ -268,7 +278,7 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
     if (!room2) return;
     const { pT, pS, finish } = await twoParticipants(browser, room2, true);
     try {
-      await pT.getByTestId('share-toggle').click();
+      await barClick(pT, 'share-toggle');
       await expectShared(pT);
       await expect(pS.getByTestId('screen-stage')).toBeVisible({ timeout: 30_000 });
 
@@ -313,7 +323,7 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
     if (!room3) return;
     const { pT, pS, finish } = await twoParticipants(browser, room3, true);
     try {
-      await pT.getByTestId('share-toggle').click();
+      await barClick(pT, 'share-toggle');
       await expectShared(pT);
       await expect(pS.getByTestId('screen-stage')).toBeVisible({ timeout: 30_000 });
 
@@ -366,13 +376,13 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
     if (!room4) return;
     const { pT, pS, finish } = await twoParticipants(browser, room4, true);
     try {
-      await pT.getByTestId('share-toggle').click();
+      await barClick(pT, 'share-toggle');
       await expectShared(pT);
       await expect(pS.getByTestId('screen-stage')).toBeVisible({ timeout: 30_000 });
 
       // the teacher opens the board WHILE sharing: the screen still owns the window, and the
       // switch appears for everybody (the board is shared state, the choice of what to look at is local)
-      await pT.getByTestId('board-toggle').click();
+      await barClick(pT, 'board-toggle');
       await expect(pT.getByTestId('stage-switch')).toBeVisible({ timeout: 15_000 });
       await expect(pT.getByTestId('screen-stage')).toBeVisible();
       await expect(pS.getByTestId('stage-switch')).toBeVisible({ timeout: 15_000 });

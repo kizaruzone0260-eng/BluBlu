@@ -19,6 +19,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { loginUi, makeLesson, m, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
+import { openTab } from './controlBar';
 
 const BASE = `http://127.0.0.1:${stack.port}`;
 const STUDENT_PW = 'Secret1234';
@@ -103,17 +104,18 @@ test.describe('raise hand and the floor (task 2Б)', () => {
   const row = (page: Page) => page.locator('[data-testid^="hand-row-"]').filter({ hasText: 'Ручной' });
   const grantBtn = (page: Page) => row(page).locator('[data-testid^="hand-grant-"]');
   const revokeBtn = (page: Page) => row(page).locator('[data-testid^="hand-revoke-"]');
+  // часть 1 (2026-10-10): очередь поднятых рук живёт во вкладке «Участники» правой панели
   const openQueue = async (page: Page) => {
+    await openTab(page, 'people');
     const panel = page.getByTestId('hands-panel');
     await expect(panel).toBeVisible({ timeout: 25_000 });
-    await panel.locator('summary').click();
     return panel;
   };
 
   test('a raised hand is visible to the teacher, and the student can put it back down', async ({ browser }) => {
     const t = await teacherView(browser);
     const s = await studentView(browser);
-    await expect(s.page.getByTestId('raise-hand')).toHaveText(anyLoc('raiseHand'));
+    await expect(s.page.getByTestId('raise-hand')).toHaveAccessibleName(anyLoc('raiseHand'));
     await s.page.getByTestId('raise-hand').click();
     await expect(s.page.getByTestId('raise-hand')).toHaveAttribute('aria-pressed', 'true');
     const panel = await openQueue(t.page);

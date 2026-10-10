@@ -79,9 +79,17 @@ export function RaiseHandButton({ sessionId, raised }: { sessionId: string; rais
   );
 }
 
-/** The teacher's queue: give the floor, take it back, put every hand down at once. */
-export default function LessonHands({ sessionId, hands, lectureMode }: {
-  sessionId: string; hands: HandRow[]; lectureMode: boolean;
+/**
+ * Очередь поднятых рук внутри вкладки «Участники» (задача 2026-10-10: раньше была отдельным
+ * плавающим блоком над видео).
+ *
+ * Про «Опустить» честно: сервер разрешает учителю только выдать/забрать слово и опустить ВСЕ
+ * руки сразу — опустить чужую руку по одной кнопке права нет, и в этой панели оно не появилось
+ * (права не расширялись). Для выданного слова кнопка называется «Забрать слово», для поднятой без
+ * слова — «Дать слово».
+ */
+export function HandsQueue({ sessionId, hands, lectureMode, isTeacher = true }: {
+  sessionId: string; hands: HandRow[]; lectureMode: boolean; isTeacher?: boolean;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -97,13 +105,13 @@ export default function LessonHands({ sessionId, hands, lectureMode }: {
   const granted = hands.filter((h) => h.grantedAt).length;
 
   return (
-    <details className="peers" data-testid="hands-panel">
-      <summary>
+    <div className="panel-section" data-testid="hands-panel">
+      <div className="panel-section-title">
         ✋ {t('lesson.handsQueue')} · {hands.length}
         {granted > 0 && <span className="muted"> · 🎙 {granted}</span>}
-      </summary>
+      </div>
       {hands.length === 0 && <p className="muted" data-testid="hands-empty">{t('lesson.handsNone')}</p>}
-      {/* aria-live: the list changes while the teacher is looking at the stage, not at this panel */}
+      {/* aria-live: список меняется, пока учитель смотрит на сцену, а не на эту панель */}
       <div className="hands-list" role="list" aria-live="polite">
         {hands.map((h) => {
           const short = h.userId.slice(0, 8);
@@ -119,27 +127,29 @@ export default function LessonHands({ sessionId, hands, lectureMode }: {
                 hands somebody the microphone. The testid changes with the state for the same reason
                 the label does — a test that clicked `hand-grant-*` twice would assert nothing.
               */}
-              <button
-                className="ghost" style={{ marginTop: 0, padding: '2px 6px' }}
-                data-testid={`${h.grantedAt ? 'hand-revoke' : 'hand-grant'}-${short}`}
-                aria-label={label} title={label}
-                disabled={act.isPending}
-                onClick={() => act.mutate({ userId: h.userId, on: !h.grantedAt })}
-              >
-                {h.grantedAt ? '⬇' : '🎙+'}
-              </button>
+              {isTeacher && (
+                <button
+                  className="ghost" style={{ marginTop: 0, padding: '2px 6px' }}
+                  data-testid={`${h.grantedAt ? 'hand-revoke' : 'hand-grant'}-${short}`}
+                  aria-label={label} title={label}
+                  disabled={act.isPending}
+                  onClick={() => act.mutate({ userId: h.userId, on: !h.grantedAt })}
+                >
+                  {h.grantedAt ? '⬇' : '🎙+'}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
-      {hands.length > 0 && (
+      {isTeacher && hands.length > 0 && (
         <button
-          className="secondary" style={{ marginTop: 6 }} data-testid="hands-lower-all"
+          className="bar-item" style={{ marginTop: 6 }} data-testid="hands-lower-all"
           disabled={clear.isPending} onClick={() => clear.mutate()}
         >
-          {t('lesson.lowerAllHands')}
+          ✋⬇ {t('lesson.lowerAllHands')}
         </button>
       )}
-    </details>
+    </div>
   );
 }

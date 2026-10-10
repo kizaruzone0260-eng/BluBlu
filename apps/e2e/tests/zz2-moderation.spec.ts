@@ -1,6 +1,7 @@
 import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { barClick, openMore, openTab } from './controlBar';
 
 function readStack() {
   for (let i = 0; i < 80; i++) {
@@ -67,6 +68,8 @@ test('moderation feedback: mute everyone → toast + student banner, unmute rest
   await pT.getByTestId('join-lesson').click();
   // alone: mute-all is disabled with the hint, and the waiting line is visible
   await expect(pT.getByTestId('waiting-peers')).toBeVisible({ timeout: 30_000 });
+  // часть 1 (2026-10-10): модерация переехала в правую панель — её надо открыть
+  await openTab(pT, 'people');
   await expect(pT.getByTestId('mute-all')).toBeDisabled();
 
   const ctxS = await browser.newContext({ permissions: ['camera', 'microphone'] });
@@ -88,32 +91,33 @@ test('moderation feedback: mute everyone → toast + student banner, unmute rest
 
   // teacher: the participant panel lists the student with mic+camera indicators
   await expect(async () => {
-    const n = await pT.evaluate(() => document.querySelectorAll('.videos [data-local="0"] video').length);
+    const n = await pT.evaluate(() => document.querySelectorAll('[data-local="0"] video').length);
     expect(n).toBeGreaterThan(0);
   }).toPass({ timeout: 30_000 });
-  await pT.getByTestId('peers-panel').locator('summary').click();
+  await openTab(pT, 'people');
   await expect(pT.locator('.peer-row')).toHaveCount(1);
-  await pT.getByTestId('peers-panel').locator('summary').click();
 
   // mute everyone → toast on the teacher, banner + mic off on the student
   await expect(pT.getByTestId('mute-all')).toBeEnabled({ timeout: 20_000 });
-  await pT.getByTestId('mute-all').click();
+  await barClick(pT, 'mute-all');
   await expect(pT.getByTestId('lesson-toast')).toBeVisible({ timeout: 15_000 });
   await expect(pS.getByTestId('banner-muted')).toBeVisible({ timeout: 15_000 });
-  await expect(pS.getByTestId('mic-toggle')).toContainText('🔇', { timeout: 15_000 });
+  // часть 1: эмодзи ушло из текста кнопки в a11y-состояние, поэтому проверяется aria-pressed
+  await expect(pS.getByTestId('mic-toggle')).toHaveAttribute('aria-pressed', 'false', { timeout: 15_000 });
   // a student cannot talk over the class while muted
-  await pS.getByTestId('mic-toggle').click();
-  await expect(pS.getByTestId('mic-toggle')).toContainText('🔇');
+  await barClick(pS, 'mic-toggle');
+  await expect(pS.getByTestId('mic-toggle')).toHaveAttribute('aria-pressed', 'false');
 
   // unmute everyone → banner gone, mic back on
-  await expect(pT.getByTestId('mute-all')).toHaveClass(/chip-active/);
-  await pT.getByTestId('mute-all').click();
+  await expect(pT.getByTestId('mute-all')).toHaveAttribute('aria-pressed', 'true');
+  await barClick(pT, 'mute-all');
   await expect(pS.getByTestId('banner-muted')).toHaveCount(0, { timeout: 15_000 });
-  await expect(pS.getByTestId('mic-toggle')).toContainText('🎙', { timeout: 15_000 });
+  await expect(pS.getByTestId('mic-toggle')).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 });
 
-  // lecture mode: explicit active state on the button + student banner
+  // lecture mode: explicit active state on the control + student banner
+  await openMore(pT);
   await pT.getByTestId('lecture-mode').click();
-  await expect(pT.getByTestId('lecture-mode')).toHaveClass(/chip-active/);
+  await expect(pT.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
   await expect(pS.getByTestId('banner-lecture')).toBeVisible({ timeout: 15_000 });
 
   await api.post(`/api/lessons/${session.id}/end`, { headers: H, data: {} });

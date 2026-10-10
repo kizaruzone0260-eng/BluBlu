@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Room, RoomEvent, Track, type Track as LkTrack } from 'livekit-client';
@@ -7,8 +7,11 @@ import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
 import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
-import LessonComments, { CommentsFab, useCommentFrames } from '../components/LessonComments';
-import LessonHands, { RaiseHandButton, useHandFrames, useHands } from '../components/LessonHands';
+import { CommentsPanel, useCommentFrames, useCommentUnread } from '../components/LessonComments';
+import { useHandFrames, useHands } from '../components/LessonHands';
+import LessonBar, { type BarActions, type BarDevices, type BarState } from '../components/LessonBar';
+import LessonPanel, { type PanelTab } from '../components/LessonPanel';
+import { DeviceSettings, speakerPickSupported, useMicMeter } from '../components/DeviceSettings';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
 
@@ -31,7 +34,26 @@ interface Tile {
 
 const LS_CAM = 'blublu.camDevice';
 const LS_MIC = 'blublu.micDevice';
+const LS_SPK = 'blublu.speakerDevice';
 const LS_PIP = 'blublu.pip'; // task B: remembered floating-camera position + flags
+/**
+ * Задача 2026-10-10: «запомнить выбор и включённость между уроками». Это не право и не
+ * ограничение — это то, что человек оставил для себя: пришли на следующий урок с выключенной
+ * камерой, если так ушли с прошлого. Ключа нет ⇒ прежнее поведение (публиковать и микрофон, и
+ * камеру), поэтому первая сессия ничем не отличается от вчерашней.
+ */
+const LS_WANTED_CAM = 'blublu.camWanted';
+const LS_WANTED_MIC = 'blublu.micWanted';
+
+const readFlag = (key: string, dflt: boolean): boolean => {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v === '1';
+  } catch { return dflt; }
+};
+const writeFlag = (key: string, on: boolean) => {
+  try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* приватный режим — просто не запомним */ }
+};
 
 // livekit-client keeps its capture-option types internal — derive them from the
 // method signatures so the constraint chain below type-checks without casts to any
@@ -44,6 +66,10 @@ type MicOpts = NonNullable<Parameters<Room['localParticipant']['setMicrophoneEna
  * dist/src/room/track/options.d.ts and screenCaptureToDisplayMediaStreamOptions).
  */
 type ShareOpts = NonNullable<Parameters<Room['localParticipant']['setScreenShareEnabled']>[1]>;
+/** setSubscribed есть у RemoteTrackPublication в 2.22.3 (dist/src/room/track/RemoteTrackPublication.d.ts). */
+type Subscribable = { setSubscribed?: (subscribed: boolean) => Promise<void> };
+/** switchActiveDevice(kind, deviceId, exact) есть у Room в 2.22.3 (dist/src/room/Room.d.ts:228). */
+type SpeakerSwitch = { switchActiveDevice?: (kind: string, deviceId: string, exact?: boolean) => Promise<boolean> };
 
 /** LiveKit/RTCException name → localized sentence with the browser's reason appended. */
 function useMediaErrorText() {
@@ -124,9 +150,25 @@ export default function Lesson() {
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
-  // task 2: the comments panel is one piece of state, because the toolbar tab and the compact
-  // button that stays over the full-screen stage open the same panel
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  /*
+   * Задача 2026-10-10: правая панель с вкладками «Участники» и «Комментарии». Одна открытая
+   * панель и одна активная вкладка; кнопка панели управления переключает СВОЮ вкладку, поэтому
+   * повторное нажатие закрывает её, а не открывает вторую.
+   */
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTab>('people');
+  const commentsOpen = panelOpen && panelTab === 'comments';
+  const participantsOpen = panelOpen && panelTab === 'people';
+  const toggleTab = (tab: PanelTab) => {
+    if (panelOpen && panelTab === tab) setPanelOpen(false);
+    else { setPanelTab(tab); setPanelOpen(true); }
+  };
+  /** лист настроек устройств из меню «Ещё» */
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  /** входящее видео на паузе (экономия трафика) — применяется и к новым подпискам */
+  const [videoPaused, setVideoPaused] = useState(false);
+  const videoPausedRef = useRef(false);
+  const [spkErr, setSpkErr] = useState('');
   /**
    * Task 2: the teacher keeps the transcript after the lesson ends. `session` goes away with the
    * lesson (the status query says "not running"), so the id of the lesson this page actually saw
@@ -144,6 +186,7 @@ export default function Lesson() {
   const onHandFrame = useHandFrames(session?.id ?? null);
   const myHand = handsQ.q.data?.mine ?? null;
   const hasFloor = Boolean(myHand?.grantedAt);
+  const unread = useCommentUnread(session?.id ?? null);
   /*
    * The socket effect closes over whatever `me` was when it ran, and after a hard reload the token
    * can be ready before the profile is. A stale `me` inside `onmessage` would then drop the
@@ -157,7 +200,7 @@ export default function Lesson() {
     const t = window.setTimeout(() => setFloorTakenNotice(false), 8_000);
     return () => window.clearTimeout(t);
   }, [floorTakenNotice]);
-  /**
+  /*
    * «Дать слово» ends with the microphone ON in this browser, because LiveKit will not do it for
    * us: `mutePublishedTrack(muted: false)` answers 412 "remote unmute not enabled" (measured in
    * the CI run of 2026-10-10). The student raising the hand already asked to speak, so turning the
@@ -197,11 +240,17 @@ export default function Lesson() {
   const [previewChecked, setPreviewChecked] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  /** живой поток микрофона на экране проверки: без него нет индикатора уровня */
+  const [micStream, setMicStream] = useState<MediaStream | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [spks, setSpks] = useState<MediaDeviceInfo[]>([]);
   const [savedCam, setSavedCam] = useState<string>(() => localStorage.getItem(LS_CAM) ?? '');
   const [savedMic, setSavedMic] = useState<string>(() => localStorage.getItem(LS_MIC) ?? '');
+  const [savedSpk, setSavedSpk] = useState<string>(() => localStorage.getItem(LS_SPK) ?? '');
+  const canPickSpeaker = useMemo(() => speakerPickSupported(), []);
+  const micLevel = useMicMeter(micStream);
 
   const isTeacher = me?.role === 'teacher';
 
@@ -213,8 +262,18 @@ export default function Lesson() {
   async function refreshDevices() {
     try {
       const list = await navigator.mediaDevices.enumerateDevices();
-      setCams(list.filter((d) => d.kind === 'videoinput'));
-      setMics(list.filter((d) => d.kind === 'audioinput'));
+      /*
+       * Измерено 2026-10-10 (`apps/e2e/scripts/probe-devices.mjs`, тот же Edge и те же флаги, что у
+       * e2e-стека): в списке есть не только устройства, но и ярлык «устройство по умолчанию» с
+       * deviceId === 'default' и подписью вида «Fake Default Audio Input». Это то же самое
+       * «по умолчанию», которое меню и экран проверки рисуют отдельной строкой, поэтому дубль
+       * убираем; пустой deviceId означает то же (его нельзя выбрать через exact). Остальные записи
+       * остаются как есть — ничего не придумываем.
+       */
+      const pickable = (d: MediaDeviceInfo) => Boolean(d.deviceId) && d.deviceId !== 'default';
+      setCams(list.filter((d) => d.kind === 'videoinput' && pickable(d)));
+      setMics(list.filter((d) => d.kind === 'audioinput' && pickable(d)));
+      setSpks(list.filter((d) => d.kind === 'audiooutput' && pickable(d)));
     } catch { /* enumeration needs permission — preview/join will retry */ }
   }
 
@@ -240,7 +299,7 @@ export default function Lesson() {
       setLayout(status.data.session.layout);
       setMuteAll(status.data.session.muteAll); // restored on reload/reconnect
       setBoardOpen(status.data.session.boardOpen); // task B: the board survives a reload
-      setLectureMode(status.data.session.lectureMode); // task 2: the comments banner is shown before any RTC join
+      setLectureMode(status.data.session.lectureMode); // the comments banner shows before any RTC join
     }
   }, [status.data]);
 
@@ -291,6 +350,7 @@ export default function Lesson() {
     };
     void connect();
     return () => { disposed = true; window.clearTimeout(retryTimer); ws?.close(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id]);
 
   useEffect(() => () => {
@@ -314,24 +374,38 @@ export default function Lesson() {
     return { stream: null, errKey: lastKey || 'camUnavailable', err: lastErr };
   }
 
+  /** та же цепочка для микрофона, но поток остаётся живым — он питает индикатор уровня */
+  async function openMicForCheck(deviceId: string): Promise<{ stream: MediaStream | null; errKey: string; err: unknown }> {
+    let lastKey = '';
+    let lastErr: unknown;
+    for (const c of microphoneAttempts(deviceId)) {
+      try {
+        return { stream: await navigator.mediaDevices.getUserMedia({ audio: c === true ? true : c }), errKey: '', err: undefined };
+      } catch (e: unknown) {
+        lastKey = mediaErrorKey(e, 'microphone');
+        lastErr = e;
+        if (!isRetryableMediaError((e as { name?: string })?.name)) break;
+      }
+    }
+    return { stream: null, errKey: lastKey || 'micUnavailable', err: lastErr };
+  }
+
+  function stopPreview() {
+    previewStream?.getTracks().forEach((tr) => tr.stop());
+    setPreviewStream(null);
+    micStream?.getTracks().forEach((tr) => tr.stop());
+    setMicStream(null);
+  }
+
   async function loadPreview() {
     setPreviewBusy(true);
     setError('');
     setCamErr('');
     setMicErr('');
-    let micOk = false;
     // microphone: saved device → default (permission prompt lands here first)
-    for (const c of microphoneAttempts(savedMic)) {
-      try {
-        const st = await navigator.mediaDevices.getUserMedia({ audio: c === true ? true : c });
-        st.getTracks().forEach((tr) => tr.stop());
-        micOk = true;
-        break;
-      } catch (e: unknown) {
-        setMicErr(mediaErrorText(mediaErrorKey(e, 'microphone'), e));
-        if (!isRetryableMediaError((e as { name?: string })?.name)) break;
-      }
-    }
+    const mic = await openMicForCheck(savedMic);
+    if (mic.stream) setMicStream(mic.stream);
+    else setMicErr(mediaErrorText(mic.errKey, mic.err));
     // camera with a LIVE self-view (the button state below is the real stream state)
     const cam = await gumCamera(savedCam);
     if (cam.stream) setPreviewStream(cam.stream);
@@ -341,13 +415,13 @@ export default function Lesson() {
     setPreviewBusy(false);
   }
 
-  function stopPreview() {
-    previewStream?.getTracks().forEach((tr) => tr.stop());
-    setPreviewStream(null);
-  }
-
   async function togglePreviewCam() {
-    if (previewStream) { stopPreview(); setCamErr(''); return; }
+    if (previewStream) {
+      previewStream.getTracks().forEach((tr) => tr.stop());
+      setPreviewStream(null);
+      setCamErr('');
+      return;
+    }
     const cam = await gumCamera(savedCam);
     if (cam.stream) { setPreviewStream(cam.stream); setCamErr(''); }
     else setCamErr(mediaErrorText(cam.errKey, cam.err));
@@ -429,6 +503,26 @@ export default function Lesson() {
     setTiles((prev) => prev.filter((x) => x.key !== key));
   };
 
+  /**
+   * «Остановить входящее видео»: каждая видеодорожка удалённого участника отписывается
+   * (`publication.setSubscribed(false)`), звук и доска не трогаются. То же делает обработчик
+   * TrackSubscribed для подписок, появившихся позже, — состояние живёт в ref, потому что
+   * обработчики навешаны один раз на комнату.
+   */
+  function applyVideoPause(paused: boolean) {
+    setVideoPaused(paused);
+    videoPausedRef.current = paused;
+    const room = roomRef.current;
+    if (!room) return;
+    for (const p of room.remoteParticipants.values()) {
+      for (const pub of p.getTrackPublications()) {
+        if (pub.kind !== Track.Kind.Video) continue;
+        const sub = pub as unknown as Subscribable;
+        if (typeof sub.setSubscribed === 'function') void sub.setSubscribed(!paused).catch(() => undefined);
+      }
+    }
+  }
+
   /** Publish the camera through the constraint chain; returns '' or an error key. */
   async function enableCameraIn(room: Room): Promise<{ errKey: string; err: unknown }> {
     let lastKey = '';
@@ -450,7 +544,7 @@ export default function Lesson() {
     const s = session;
     if (!s) return;
     setError('');
-    stopPreview(); // release the preview stream so LiveKit can own the devices
+    stopPreview(); // release the preview streams so LiveKit can own the devices
     try {
       const { token, wsUrl } = await api<{ token: string; wsUrl: string }>(`/api/lessons/${s.id}/join`, { method: 'POST' });
       const room = new Room({ adaptiveStream: true, dynacast: true });
@@ -460,6 +554,10 @@ export default function Lesson() {
           { key: `${participant.sid}:${pub.trackSid}`, kind: track.kind === 'video' ? 'video' : 'audio', name: peerName(participant.identity, participant.name), local: false, screen: pub.source === Track.Source.ScreenShare, sid: participant.sid },
           track,
         );
+        if (videoPausedRef.current && track.kind === 'video') {
+          const sub = pub as unknown as Subscribable;
+          if (typeof sub.setSubscribed === 'function') void sub.setSubscribed(false).catch(() => undefined);
+        }
         refreshPeerList(room);
       });
       room.on(RoomEvent.TrackUnsubscribed, (_t, pub, participant) => removeTile(`${participant.sid}:${pub.trackSid}`));
@@ -475,9 +573,9 @@ export default function Lesson() {
         // what kind of surface the presenter actually picked (Chromium and Firefox report it;
         // Safari does not, and then the warning simply never appears — which is honest)
         if (pub.source === Track.Source.ScreenShare) {
-          const s = (track.mediaStreamTrack?.getSettings?.() ?? {}) as { displaySurface?: string };
-          const surface = s.displaySurface === 'browser' || s.displaySurface === 'window' || s.displaySurface === 'monitor'
-            ? s.displaySurface : '';
+          const st = (track.mediaStreamTrack?.getSettings?.() ?? {}) as { displaySurface?: string };
+          const surface = st.displaySurface === 'browser' || st.displaySurface === 'window' || st.displaySurface === 'monitor'
+            ? st.displaySurface : '';
           setShareSurface(surface);
           // collapsed by default (task: «по умолчанию свёрнут, разворачивается»); when the shared
           // surface is a browser tab the warning below explains why it stays collapsed
@@ -498,7 +596,7 @@ export default function Lesson() {
       room.on(RoomEvent.ParticipantDisconnected, () => refreshPeerList(room));
       // task B «auto»: the loudest remote voice owns the main window
       room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-        const top = speakers.find((s) => s.sid !== room.localParticipant.sid);
+        const top = speakers.find((sp) => sp.sid !== room.localParticipant.sid);
         setActiveSid(top?.sid ?? null);
       });
       room.on(RoomEvent.Disconnected, () => { setConnected(false); if (tokenRefreshRef.current) { clearInterval(tokenRefreshRef.current); tokenRefreshRef.current = null; } });
@@ -523,6 +621,14 @@ export default function Lesson() {
       if (tokenRefreshRef.current) clearInterval(tokenRefreshRef.current);
       tokenRefreshRef.current = setInterval(() => { void rejoin(); }, 30 * 60_000);
       await room.connect(wsUrl, token);
+      // запомнившийся динамик, если он есть и браузер это умеет
+      if (savedSpk && canPickSpeaker) {
+        const sw = room as unknown as SpeakerSwitch;
+        if (typeof sw.switchActiveDevice === 'function') {
+          try { await sw.switchActiveDevice('audiooutput', savedSpk, true); setSpkErr(''); }
+          catch { setSpkErr(t('lesson.speakerUnsupported')); }
+        }
+      }
       // mic first (camera failures must not swallow the mic), then camera — each
       // with its own soft→minimal constraint chain and a visible error, never silent.
       // Task 3: a student joining while lecture mode or «mute everyone» is ON
@@ -531,9 +637,11 @@ export default function Lesson() {
       // decides whether the publish is allowed, so trusting a stale queue here cannot open a mic
       // that the media server would refuse.
       const micBlocked = !isTeacher && !hasFloor && (lectureMode || s.lectureMode || muteAll || s.muteAll);
+      const wantMic = readFlag(LS_WANTED_MIC, true);
+      const wantCam = readFlag(LS_WANTED_CAM, true);
       let micKey = '';
       let micE: unknown;
-      if (!micBlocked) {
+      if (!micBlocked && wantMic) {
         for (const c of microphoneAttempts(localStorage.getItem(LS_MIC))) {
           try {
             await room.localParticipant.setMicrophoneEnabled(true, c === true ? undefined : (c as MicOpts));
@@ -546,8 +654,10 @@ export default function Lesson() {
         }
       }
       setMicErr(micKey ? mediaErrorText(micKey, micE) : '');
-      const cam = await enableCameraIn(room);
-      setCamErr(cam.errKey ? mediaErrorText(cam.errKey, cam.err) : '');
+      if (wantCam) {
+        const cam = await enableCameraIn(room);
+        setCamErr(cam.errKey ? mediaErrorText(cam.errKey, cam.err) : '');
+      } else setCamErr('');
       refreshPeerList(room);
       refreshLocal(room);
       void refreshDevices();
@@ -568,6 +678,8 @@ export default function Lesson() {
     setLocalCamOn(false);
     setLocalMicOn(false);
     setScreenOn(false);
+    setVideoPaused(false);
+    setDevicesOpen(false);
   }
 
   /**
@@ -606,9 +718,11 @@ export default function Lesson() {
     if (localCamOn) {
       await room.localParticipant.setCameraEnabled(false).catch(() => undefined);
       setCamErr('');
+      writeFlag(LS_WANTED_CAM, false);
     } else {
       const cam = await enableCameraIn(room);
       setCamErr(cam.errKey ? mediaErrorText(cam.errKey, cam.err) : '');
+      writeFlag(LS_WANTED_CAM, !cam.errKey);
     }
     refreshLocal(room);
   }
@@ -621,15 +735,19 @@ export default function Lesson() {
     // task 2Б: «дать слово» is exactly the exception to that rule, and it arrives here as state
     // from the queue, which the socket keeps fresh
     if (!localMicOn && !isTeacher && !hasFloor && (muteAll || lectureMode)) return;
-    if (localMicOn) await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
-    else {
+    if (localMicOn) {
+      await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+      writeFlag(LS_WANTED_MIC, false);
+    } else {
       try {
         await room.localParticipant.setMicrophoneEnabled(true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
         setMicErr('');
+        writeFlag(LS_WANTED_MIC, true);
       } catch (e: unknown) {
         try {
           await room.localParticipant.setMicrophoneEnabled(true);
           setMicErr('');
+          writeFlag(LS_WANTED_MIC, true);
         } catch (e2: unknown) {
           setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e));
         }
@@ -647,6 +765,12 @@ export default function Lesson() {
       const cam = await enableCameraIn(room);
       setCamErr(cam.errKey ? mediaErrorText(cam.errKey, cam.err) : '');
       refreshLocal(room);
+    } else if (previewChecked) {
+      // на экране проверки смена камеры сразу видна в предпросмотре
+      previewStream?.getTracks().forEach((tr) => tr.stop());
+      const cam = await gumCamera(deviceId);
+      if (cam.stream) { setPreviewStream(cam.stream); setCamErr(''); }
+      else setCamErr(mediaErrorText(cam.errKey, cam.err));
     }
   }
 
@@ -664,8 +788,32 @@ export default function Lesson() {
         catch (e2: unknown) { setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e)); }
       }
       refreshLocal(room);
+    } else if (previewChecked) {
+      // и здесь смена сразу слышна: индикатор уровня переезжает на новый поток
+      micStream?.getTracks().forEach((tr) => tr.stop());
+      const mic = await openMicForCheck(deviceId);
+      if (mic.stream) { setMicStream(mic.stream); setMicErr(''); }
+      else setMicErr(mediaErrorText(mic.errKey, mic.err));
     }
   }
+
+  /** динамик: localStorage + `switchActiveDevice`; при отказе движка — понятная причина */
+  async function pickSpeaker(deviceId: string) {
+    setSavedSpk(deviceId);
+    try { localStorage.setItem(LS_SPK, deviceId); } catch { /* приватный режим */ }
+    const room = roomRef.current;
+    if (!room || !deviceId) { setSpkErr(''); return; }
+    const sw = room as unknown as SpeakerSwitch;
+    if (typeof sw.switchActiveDevice !== 'function') { setSpkErr(t('lesson.speakerUnsupported')); return; }
+    try { await sw.switchActiveDevice('audiooutput', deviceId, true); setSpkErr(''); }
+    catch { setSpkErr(t('lesson.speakerUnsupported')); }
+  }
+
+  /** своя рука из панели управления: тот же REST, что был у отдельной кнопки */
+  const handM = useMutation({
+    mutationFn: () => api(`/api/lessons/${session?.id ?? ''}/hand`, { method: myHand ? 'DELETE' : 'POST' }),
+    onSettled: () => handsQ.invalidate(),
+  });
 
   const act = useMutation({
     mutationFn: (p: { path: string; body?: unknown; method?: string }) =>
@@ -770,7 +918,7 @@ export default function Lesson() {
     // moving the pointer RIGHT shrinks the right-offset
     const nx = dragRef.current.px0 - (e.clientX - dragRef.current.x0);
     const ny = dragRef.current.py0 - (e.clientY - dragRef.current.y0);
-    setPip((p) => ({ ...p, x: Math.min(maxX, Math.max(8, nx)), y: Math.min(maxY, Math.max(8, ny)) }));
+    setPip((p) => ({ ...p, x: Math.min(maxX, Math.max(8, nx)), y: Math.max(8, Math.min(maxY, ny)) }));
   }
   function pipUp() {
     if (!dragRef.current) return;
@@ -789,28 +937,103 @@ export default function Lesson() {
     if (!dragRef.current) localStorage.setItem(LS_PIP, JSON.stringify(pip));
   }, [pip.x, pip.y, pip.min, pip.hidden]);
 
-  const devicePickers = (
-    <div className="row" style={{ gap: 8 }}>
-      <label htmlFor="cam-select" className="muted">{t('lesson.toggleCamera')}</label>
-      <select id="cam-select" data-testid="cam-select" style={{ width: 'auto', marginTop: 0 }} value={savedCam}
-        onChange={(e) => void pickCamera(e.target.value)}>
-        <option value="">{t('lesson.deviceDefault')}</option>
-        {cams.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${t('lesson.camera')} ${i + 1}`}</option>)}
-      </select>
-      <label htmlFor="mic-select" className="muted">{t('lesson.toggleMic')}</label>
-      <select id="mic-select" data-testid="mic-select" style={{ width: 'auto', marginTop: 0 }} value={savedMic}
-        onChange={(e) => void pickMicrophone(e.target.value)}>
-        <option value="">{t('lesson.deviceDefault')}</option>
-        {mics.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `${t('lesson.microphone')} ${i + 1}`}</option>)}
-      </select>
-    </div>
-  );
+  /**
+   * Горячие клавиши (задача 2026-10-10): M — микрофон, V — камера, H — рука, C — комментарии,
+   * P — участники. Не срабатывают, когда фокус в поле ввода (иначе печатающий человек вдруг
+   * выключит себе микрофон) и когда фокус внутри доски: там V/H/P — собственные инструменты
+   * Excalidraw, и они не должны превращаться в кнопки урока.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const el = e.target as (HTMLElement | null);
+      if (el) {
+        const tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable) return;
+        if (typeof el.closest === 'function' && el.closest('.board-frame, .excalidraw, iframe')) return;
+      }
+      if (!session) return;
+      const k = e.key.toLowerCase();
+      if (k === 'm' && connected) void toggleMicInRoom();
+      else if (k === 'v' && connected) void toggleCameraInRoom();
+      else if (k === 'h') handM.mutate();
+      else if (k === 'c') toggleTab('comments');
+      else if (k === 'p') toggleTab('people');
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, connected, localMicOn, localCamOn, myHand, panelOpen, panelTab, savedMic, lectureMode, muteAll, hasFloor]);
+
+  const noteHref = isTeacher
+    ? `/notes?new=1&classId=${session?.classId ?? classIdParam ?? ''}&eventId=${eventId ?? session?.eventId ?? ''}`
+    : '/sheets?new=1';
+
+  const setLecture = () => {
+    const s = session; if (!s) return;
+    const on = !lectureMode;
+    setLectureMode(on);
+    act.mutate({ path: `/api/lessons/${s.id}/lecture-mode`, body: { on } });
+  };
+
+  const barState: BarState = {
+    connected, micOn: localMicOn, camOn: localCamOn, screenOn, handRaised: Boolean(myHand),
+    boardOpen, commentsOpen, participantsOpen, unread, peers: peers.length,
+    hands: handsQ.q.data?.hands?.length ?? 0, isTeacher, lectureMode,
+    videoPaused, selfHidden: pip.hidden, fullscreen: boardFull, layout,
+  };
+  const barDevices: BarDevices = {
+    cams: cams.map((d) => ({ deviceId: d.deviceId, label: d.label })),
+    mics: mics.map((d) => ({ deviceId: d.deviceId, label: d.label })),
+    savedCam, savedMic,
+  };
+  const barActions: BarActions = {
+    mic: () => void toggleMicInRoom(),
+    cam: () => void toggleCameraInRoom(),
+    share: () => void toggleShare(),
+    hand: () => handM.mutate(),
+    board: toggleBoard,
+    comments: () => toggleTab('comments'),
+    participants: () => toggleTab('people'),
+    layout: (l) => {
+      const s = session; if (!s) return;
+      setLayout(l);
+      act.mutate({ path: `/api/lessons/${s.id}/layout`, body: { layout: l }, method: 'PATCH' });
+    },
+    lecture: setLecture,
+    devices: () => setDevicesOpen(true),
+    hideSelf: () => setPip((p) => ({ ...p, hidden: !p.hidden })),
+    stopVideo: () => applyVideoPause(!videoPaused),
+    fullscreenToggle: toggleStageFull,
+    leave: () => void leaveRoom(),
+    endForAll: () => {
+      const s = session; if (!s) return;
+      act.mutate({ path: `/api/lessons/${s.id}/end` });
+      void leaveRoom();
+    },
+    pickCam: (id) => void pickCamera(id),
+    pickMic: (id) => void pickMicrophone(id),
+  };
 
   const mediaErrors = (
     <>
       {camErr && <p className="error" data-testid="cam-error">{camErr}</p>}
       {micErr && <p className="error" data-testid="mic-error">{micErr}</p>}
+      {spkErr && <p className="error" data-testid="speaker-error">{spkErr}</p>}
     </>
+  );
+
+  const deviceSettings = (
+    <DeviceSettings
+      cams={barDevices.cams} mics={barDevices.mics}
+      speakers={spks.map((d) => ({ deviceId: d.deviceId, label: d.label }))}
+      savedCam={savedCam} savedMic={savedMic} savedSpk={savedSpk}
+      onCam={(id) => void pickCamera(id)} onMic={(id) => void pickMicrophone(id)}
+      onSpk={(id) => void pickSpeaker(id)}
+      canPickSpeaker={canPickSpeaker} showTestSpeaker
+    />
   );
 
   /**
@@ -839,18 +1062,6 @@ export default function Lesson() {
   return (
     <div>
       <h1>{t('lesson.title')}</h1>
-      {/* D.3 — quick note with lesson binding */}
-      <div className="row" style={{ marginTop: -6, marginBottom: 10 }}>
-        {isTeacher ? (
-          <Link data-testid="lesson-new-note" to={`/notes?new=1&classId=${session?.classId ?? classIdParam}&eventId=${eventId ?? session?.eventId ?? ''}`}>
-            <button className="ghost" style={{ marginTop: 0 }}>📝 {t('home.newNote')}</button>
-          </Link>
-        ) : (
-          <Link data-testid="lesson-new-note" to="/sheets?new=1">
-            <button className="ghost" style={{ marginTop: 0 }}>📝 {t('home.newNote')}</button>
-          </Link>
-        )}
-      </div>
       {!session && (
         <div className="card">
           <p className="muted">{t('cal.notStarted')}</p>
@@ -860,201 +1071,77 @@ export default function Lesson() {
         </div>
       )}
       {session && (
-        <>
-          {!connected && (
-            <div className="card">
-              <div className="row">
-                <button data-testid="check-devices" onClick={loadPreview} disabled={previewBusy}>{t('lesson.checkDevices')}</button>
-                <div className="spacer" />
-                <button data-testid="join-lesson" onClick={joinRoom} disabled={!previewChecked}>{t('cal.joinLesson')}</button>
-              </div>
-              {previewChecked && (
-                <>
-                  <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                    {/* the button says what the camera ACTUALLY does right now */}
-                    <button className="ghost" style={{ marginTop: 0 }} data-testid="preview-cam-toggle" onClick={() => void togglePreviewCam()}>
-                      {previewStream ? `📹 ${t('lesson.camDisable')}` : `📹 ${t('lesson.camEnable')}`}
-                    </button>
-                    <span className="muted">{micErr ? `🎤 ✕` : `🎤 ✔`}</span>
+        <div className="lesson-shell" data-testid="lesson-shell">
+          <div className="lesson-body">
+            <div className="lesson-main">
+              {!connected && (
+                <div className="card device-check" data-testid="device-check">
+                  <div className="row">
+                    <button data-testid="check-devices" onClick={() => void loadPreview()} disabled={previewBusy}>{t('lesson.checkDevices')}</button>
+                    <div className="spacer" />
+                    <button data-testid="join-lesson" onClick={() => void joinRoom()} disabled={!previewChecked}>{t('cal.joinLesson')}</button>
                   </div>
-                  <video ref={previewVideoRef} data-testid="preview-video" className="preview-video" autoPlay playsInline muted />
-                  {devicePickers}
-                </>
-              )}
-              {error && <p className="error">{error}</p>}
-              {mediaErrors}
-            </div>
-          )}
-          {connected && (
-            <>
-              <div className="row card">
-                <button className="secondary" style={{ marginTop: 0 }} data-testid="mic-toggle" onClick={() => void toggleMicInRoom()}>
-                  {t('lesson.toggleMic')} {localMicOn ? '🎙' : '🔇'}
-                </button>
-                <button className="secondary" style={{ marginTop: 0 }} data-testid="camera-toggle" onClick={() => void toggleCameraInRoom()}>
-                  {t('lesson.toggleCamera')} {localCamOn ? '📹' : '🚫'}
-                </button>
-                {devicePickers}
-                {isTeacher && (
-                  <>
-                    <button
-                      className={`secondary${muteAll ? ' chip-active' : ''}`}
-                      style={{ marginTop: 0 }}
-                      data-testid="mute-all"
-                      onClick={() => void toggleMuteAll()}
-                      disabled={peers.length === 0}
-                      title={peers.length === 0 ? t('lesson.noStudentsYet') : undefined}
-                    >
-                      {muteAll ? t('lesson.unmuteAll') : t('lesson.muteAll')}
-                    </button>
-                    <button
-                      className={`secondary${lectureMode ? ' chip-active' : ''}`}
-                      style={{ marginTop: 0 }}
-                      data-testid="lecture-mode"
-                      onClick={() => {
-                        const on = !lectureMode;
-                        setLectureMode(on);
-                        act.mutate({ path: `/api/lessons/${session.id}/lecture-mode`, body: { on } });
-                      }}
-                    >
-                      {lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
-                    </button>
-                    <select style={{ width: 'auto', marginTop: 0 }} data-testid="layout-select" value={layout} onChange={(e) => {
-                      const l = e.target.value as Session['layout'];
-                      setLayout(l);
-                      act.mutate({ path: `/api/lessons/${session.id}/layout`, body: { layout: l }, method: 'PATCH' });
-                    }}>
-                      <option value="auto">{t('lesson.layoutAuto')}</option>
-                      <option value="teacher">{t('lesson.layoutSpotlight')}</option>
-                      <option value="stage">{t('lesson.layoutSidebar')}</option>
-                      <option value="gallery">{t('lesson.layoutGrid')}</option>
-                    </select>
-                    <button
-                      className={`secondary${boardOpen ? ' chip-active' : ''}`}
-                      style={{ marginTop: 0 }}
-                      data-testid="board-toggle"
-                      aria-pressed={boardOpen}
-                      onClick={toggleBoard}
-                    >
-                      {boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen')}
-                    </button>
-                    {/* participant list (task 3): mic/cam state + per-student actions */}
-                    <details className="peers" data-testid="peers-panel">
-                      <summary>{t('lesson.peersTitle')} · {peers.length}</summary>
-                      {peers.length === 0 && <p className="muted">{t('lesson.noStudentsYet')}</p>}
-                      {peers.map((p) => (
-                        <div key={p.identity} className="peer-row" data-testid={`peer-${p.identity.slice(0, 8)}`}>
-                          <span className="peer-name">{p.name}</span>
-                          <span title={t('lesson.toggleMic')}>{p.micOn ? '🎙' : '🔇'}</span>
-                          <span title={t('lesson.toggleCamera')}>{p.camOn ? '📹' : '·'}</span>
-                          {p.screenOn && <span>🖥</span>}
-                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.muteOne')}
-                            onClick={() => void muteOne(p.identity)}>🔇
-                          </button>
-                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.shareScreen')}
-                            onClick={() => act.mutate({ path: `/api/lessons/${session.id}/grant-screen`, body: { identity: p.identity, allow: !p.screenOn } })}>🖥+
-                          </button>
-                          <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }} title={t('lesson.leave')}
-                            onClick={() => act.mutate({ path: `/api/lessons/${session.id}/kick`, body: { identity: p.identity } })}>✕
-                          </button>
+                  {previewChecked && (
+                    <>
+                      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                        {/* the button says what the camera ACTUALLY does right now */}
+                        <button className="ghost" style={{ marginTop: 0 }} data-testid="preview-cam-toggle"
+                          aria-pressed={Boolean(previewStream)} onClick={() => void togglePreviewCam()}>
+                          {previewStream ? `📹 ${t('lesson.camDisable')}` : `📹 ${t('lesson.camEnable')}`}
+                        </button>
+                        <span className="muted" data-testid="preview-mic-state">{micErr ? '🎤 ✕' : '🎤 ✔'}</span>
+                      </div>
+                      <video ref={previewVideoRef} data-testid="preview-video" className="preview-video" autoPlay playsInline muted />
+                      <div className="device-check-grid">
+                        <div className="panel-section">
+                          <div className="panel-section-title">🎚 {t('lesson.micLevel')}</div>
+                          {/* роль meter + aria-valuenow: уровень доступен и скринридеру, и тесту */}
+                          <div className="mic-meter" role="meter" aria-label={t('lesson.micLevel')}
+                            aria-valuenow={Math.round(Math.min(1, micLevel) * 100)} aria-valuemin={0} aria-valuemax={100}
+                            data-testid="mic-meter">
+                            <span style={{ width: `${Math.round(Math.min(1, micLevel) * 100)}%` }} />
+                          </div>
                         </div>
-                      ))}
-                    </details>
-                    {/* task 2Б: the hand queue sits with the other teacher controls, next to the room */}
-                    <LessonHands
-                      sessionId={session.id}
-                      hands={handsQ.q.data?.hands ?? []}
-                      lectureMode={lectureMode}
-                    />
-                    {/* task 2: «Комментарии» sits next to «Участники» for the teacher too */}
-                    <LessonComments
-                      sessionId={session.id} isTeacher lectureMode={lectureMode}
-                      open={commentsOpen} onToggle={setCommentsOpen}
-                    />
-                    <div className="spacer" />
-                    <button className={`secondary${screenOn ? ' chip-active' : ''}`} style={{ marginTop: 0 }}
-                      data-testid="share-toggle" aria-pressed={screenOn} onClick={() => void toggleShare()}>
-                      {screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
-                    </button>
-                    <button className="danger" style={{ marginTop: 0 }} onClick={() => {
-                      act.mutate({ path: `/api/lessons/${session.id}/end` });
-                      void leaveRoom();
-                    }}>{t('lesson.endLesson')}</button>
-                  </>
-                )}
-                {!isTeacher && (
-                  <>
-                    <button className="secondary" style={{ marginTop: 0 }} onClick={() => void leaveRoom()}>{t('lesson.leave')}</button>
-                    {/* task 2Б: the student's own hand, and what the teacher did with it */}
-                    <RaiseHandButton sessionId={session.id} raised={Boolean(myHand)} />
-                    {hasFloor && (
-                      <span className="badge" role="status" data-testid="floor-banner">🎙 {t('lesson.floorGiven')}</span>
-                    )}
-                    {floorTakenNotice && (
-                      <span className="muted" role="status" data-testid="floor-taken">{t('lesson.floorTaken')}</span>
-                    )}
-                    {/* task 2: the same panel, for the student side of the lesson */}
-                    <LessonComments
-                      sessionId={session.id} isTeacher={false} lectureMode={lectureMode}
-                      open={commentsOpen} onToggle={setCommentsOpen}
-                    />
-                    <div className="spacer" />
-                    <span className="muted">{peers.length + 1} {t('lesson.inRoom')}</span>
-                  </>
-                )}
-              </div>
-              {error && <p className="error">{error}</p>}
-              {mediaErrors}
-              {/* student banners (task 3): why the mic is off — restored on reconnect */}
-              {!isTeacher && muteAll && <p className="banner" data-testid="banner-muted">{t('lesson.bannerMuted')}</p>}
-              {!isTeacher && lectureMode && !muteAll && <p className="banner" data-testid="banner-lecture">{t('lesson.bannerLecture')}</p>}
-              {/* task 1.3: the presenter always knows what they are showing and can stop it here
-                  (the browser's own Stop button works too — LiveKit unpublishes the track and the
-                  layout returns by itself, see zz13-screen-stage.spec.ts) */}
-              {screenOn && (
-                <div className="banner banner-share" role="status" data-testid="share-banner">
-                  <span>🖥 {t('lesson.shareShowing')}</span>
-                  {shareSurface === 'browser' && (
-                    <span className="muted" data-testid="share-mirror-warn">{t('lesson.shareMirrorWarn')}</span>
+                        {deviceSettings}
+                      </div>
+                      <p className="bar-hint">{t('lesson.devicesHint')}</p>
+                    </>
                   )}
-                  <div className="spacer" />
-                  <button type="button" className="danger" style={{ marginTop: 0 }} data-testid="share-stop"
-                    onClick={() => void toggleShare()}>{t('lesson.shareStop')}</button>
+                  {error && <p className="error">{error}</p>}
+                  {mediaErrors}
                 </div>
               )}
-              {/* ── task B: Meet-style stage. Board/screen/spotlight own the main
-                   window; cameras shrink to a compact strip (right on desktop,
-                   bottom on phones); the own camera is a draggable floating PiP. ── */}
-              {hasStage ? (
-                <div className={`lesson-stage${stripOpen ? '' : ' strip-closed'}`} ref={stageRef} data-testid="lesson-stage">
-                  <div className="stage-main" data-testid="stage-main">
-                    {/* «Экран | Доска»: inside the stage's own caption band while the screen is up
-                        (an absolutely positioned pill over the picture covered its title bar —
-                        seen in the 2026-10-08 screenshot review), a normal row above the board. */}
-                    {showSwitch && !screenIsMain && (
-                      <div className="stage-switch stage-switch-flow" role="group" data-testid="stage-switch"
-                        aria-label={t('lesson.stageSwitchAria')}>
-                        <button type="button" className={`ghost${showBoardInstead ? '' : ' chip-active'}`}
-                          style={{ marginTop: 0 }} data-testid="stage-switch-screen" aria-pressed={!showBoardInstead}
-                          onClick={() => setShowBoardInstead(false)}>{t('lesson.stageScreen')}</button>
-                        <button type="button" className={`ghost${showBoardInstead ? ' chip-active' : ''}`}
-                          style={{ marginTop: 0 }} data-testid="stage-switch-board" aria-pressed={showBoardInstead}
-                          onClick={() => setShowBoardInstead(true)}>{t('lesson.stageBoard')}</button>
-                      </div>
-                    )}
-                    {stage.kind === 'board' ? (
-                      <>
-                        <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
-                        <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
-                          onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
-                      </>
-                    ) : screenIsMain && stage.tile ? (
-                      <ScreenStage
-                        presenter={Boolean(stage.tile.local)}
-                        caption={`${stage.tile.local ? t('lesson.you') : stage.tile.name} · ${t('lesson.stageScreen')}`}
-                        controls={stageControls}
-                        lead={showSwitch ? (
-                          <div className="stage-switch" role="group" data-testid="stage-switch"
+              {connected && (
+                <>
+                  {/* student banners (task 3): why the mic is off — restored on reconnect */}
+                  {!isTeacher && muteAll && <p className="banner" data-testid="banner-muted">{t('lesson.bannerMuted')}</p>}
+                  {!isTeacher && lectureMode && !muteAll && <p className="banner" data-testid="banner-lecture">{t('lesson.bannerLecture')}</p>}
+                  {hasFloor && <span className="badge" role="status" data-testid="floor-banner">🎙 {t('lesson.floorGiven')}</span>}
+                  {floorTakenNotice && <span className="muted" role="status" data-testid="floor-taken">{t('lesson.floorTaken')}</span>}
+                  {error && <p className="error">{error}</p>}
+                  {mediaErrors}
+                  {/* task 1.3: the presenter always knows what they are showing and can stop it here
+                      (the browser's own Stop button works too — LiveKit unpublishes the track and the
+                      layout returns by itself, see zz13-screen-stage.spec.ts) */}
+                  {screenOn && (
+                    <div className="banner banner-share" role="status" data-testid="share-banner">
+                      <span>🖥 {t('lesson.shareShowing')}</span>
+                      {shareSurface === 'browser' && (
+                        <span className="muted" data-testid="share-mirror-warn">{t('lesson.shareMirrorWarn')}</span>
+                      )}
+                      <div className="spacer" />
+                      <button type="button" className="danger" style={{ marginTop: 0 }} data-testid="share-stop"
+                        onClick={() => void toggleShare()}>{t('lesson.shareStop')}</button>
+                    </div>
+                  )}
+                  {/* ── task B: Meet-style stage. Board/screen/spotlight own the main
+                       window; cameras shrink to a compact strip (right on desktop,
+                       bottom on phones); the own camera is a draggable floating PiP. ── */}
+                  {hasStage ? (
+                    <div className={`lesson-stage${stripOpen ? '' : ' strip-closed'}`} ref={stageRef} data-testid="lesson-stage">
+                      <div className="stage-main" data-testid="stage-main">
+                        {showSwitch && !screenIsMain && (
+                          <div className="stage-switch stage-switch-flow" role="group" data-testid="stage-switch"
                             aria-label={t('lesson.stageSwitchAria')}>
                             <button type="button" className={`ghost${showBoardInstead ? '' : ' chip-active'}`}
                               style={{ marginTop: 0 }} data-testid="stage-switch-screen" aria-pressed={!showBoardInstead}
@@ -1063,130 +1150,171 @@ export default function Lesson() {
                               style={{ marginTop: 0 }} data-testid="stage-switch-board" aria-pressed={showBoardInstead}
                               onClick={() => setShowBoardInstead(true)}>{t('lesson.stageBoard')}</button>
                           </div>
+                        )}
+                        {stage.kind === 'board' ? (
+                          <>
+                            <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                            <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
+                              onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
+                          </>
+                        ) : screenIsMain && stage.tile ? (
+                          <ScreenStage
+                            presenter={Boolean(stage.tile.local)}
+                            caption={`${stage.tile.local ? t('lesson.you') : stage.tile.name} · ${t('lesson.stageScreen')}`}
+                            controls={stageControls}
+                            lead={showSwitch ? (
+                              <div className="stage-switch" role="group" data-testid="stage-switch"
+                                aria-label={t('lesson.stageSwitchAria')}>
+                                <button type="button" className={`ghost${showBoardInstead ? '' : ' chip-active'}`}
+                                  style={{ marginTop: 0 }} data-testid="stage-switch-screen" aria-pressed={!showBoardInstead}
+                                  onClick={() => setShowBoardInstead(false)}>{t('lesson.stageScreen')}</button>
+                                <button type="button" className={`ghost${showBoardInstead ? ' chip-active' : ''}`}
+                                  style={{ marginTop: 0 }} data-testid="stage-switch-board" aria-pressed={showBoardInstead}
+                                  onClick={() => setShowBoardInstead(true)}>{t('lesson.stageBoard')}</button>
+                              </div>
+                            ) : null}
+                          >
+                            <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big hideName />
+                          </ScreenStage>
+                        ) : stage.tile ? (
+                          <div className="stage-tile" onClick={() => setPinnedKey(stage.tile!.key)} data-testid="stage-tile">
+                            <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big />
+                          </div>
                         ) : null}
-                      >
-                        <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big hideName />
-                      </ScreenStage>
-                    ) : stage.tile ? (
-                      <div className="stage-tile" onClick={() => setPinnedKey(stage.tile!.key)} data-testid="stage-tile">
-                        <VideoTile tile={stage.tile} track={tracksRef.current.get(stage.tile.key)} big />
-                      </div>
-                    ) : null}
-                    {/* task 1.3: the presenter's own share — proof of what leaves the machine, in a
-                        corner of the main window that no other control uses, above the tool band */}
-                    {screenOn && screenTile && (
-                      <div className={`share-preview${sharePreview ? '' : ' preview-min'}`} data-testid="share-preview">
-                        <div className="pip-bar" data-testid="share-preview-bar">
-                          <span>{t('lesson.sharePreview')}</span>
-                          <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }}
-                            data-testid="share-preview-toggle" aria-pressed={sharePreview}
-                            aria-label={t('lesson.sharePreview')}
-                            onClick={() => setSharePreview((v) => !v)}>{sharePreview ? '—' : '⤢'}</button>
-                        </div>
-                        {sharePreview && (
-                          <VideoTile tile={screenTile} track={tracksRef.current.get(screenTile.key)} />
+                        {/* task 1.3: the presenter's own share — proof of what leaves the machine */}
+                        {screenOn && screenTile && (
+                          <div className={`share-preview${sharePreview ? '' : ' preview-min'}`} data-testid="share-preview">
+                            <div className="pip-bar" data-testid="share-preview-bar">
+                              <span>{t('lesson.sharePreview')}</span>
+                              <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }}
+                                data-testid="share-preview-toggle" aria-pressed={sharePreview}
+                                aria-label={t('lesson.sharePreview')}
+                                onClick={() => setSharePreview((v) => !v)}>{sharePreview ? '—' : '⤢'}</button>
+                            </div>
+                            {sharePreview && (
+                              <VideoTile tile={screenTile} track={tracksRef.current.get(screenTile.key)} />
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                  <div className="stage-strip" data-testid="stage-strip">
-                    {stripTiles.slice(0, STRIP_MAX).map((tile) => (
-                      <div role="button" tabIndex={0} key={tile.key} className="strip-cell" data-testid={`strip-${tile.key}`}
-                        onClick={() => setPinnedKey(pinnedKey === tile.key ? null : tile.key)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPinnedKey(pinnedKey === tile.key ? null : tile.key); } }}>
-                        <VideoTile tile={tile} track={tracksRef.current.get(tile.key)} />
+                      <div className="stage-strip" data-testid="stage-strip">
+                        {stripTiles.slice(0, STRIP_MAX).map((tile) => (
+                          <div role="button" tabIndex={0} key={tile.key} className="strip-cell" data-testid={`strip-${tile.key}`}
+                            onClick={() => setPinnedKey(pinnedKey === tile.key ? null : tile.key)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPinnedKey(pinnedKey === tile.key ? null : tile.key); } }}>
+                            <VideoTile tile={tile} track={tracksRef.current.get(tile.key)} />
+                          </div>
+                        ))}
+                        {stripTiles.length > STRIP_MAX && (
+                          <div className="strip-more" data-testid="strip-more">+{stripTiles.length - STRIP_MAX}</div>
+                        )}
                       </div>
-                    ))}
-                    {stripTiles.length > STRIP_MAX && (
-                      <div className="strip-more" data-testid="strip-more">+{stripTiles.length - STRIP_MAX}</div>
-                    )}
-                  </div>
-                  {/* task 2: when the screen or the board owns the window (and in its full-screen
-                      mode) the toolbar is gone, so the comments stay reachable as a compact
-                      button with the same unread counter */}
-                  {(screenIsMain || stage.kind === 'board' || boardFull) && (
-                    <CommentsFab sessionId={session.id} open={commentsOpen} onToggle={setCommentsOpen} />
-                  )}
-                  {/* teacher's camera for students: a small floating window (§B3) */}
-                  {teacherFloats && teacherTile && (
-                    <div className="lesson-pip pip-teacher" data-testid="pip-teacher" style={{ right: pip.x, top: 12 }}>
-                      <VideoTile tile={teacherTile} track={tracksRef.current.get(teacherTile.key)} />
+                      {/* teacher's camera for students: a small floating window (§B3) */}
+                      {teacherFloats && teacherTile && (
+                        <div className="lesson-pip pip-teacher" data-testid="pip-teacher" style={{ right: pip.x, top: 12 }}>
+                          <VideoTile tile={teacherTile} track={tracksRef.current.get(teacherTile.key)} />
+                        </div>
+                      )}
+                      {localTile && !pip.hidden && (
+                        <div className={`lesson-pip pip-local${pip.min ? ' pip-min' : ''}`} data-testid="pip-local"
+                          style={{ right: pip.x, bottom: pip.y }}>
+                          <div className="pip-bar" data-testid="pip-bar"
+                            onPointerDown={pipDown} onPointerMove={pipMove} onPointerUp={pipUp} onPointerCancel={pipUp}>
+                            <span>{t('lesson.you')}</span>
+                            <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-min"
+                              aria-label={t('lesson.pipMin')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, min: !p.min })); }}>{pip.min ? '▢' : '—'}</button>
+                            <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-hide"
+                              aria-label={t('lesson.pipHide')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, hidden: true })); }}>✕</button>
+                          </div>
+                          {!pip.min && <VideoTile tile={localTile} track={tracksRef.current.get(localTile.key)} />}
+                        </div>
+                      )}
+                      {localTile && pip.hidden && (
+                        <button type="button" className="pip-restore" style={{ marginTop: 0 }} data-testid="pip-restore"
+                          onClick={() => setPip((p) => ({ ...p, hidden: false }))}>📹</button>
+                      )}
                     </div>
-                  )}
-                  {/* own camera: floating, draggable via the bar, snaps to corners,
-                        minimize/hide, position remembered (localStorage) */}
-                  {localTile && !pip.hidden && (
-                    <div className={`lesson-pip pip-local${pip.min ? ' pip-min' : ''}`} data-testid="pip-local"
-                      style={{ right: pip.x, bottom: pip.y }}>
-                      <div className="pip-bar" data-testid="pip-bar"
-                        onPointerDown={pipDown} onPointerMove={pipMove} onPointerUp={pipUp} onPointerCancel={pipUp}>
-                        <span>{t('lesson.you')}</span>
-                        <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-min"
-                          aria-label={t('lesson.pipMin')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, min: !p.min })); }}>{pip.min ? '▢' : '—'}</button>
-                        <button type="button" className="ghost" style={{ marginTop: 0, padding: 2 }} data-testid="pip-hide"
-                          aria-label={t('lesson.pipHide')} onClick={(e) => { e.stopPropagation(); setPip((p) => ({ ...p, hidden: true })); }}>✕</button>
+                  ) : (
+                    <>
+                      <div className={gridClass} data-testid="video-grid">
+                        {tiles.map((tile) => (
+                          <VideoTile key={tile.key} tile={tile} track={tracksRef.current.get(tile.key)} />
+                        ))}
                       </div>
-                      {!pip.min && <VideoTile tile={localTile} track={tracksRef.current.get(localTile.key)} />}
-                    </div>
+                      {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
+                    </>
                   )}
-                  {localTile && pip.hidden && (
-                    <button type="button" className="pip-restore" style={{ marginTop: 0 }} data-testid="pip-restore"
-                      onClick={() => setPip((p) => ({ ...p, hidden: false }))}>📹</button>
-                  )}
-                  {/* the presenter's own share moved INSIDE .stage-main (see above): anchored to the
-                      stage it belongs to, where it cannot cover the strip or the tool band */}
-                </div>
-              ) : (
-                <>
-                  <div className={gridClass} data-testid="video-grid">
-                    {tiles.map((tile) => (
-                      <VideoTile key={tile.key} tile={tile} track={tracksRef.current.get(tile.key)} />
-                    ))}
-                  </div>
-                  {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
+                  {toast && <div className="toast" role="status" data-testid="lesson-toast">{toast}</div>}
                 </>
               )}
-              {toast && <div className="toast" role="status" data-testid="lesson-toast">{toast}</div>}
-            </>
-          )}
-          {/* board is WS-based: while a session exists it is reachable even before
-               RTC — as the stage when open, as a card under the grid otherwise */}
-          {session && !(connected && boardOpen) && <Board sessionId={session.id} classId={session.classId} height={layout === 'stage' ? '40vh' : '60vh'} />}
-          {/* task 2: the panel for a live lesson the user has not joined with media (the toolbar
-              instance only exists once RTC is up, so this covers the pre-join student) */}
-          {session && !connected && (
-            <div className="row" style={{ marginTop: 8 }}>
-              <LessonComments
-                sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode}
-                open={commentsOpen} onToggle={setCommentsOpen}
-              />
-              {/* a teacher who has not joined media yet still runs the queue — «дать слово» is a
-                  REST + LiveKit action, it does not need this browser to be in the room */}
-              {isTeacher && (
-                <LessonHands sessionId={session.id} hands={handsQ.q.data?.hands ?? []} lectureMode={lectureMode} />
-              )}
-              {/* a hand needs no microphone and no room — it is raised from this screen too */}
-              {!isTeacher && <RaiseHandButton sessionId={session.id} raised={Boolean(myHand)} />}
-              {!isTeacher && hasFloor && (
-                <span className="badge" role="status" data-testid="floor-banner">🎙 {t('lesson.floorGiven')}</span>
+              {/* board is WS-based: while a session exists it is reachable even before
+                  RTC — as the stage when open, as a card under the grid otherwise */}
+              {/*
+                Высота доски подчинена тому же правилу, что и нижняя панель: страница урока обязана
+                помещаться в окно, чтобы полоса управления была видна без прокрутки и ничего под неё
+                не заезжало. 60vh оставляли страницу длиннее вьюпорта (замер скриншотами
+                2026-10-11: 1280x900 — панель ушла за нижний край), поэтому берётся меньшее из
+                60vh и «остаток экрана минус сетка, заголовок и панель».
+              */}
+              {!(connected && boardOpen) && (
+                <Board sessionId={session.id} classId={session.classId}
+                  height={layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))'} />
               )}
             </div>
+
+            {/* правая панель: поднятые руки и участники — в одной вкладке, комментарии — в другой.
+                Она работает и до входа в комнату: рука и комментарии не требуют медиа. */}
+            {panelOpen && (
+              <LessonPanel
+                tab={panelTab} onTab={setPanelTab} onClose={() => setPanelOpen(false)}
+                sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode} muteAll={muteAll}
+                peers={peers} hands={handsQ.q.data?.hands ?? []} unread={unread}
+                onMuteOne={(identity) => void muteOne(identity)}
+                onScreen={(identity, allow) => act.mutate({ path: `/api/lessons/${session.id}/grant-screen`, body: { identity, allow } })}
+                onKick={(identity) => act.mutate({ path: `/api/lessons/${session.id}/kick`, body: { identity } })}
+                onMuteAll={() => void toggleMuteAll()}
+                onLecture={setLecture}
+                comments={{ isTeacher, lectureMode }}
+              />
+            )}
+          </div>
+
+          {/* лист «Настройки устройств» из «Ещё» — тот же компонент, что на экране проверки */}
+          {devicesOpen && (
+            <div className="side-panel devices-sheet" data-testid="devices-sheet" role="group"
+              aria-label={t('lesson.deviceSettings')}>
+              <div className="panel-tabs">
+                <strong style={{ padding: '0 8px', fontSize: '.9rem' }}>{t('lesson.deviceSettings')}</strong>
+                <div className="spacer" />
+                <button type="button" className="panel-tab" data-testid="devices-close"
+                  aria-label={t('lesson.menuClose')} onClick={() => setDevicesOpen(false)}>✕</button>
+              </div>
+              <div className="panel-body">{deviceSettings}</div>
+            </div>
           )}
-          {!isTeacher && session && (
-            <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
-          )}
-        </>
+
+          <LessonBar state={barState} actions={barActions} devices={barDevices} noteHref={noteHref} />
+        </div>
       )}
-      {/* task 2: comments do not need media at all — a student who never got a camera works the
-          same panel, so it is rendered for a live session whether or not RTC connected. It sits
-          OUTSIDE the `session &&` block on purpose: after the lesson ends the session is gone but
-          the teacher keeps reading the transcript (the server decides who may). */}
+      {!isTeacher && session && (
+        <NotesDrawer classId={session.classId} sessionId={session.id} open={sheetsOpen} onToggle={() => setSheetsOpen((v) => !v)} />
+      )}
+      {/* task 2: комментарии не требуют медиа вообще, а учителю нужна и расшифровка после
+          окончания урока: session уже нет, lastSessionId — есть, права решает сервер.
+          Состояние «открыто» то же, что и во время урока (commentsOpen): панель, которую учитель
+          держал открытой, остаётся открытой и после конца — раньше именно так и работало. */}
       {!connected && !session && (isTeacher ? lastSessionId : null) && (
-        <div className="row" style={{ marginTop: 8 }}>
-          <LessonComments
-            sessionId={lastSessionId!} isTeacher lectureMode={false}
-            open={commentsOpen} onToggle={setCommentsOpen}
-          />
+        <div className="card">
+          <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="comments-open"
+            aria-pressed={commentsOpen} onClick={() => toggleTab('comments')}>
+            💬 {t('lesson.commentsTitle')}
+          </button>
+          {commentsOpen && (
+            <div className="panel-body" data-testid="comments-panel">
+              <CommentsPanel sessionId={lastSessionId!} isTeacher lectureMode={false}
+                onClose={() => setPanelOpen(false)} />
+            </div>
+          )}
         </div>
       )}
     </div>

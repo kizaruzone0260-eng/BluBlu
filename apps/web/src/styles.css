@@ -29,6 +29,13 @@
   --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-full: 999px;
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
   --tap: 44px;                 /* min touch target */
+  --bar-h: 76px;               /* reserved height of the lesson control bar (never reflows) */
+  /*
+   * Высота нижнего меню приложения (Главная / Классы / …) на телефоне: `.tabbar` лежит поверх
+   * всего (z-index 50), поэтому панель урока на узком экране обязана вставать НАД ней, а не под
+   * неё — иначе полоса управления уроком невидима (замер скриншотом 390 px, 2026-10-11).
+   */
+  --tab-h: 80px;
   --tr: 160ms ease;            /* standard transition */
   --sidebar-w: 232px;
   --sidebar-w-collapsed: 64px;
@@ -668,3 +675,173 @@ button.danger-text { color: var(--danger); }
 .pdf-progress .pdf-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: .28; transition: width var(--tr); }
 .pdf-progress > span { position: relative; }
 @media (max-width: 520px) { .pdf-thumb { width: 64px; height: 44px; } }
+
+/* ══ управление уроком по образцу Zoom/Meet (задача 2026-10-10) ══════════════
+   Единая нижняя панель вместо ряда кнопок над видео, правая панель с вкладками
+   и меню «Ещё». Место под панель резервируется в потоке (.bar-slot), поэтому она
+   ничего не сдвигает; сама полоса прикреплена к низу экрана (position: fixed),
+   иначе на короткой странице урока она остаётся в середине экрана и живёт в другой
+   системе координат, чем плавающие кнопки: замер 2026-10-11 — слот 537…613, а
+   фиксированная кнопка «Мои заметки» 586…630, и flow.spec не мог по ней кликнуть. */
+.lesson-shell { position: relative; }
+/*
+ * Слот — только резерв высоты: он не собирает клики (иначе невидимая полоса перехватывала
+ * нажатия по плавающим кнопкам урока), и именно поэтому автоскрытие панели не дёргает
+ * раскладку. Что контент не перекрывается — держит проверка zz18 (прямоугольники) и
+ * ограничение высоты доски ниже.
+ */
+.bar-slot { position: relative; height: var(--bar-h); pointer-events: none; }
+.lesson-bar {
+  pointer-events: auto;
+  position: fixed; left: 0; right: 0; bottom: 0; margin-inline: auto; width: fit-content;
+  max-width: calc(100vw - 12px); z-index: 44;
+  display: flex; align-items: center; justify-content: center; gap: 4px; flex-wrap: nowrap;
+  padding: 6px 10px; overflow: visible;
+  background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--border);
+  border-radius: var(--r-full); box-shadow: var(--shadow-md);
+  transition: transform var(--tr), opacity var(--tr);
+}
+/* автоскрытие: панель уезжает за нижний край, slot сохраняет высоту */
+.lesson-bar.bar-hidden { transform: translateY(calc(100% + 10px)); opacity: 0; pointer-events: none; }
+.bar-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: var(--tap); min-height: var(--tap); padding: 0 10px; margin: 0;
+  border: 1px solid var(--border-strong); border-radius: var(--r-full);
+  background: var(--surface-2); color: var(--text); font-size: .9rem; font-weight: 550;
+  transition: background var(--tr), color var(--tr), border-color var(--tr);
+}
+.bar-btn:hover { border-color: var(--accent); color: var(--accent); }
+.bar-btn .bar-ico { font-size: 1.05rem; line-height: 1; }
+.bar-btn .bar-lbl { display: none; }
+/*
+ * Подписи включаются там, где для них есть место. Измерено 2026-10-11 (zz18): при окне 1024 px
+ * полоса управления доступна лишь в 758 px (266 px съедает боковое меню), а восемь кнопок с
+ * подписями занимают 832 px — то есть на 1024 px подписи уже ломают правило «панель ничего не
+ * перекрывает и не сдвигает». Поэтому подписи — от 1280 px, а 1024…1279 остаются иконками:
+ * количество кнопок, aria-label и подсказки на месте, текст просто не влазит.
+ */
+@media (min-width: 1280px) { .bar-btn .bar-lbl { display: inline; } .bar-btn { padding: 0 12px; } }
+/* состояние «выключено» для микрофона и камеры — красный с перечёркнутым значком */
+.bar-btn.bar-off { background: var(--danger); border-color: var(--danger); color: #fff; }
+.bar-btn.bar-off .bar-ico { position: relative; }
+.bar-btn.bar-off .bar-ico::after {
+  content: ""; position: absolute; left: -2px; right: -2px; top: 50%;
+  height: 2px; background: currentColor; transform: rotate(-20deg);
+}
+/* активный показ экрана, поднятая рука, открытая панель — подсвечены */
+.bar-btn.bar-active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.bar-btn.bar-leave { background: var(--danger); border-color: var(--danger); color: #fff; }
+.bar-btn:disabled { opacity: .5; }
+/* стрелка выбора устройства — часть кнопки, но отдельная область нажатия */
+.bar-split { display: inline-flex; align-items: stretch; gap: 0; }
+.bar-split .bar-btn { border-radius: var(--r-full) 0 0 var(--r-full); padding-right: 6px; }
+.bar-split .bar-arrow {
+  min-width: 28px; padding: 0 6px; border: 1px solid var(--border-strong); border-left: 0;
+  border-radius: 0 var(--r-full) var(--r-full) 0; background: var(--surface-2); color: var(--text-muted);
+  margin: 0; font-size: .7rem;
+}
+.bar-split .bar-arrow:hover { color: var(--accent); border-color: var(--accent); }
+.bar-badge {
+  position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: var(--r-full); background: var(--accent); color: var(--accent-text);
+  font-size: .72rem; font-weight: 700; display: grid; place-items: center;
+}
+/* вспашивающиеся меню над кнопкой: список устройств, «Ещё», горячие клавиши */
+.bar-menu {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  min-width: 240px; max-width: min(92vw, 380px); max-height: 60vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2);
+  z-index: 45;
+}
+.bar-menu[hidden] { display: none; }
+.bar-menu h3 { margin: 0; font-size: .9rem; }
+.bar-menu-title { display: flex; align-items: center; gap: 6px; font-weight: 650; font-size: .86rem; color: var(--text-muted); }
+.bar-menu button.bar-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; min-height: var(--tap);
+  padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent; color: var(--text); text-align: left; font-size: .9rem;
+}
+.bar-menu button.bar-item:hover { background: var(--surface-2); border-color: var(--border); }
+.bar-menu button.bar-item[aria-checked="true"], .bar-menu button.bar-item.bar-active { color: var(--accent); background: var(--accent-soft); }
+.bar-menu button.bar-danger { color: var(--danger); }
+.bar-sep { height: 1px; background: var(--border); margin: 2px 0; }
+.bar-hint { font-size: .78rem; color: var(--text-muted); }
+
+/* правая панель: вкладки «Участники» / «Комментарии» (десктоп) → нижний лист (телефон) */
+.lesson-body { display: flex; gap: var(--sp-2); align-items: flex-start; }
+.lesson-main { flex: 1 1 auto; min-width: 0; }
+.side-panel {
+  flex: 0 0 320px; width: 320px; display: flex; flex-direction: column; gap: 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm); max-height: calc(100vh - 120px); overflow: hidden;
+}
+.panel-tabs { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+/* вкладки живут в отдельном role=tablist, кнопка закрытия — сосед по строке */
+.panel-tablist { display: flex; flex: 1 1 auto; gap: 4px; min-width: 0; }
+.panel-tab-close { flex: 0 0 44px; }
+.panel-tab {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: var(--tap); margin: 0; padding: 4px 8px; border: 1px solid transparent;
+  border-radius: var(--r-md); background: transparent; color: var(--text); font-size: .88rem; font-weight: 550;
+}
+.panel-tab[aria-selected="true"] { background: var(--surface); border-color: var(--border-strong); color: var(--accent); }
+.panel-body { padding: var(--sp-3); overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-2); }
+.panel-section { display: flex; flex-direction: column; gap: 6px; }
+.panel-section-title { display: flex; align-items: center; gap: 6px; font-size: .82rem; font-weight: 650; color: var(--text-muted); }
+.panel-foot { display: flex; flex-direction: column; gap: 6px; padding: var(--sp-3); border-top: 1px solid var(--border); background: var(--surface-2); }
+.panel-close { position: absolute; right: 8px; top: 8px; }
+/* на телефоне панель — нижний лист поверх всего, с закрытием; панель управления под ним */
+@media (max-width: 1023px) {
+  .lesson-body { display: block; }
+  .side-panel {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 62; width: auto;
+    max-height: 72vh; border-radius: var(--r-lg) var(--r-lg) 0 0; box-shadow: var(--shadow-lg);
+  }
+}
+/* экран проверки устройств до входа: предпросмотр, уровень микрофона, списки устройств */
+.device-check { display: flex; flex-direction: column; gap: var(--sp-3); }
+.device-check-grid { display: grid; gap: var(--sp-3); grid-template-columns: 1fr; }
+@media (min-width: 720px) { .device-check-grid { grid-template-columns: minmax(0, 320px) 1fr; } }
+.mic-meter { height: 10px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+.mic-meter span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+.device-list { display: flex; flex-direction: column; gap: 4px; }
+.device-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; min-height: var(--tap);
+  padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent; color: var(--text); text-align: left; font-size: .88rem;
+}
+.device-item[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* показ экрана и участники — только на десктопе; в «Ещё» — только на телефоне;
+   обёртки нужны, чтобы автоскрытие и бейджи не ломали раскладку панели */
+.bar-rel { position: relative; display: inline-flex; }
+.bar-mob { display: none; }
+@media (max-width: 1023px) {
+  .bar-desk { display: none; }
+  .bar-mob { display: flex; }
+  .lesson-bar { left: 8px; right: 8px; transform: none; max-width: none; justify-content: center; }
+  .lesson-bar.bar-hidden { transform: translateY(calc(100% + 10px)); }
+}
+/*
+ * Телефон: под уроком живёт нижнее меню приложения (`.tabbar`, z-index 50 — выше панели урока).
+ * Замер скриншотом 390×844 (2026-10-11): без подъёма панель урока прилипала к низу экрана и
+ * оказывалась ПОД меню (bar 786…844 против меню с 764) — то есть человек не видел управления
+ * вообще. Поэтому на узком экране полоса поднимается на высоту меню, а вместе с ней и
+ * плавающие кнопки/тосты этого экрана.
+ */
+/* на странице урока плавающая кнопка «Мои заметки» не имеет права садиться на панель управления */
+.lesson-shell ~ .sheet-fab, .lesson-shell .sheet-fab { bottom: calc(var(--bar-h) + 14px); }
+@media (max-width: 767px) {
+  .lesson-bar { bottom: var(--tab-h); }
+  .lesson-shell ~ .sheet-fab, .lesson-shell .sheet-fab { bottom: calc(var(--bar-h) + var(--tab-h) + 14px); }
+  .lesson-shell .toast { bottom: calc(var(--bar-h) + var(--tab-h) + var(--sp-4)); }
+}
+/* лист настроек устройств поверх панели управления */
+.devices-sheet {
+  position: fixed; right: 16px; bottom: calc(var(--bar-h) + 16px); z-index: 63;
+  width: min(360px, calc(100vw - 32px)); max-height: 60vh; overflow: auto;
+}
+@media (max-width: 1023px) { .devices-sheet { left: 8px; right: 8px; width: auto; } }
+/* тост не должен ложиться на панель управления */
+.lesson-shell .toast { bottom: calc(var(--bar-h) + var(--sp-4)); }

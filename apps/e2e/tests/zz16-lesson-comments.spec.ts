@@ -2,11 +2,11 @@
  * Task 2 (2026-10-09) — comments during a lesson, in two browsers.
  *
  * What only a browser can prove: the panel next to «Участники», the unread counter, the lecture
- * banner with the input still working, the compact button that survives the board becoming the
- * main window, a mute that takes the keyboard away from a student, pins that reorder the list, and
- * a transcript that is read-only after the lesson ends. The rights matrix, the limits and the XSS
- * contract are asserted on the server (apps/api/test/integration/lesson-comments.test.ts) and are
- * deliberately not re-proved here.
+ * banner with the input still working, the comments button in the control bar that survives the
+ * board becoming the main window, a mute that takes the keyboard away from a student, pins that
+ * reorder the list, and a transcript that is read-only after the lesson ends. The rights matrix,
+ * the limits and the XSS contract are asserted on the server
+ * (apps/api/test/integration/lesson-comments.test.ts) and are deliberately not re-proved here.
  *
  * Pacing: the comment limiter is 5 messages per 10 s PER USER and the suite runs with one worker,
  * so the two students alternate and the deliberate double post in test 3 is the only burst.
@@ -14,6 +14,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { loginUi, makeLesson, m, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
+import { barClick, openTab } from './controlBar';
 
 const BASE = `http://127.0.0.1:${stack.port}`;
 const STUDENT_PW = 'Secret1234';
@@ -204,18 +205,19 @@ test.describe('lesson comments (task 2)', () => {
     await s.page.getByTestId('comments-close').click();
     const t = await teacher(browser);
     await say(t.page, 'это вы не прочитали');
-    await s.page.getByTestId('comments-open').click();
+    // Задача 2026-10-10: счётчик переехал с кнопки-вкладки на кнопку панели, и он показывается,
+    // только когда панель ЗАКРЫТА (открытая вкладка и есть прочитанное). Проверка ровно та же,
+    // что была: чужое сообщение поднимает счётчик.
     await expect(s.page.getByTestId('comments-unread')).toBeVisible({ timeout: 15_000 });
-    // reading the panel clears it, and it stays cleared across a reopen
+    // чтение — открыть вкладку; после этого счётчик сброшен сервером и при повторном открытии
+    // его уже нет (раньше это же докладывал закрытие/открытие кнопки)
+    await openTab(s.page, 'comments');
     await s.page.getByTestId('comments-close').click();
-    await expect(async () => {
-      await s.page.getByTestId('comments-open').click();
-      await expect(s.page.getByTestId('comments-unread')).toHaveCount(0, { timeout: 4_000 });
-    }).toPass({ timeout: 30_000 });
+    await expect(s.page.getByTestId('comments-unread')).toHaveCount(0, { timeout: 15_000 });
     await t.ctx.close(); await s.ctx.close();
   });
 
-  test('the compact button stays reachable when the board is the main window', async ({ browser }) => {
+  test('the comments button stays reachable when the board is the main window', async ({ browser }) => {
     const join = await api.post(`/api/lessons/${sessionId}/join`, { headers: { authorization: `Bearer ${token}` } });
     expect(join.status()).toBe(200);
     const wsUrl = String((await join.json()).wsUrl as string);
@@ -233,13 +235,18 @@ test.describe('lesson comments (task 2)', () => {
       if (!r.url().includes('/board')) return;
       void r.text().then((b) => m('board response', { status: r.status(), body: b.slice(0, 80) }));
     });
-    // the compact button replaces the tab while the board owns the window, and it steps aside
-    // for the panel it opens — so the panel has to be closed before the button is expected
+    /*
+     * Задача 2026-10-10: плавающая круглая кнопка (comments-fab) удалена — её роль теперь играет
+     * кнопка «Комментарии» в нижней панели, которая не прячется, когда доска стала главным окном
+     * (автоскрытие панели включается только в полноэкранном режиме и при собственном показе
+     * экрана). Проверяется то же самое, что и раньше: управление комментариями достижимо поверх
+     * полноэкранного контента и открывает панель.
+     */
     await t.page.getByTestId('comments-close').click();
     await t.page.getByTestId('board-toggle').click();
     await expect(t.page.getByTestId('lesson-stage')).toBeVisible({ timeout: 15_000 });
-    await expect(t.page.getByTestId('comments-fab')).toBeVisible({ timeout: 25_000 });
-    await t.page.getByTestId('comments-fab').click();
+    await expect(t.page.getByTestId('comments-open')).toBeVisible({ timeout: 25_000 });
+    await barClick(t.page, 'comments-open');
     await expect(t.page.getByTestId('comments-panel')).toBeVisible();
     await t.ctx.close();
   });

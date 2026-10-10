@@ -53,17 +53,25 @@ export function useCommentFrames(sessionId: string | null) {
   };
 }
 
-export default function LessonComments({ sessionId, isTeacher, lectureMode, open, onToggle }: {
+/**
+ * Панель комментариев внутри вкладки «Комментарии» (задача 2026-10-10: раньше она открывалась
+ * собственной кнопкой и была `position: fixed`; теперь кнопка живёт в панели управления, а
+ * содержимое — здесь, в обычном потоке правой панели / нижнего листа).
+ *
+ * Text is rendered as a React child, never with dangerouslySetInnerHTML, which is why the server
+ * stores it verbatim and the XSS payload stays a string.
+ */
+export function CommentsPanel({ sessionId, isTeacher, lectureMode, onClose, open = true }: {
   sessionId: string; isTeacher: boolean; lectureMode: boolean;
-  open: boolean; onToggle: (v: boolean) => void;
+  onClose: () => void; /** панель вкладок открыта — опрос не нужен, когда её не видно */
+  open?: boolean;
 }) {
   const { t } = useTranslation();
-  const { q, invalidate } = useLessonComments(sessionId);
+  const { q, invalidate } = useLessonComments(sessionId, open);
   const [draft, setDraft] = useState('');
   const [errKey, setErrKey] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const view = q.data;
-  const unread = view?.unread ?? 0;
   const ended = Boolean(view?.ended);
   const muted = Boolean(view?.mutedSelf);
 
@@ -101,8 +109,8 @@ export default function LessonComments({ sessionId, isTeacher, lectureMode, open
     if (el) el.scrollTop = el.scrollHeight;
   }, [ordered.length, open]);
 
-  // opening the panel is a read: the query itself stays mounted (the button is always rendered),
-  // so without this the unread badge would only refresh on the 20 s safety poll
+  // opening the tab is a read: the query stays mounted, so without this the unread counter would
+  // only refresh on the 20 s safety poll
   const refetch = q.refetch;
   useEffect(() => { if (open) void refetch(); }, [open, refetch]);
 
@@ -119,39 +127,28 @@ export default function LessonComments({ sessionId, isTeacher, lectureMode, open
   }
 
   return (
-    <div className="lc-wrap" data-testid="comments-tab">
-      <button
-        type="button" className={`secondary lc-summary${open ? ' chip-active' : ''}`}
-        style={{ marginTop: 0 }} aria-expanded={open} aria-controls="lc-panel"
-        data-testid="comments-open" onClick={() => onToggle(!open)}
-      >
-        💬 {t('lesson.commentsTitle')}
-        {unread > 0 && <span className="badge lc-unread" data-testid="comments-unread">{unread > 99 ? '99+' : unread}</span>}
-      </button>
-
-      {open && (
-        <div className="lc-panel" id="lc-panel" data-testid="comments-panel">
-          <div className="row lc-topbar" style={{ alignItems: 'center' }}>
-            <strong>{t('lesson.commentsTitle')}</strong>
-            {view?.mode === 'slow' && <span className="badge" data-testid="comments-slow-badge">{t('lesson.commentsSlowMode')}</span>}
-            <div className="spacer" />
-            {isTeacher && (
-              <select
-                style={{ width: 'auto', marginTop: 0 }} data-testid="comments-mode"
-                aria-label={t('lesson.commentsModeAria')}
-                value={view?.mode ?? 'on'}
-                onChange={(e) => moderate.mutate({
-                  path: `/api/lessons/${sessionId}/comments/mode`, method: 'PUT', body: { mode: e.target.value },
-                })}
-              >
-                <option value="on">{t('lesson.commentsModeOn')}</option>
-                <option value="slow">{t('lesson.commentsModeSlow')}</option>
-                <option value="off">{t('lesson.commentsModeOff')}</option>
-              </select>
-            )}
-            <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="comments-close"
-              aria-label={t('lesson.commentsClose')} onClick={() => onToggle(false)}>✕</button>
-          </div>
+    <div className="panel-section" data-testid="comments-tab">
+      <div className="row lc-topbar" style={{ alignItems: 'center' }}>
+        <strong>{t('lesson.commentsTitle')}</strong>
+        {view?.mode === 'slow' && <span className="badge" data-testid="comments-slow-badge">{t('lesson.commentsSlowMode')}</span>}
+        <div className="spacer" />
+        {isTeacher && (
+          <select
+            style={{ width: 'auto', marginTop: 0 }} data-testid="comments-mode"
+            aria-label={t('lesson.commentsModeAria')}
+            value={view?.mode ?? 'on'}
+            onChange={(e) => moderate.mutate({
+              path: `/api/lessons/${sessionId}/comments/mode`, method: 'PUT', body: { mode: e.target.value },
+            })}
+          >
+            <option value="on">{t('lesson.commentsModeOn')}</option>
+            <option value="slow">{t('lesson.commentsModeSlow')}</option>
+            <option value="off">{t('lesson.commentsModeOff')}</option>
+          </select>
+        )}
+        <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="comments-close"
+          aria-label={t('lesson.commentsClose')} onClick={onClose}>✕</button>
+      </div>
 
           {lectureMode && !isTeacher && (
             <p className="banner" role="status" data-testid="comments-lecture-banner">{t('lesson.commentsLectureHint')}</p>
@@ -218,46 +215,33 @@ export default function LessonComments({ sessionId, isTeacher, lectureMode, open
 
           {errKey && <p className="error" data-testid="comments-error">{t(`lesson.${errKey}`)}</p>}
 
-          {!ended && (
-            <div className="row" style={{ alignItems: 'flex-end', gap: 8 }}>
-              <textarea
-                data-testid="comments-input" value={draft} aria-label={t('lesson.commentsTitle')}
-                placeholder={placeholder} disabled={!canWrite || send.isPending} rows={2}
-                style={{ flex: 1, marginTop: 0, minHeight: 44 }}
-                maxLength={500}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
-                  if (e.key === 'Escape') { onToggle(false); }
-                }}
-              />
-              <button type="button" data-testid="comments-send" disabled={!canWrite || !draft.trim() || send.isPending}
-                onClick={submit}>{t('lesson.commentsSend')}</button>
-            </div>
-          )}
+      {!ended && (
+        <div className="row" style={{ alignItems: 'flex-end', gap: 8 }}>
+          <textarea
+            data-testid="comments-input" value={draft} aria-label={t('lesson.commentsTitle')}
+            placeholder={placeholder} disabled={!canWrite || send.isPending} rows={2}
+            style={{ flex: 1, marginTop: 0, minHeight: 44 }}
+            maxLength={500}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+              if (e.key === 'Escape') { onClose(); }
+            }}
+          />
+          <button type="button" data-testid="comments-send" disabled={!canWrite || !draft.trim() || send.isPending}
+            onClick={submit}>{t('lesson.commentsSend')}</button>
         </div>
       )}
     </div>
   );
 }
 
-/** the compact button that stays over the full-screen stage and the board-as-main-window */
-export function CommentsFab({ sessionId, open, onToggle }: {
-  sessionId: string; open: boolean; onToggle: (v: boolean) => void;
-}) {
-  const { t } = useTranslation();
-  const { q } = useLessonComments(sessionId);
-  const unread = q.data?.unread ?? 0;
-  // while the panel is open the button is behind it (the drawer and the bottom sheet both cover
-  // that corner), and a control you cannot reach is worse than no control: the panel has its own ✕
-  if (open) return null;
-  return (
-    <button
-      type="button" className="lc-fab" style={{ marginTop: 0 }}
-      data-testid="comments-fab" aria-label={t('lesson.commentsTitle')} aria-expanded={open}
-      onClick={() => onToggle(true)}
-    >
-      💬{unread > 0 && <span className="badge lc-unread" data-testid="comments-fab-unread">{unread > 99 ? '99+' : unread}</span>}
-    </button>
-  );
+/**
+ * Счётчик непрочитанных для панели управления (значок на кнопке «Комментарии»). Отдельный хук,
+ * потому что кнопка живёт в `LessonBar`, а список — в этой панели; react-query объединяет оба
+ * запроса в один, поэтому второй сети нет.
+ */
+export function useCommentUnread(sessionId: string | null): number {
+  const { q } = useLessonComments(sessionId, Boolean(sessionId));
+  return q.data?.unread ?? 0;
 }
