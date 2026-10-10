@@ -21,6 +21,7 @@
     "demo:check": "node apps/api/scripts/demo-check.mjs",
     "audit": "pnpm audit --prod",
     "cloud:smoke": "node apps/api/scripts/cloud-smoke.mjs",
+    "bot:status": "node apps/api/scripts/bot-status.mjs",
     "db:audit": "pnpm --filter @klass/api db:audit"
   },
   "pnpm": {
