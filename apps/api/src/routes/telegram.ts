@@ -13,6 +13,7 @@ import { createBot } from '../services/telegramBot.js';
 import { handleUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
 import { applyMenu, CapturingApi, grammyApi, removeMenu, type BotApi } from '../services/botApi.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { redactSecrets } from '../lib/redact.js';
 import { hashToken } from '../services/notify.js';
 
 /**
@@ -71,9 +72,11 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
     }
     const update = req.body as TgUpdate;
     if (typeof update?.update_id === 'number') {
-      // cold start / handler bugs must not 500 back into Telegram's face
+      // cold start / handler bugs must not 500 back into Telegram's face — and the reason that
+      // DOES reach the log goes through the redactor first: a grammY message can carry the Bot API
+      // URL, which is itself a token.
       await Promise.resolve(handleUpdate(deps, update)).catch((e: Error) =>
-        req.log.warn(`telegram update failed: ${e?.message ?? String(e)}`));
+        req.log.warn(`telegram update failed: ${redactSecrets(e?.message ?? String(e))}`));
     }
     return reply.send({ ok: true });
   });

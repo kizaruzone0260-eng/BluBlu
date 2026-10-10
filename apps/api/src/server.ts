@@ -8,6 +8,7 @@ import { LogTransport, TelegramTransport } from './services/notify.js';
 import { createBot } from './services/telegramBot.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
 import { effectiveMigrationsFolder, effectiveWebhookBase } from './lib/prodConfig.js';
+import { describeError, redactSecrets } from './lib/redact.js';
 
 async function main() {
   const db = getDb(env.DATABASE_URL);
@@ -48,9 +49,9 @@ async function main() {
       });
       console.log(`telegram webhook registered for ${webhookBase.replace(/^https:\/\//, '')}`); // host only, no secrets
     } catch (e) {
-      // understandable reason, token scrubbed (grammY messages may embed nothing secret, belt-and-braces)
-      const msg = String((e as Error).message ?? e).replaceAll(env.TELEGRAM_BOT_TOKEN, '***');
-      console.warn(`telegram webhook registration FAILED (bot is up, Telegram will not reach it until this works): ${msg}`);
+      // understandable reason, with every credential shape the library may have put in it removed
+      // (grammY messages can carry the Bot API URL, which IS a token)
+      console.warn(`telegram webhook registration FAILED (bot is up, Telegram will not reach it until this works): ${redactSecrets(e)}`);
     }
   } else if (bot && env.TELEGRAM_MODE === 'webhook') {
     console.warn('telegram webhook skipped: set PUBLIC_URL (or DOMAIN) and TELEGRAM_WEBHOOK_SECRET');
@@ -58,7 +59,7 @@ async function main() {
   // bot task §1: default-scope command menu (basic set) refreshed at every boot
   if (bot && env.TELEGRAM_TRANSPORT === 'telegram') {
     const { applyMenu, grammyApi } = await import('./services/botApi.js');
-    await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn('setMyCommands failed:', e.message));
+    await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn('setMyCommands failed:', redactSecrets(e)));
   }
   // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
   if (bot && env.TELEGRAM_MODE === 'polling') {
@@ -69,13 +70,13 @@ async function main() {
     try {
       await bot.api.deleteWebhook({ drop_pending_updates: false });
     } catch (e) {
-      console.warn('deleteWebhook failed:', (e as Error).message);
+      console.warn('deleteWebhook failed:', redactSecrets(e));
     }
     const deps = botDeps(db, bot);
     bot.on('message', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
     bot.on('callback_query', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
-    bot.catch((err) => console.warn('telegram polling error:', (err.error as Error)?.message ?? String(err.error)));
-    void bot.start().catch((e: Error) => console.warn('telegram polling stopped:', e.message));
+    bot.catch((err) => console.warn('telegram polling error:', redactSecrets((err.error as Error) ?? err)));
+    void bot.start().catch((e: Error) => console.warn('telegram polling stopped:', redactSecrets(e)));
   }
 
   const app = await buildApp(db);
@@ -102,7 +103,21 @@ async function main() {
   process.on('SIGINT', shutdown);
 }
 
+// A rejection nobody caught would otherwise be printed by Node itself — with the driver's full
+// message, which is where a connection string lives (measured: postgres-js puts it there). These
+// handlers keep Node's own semantics (both cases end the process) and change only the text.
+process.on('unhandledRejection', (reason) => {
+  console.error(`unhandled rejection: ${describeError(reason)}`);
+  process.exit(1);
+});
+process.on('uncaughtException', (err) => {
+  console.error(`uncaught exception: ${describeError(err)}`);
+  process.exit(1);
+});
+
+// Boot failure: class and code only. This is the one place with no log pipeline left, and a
+// driver/migration error is exactly where a connection string tends to appear.
 main().catch((err) => {
-  console.error(err);
+  console.error(`boot failed: ${describeError(err)}`);
   process.exit(1);
 });

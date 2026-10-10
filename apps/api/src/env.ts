@@ -84,7 +84,19 @@ const envSchema = z
     }
   });
 
-export const env = envSchema.parse(process.env);
+/*
+ * A rejected config is printed WITHOUT its values. `ZodError` puts the offending input into every
+ * issue as `received: …`, so an unguarded `.parse` at import time hands Node's own crash printer a
+ * line containing the too-short JWT secret, the malformed database URL (with password), or the
+ * LiveKit secret the operator just typed. Names of the failing keys are the useful half anyway.
+ */
+const parsedEnv = envSchema.safeParse(process.env);
+if (!parsedEnv.success) {
+  const keys = [...new Set(parsedEnv.error.issues.map((i) => i.path.join('.') || 'unknown'))];
+  console.error(`config invalid: ${keys.join(', ')} — values are not printed`);
+  process.exit(1);
+}
+export const env = parsedEnv.data;
 
 // Hardening (Phase 1б) + Part 4б + task 2в: the production-only env adjustments live in
 // lib/prodConfig.ts (one place, unit-tested in both modes, and asserted again by

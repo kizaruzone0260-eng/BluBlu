@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { DB } from './db/index.js';
 import { currentBuildId, injectBuildMeta } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
+import { redactSecrets, safeErrorMessage } from './lib/redact.js';
 import { effectiveCodeMax, effectiveCorsOrigins, effectiveLoginMax } from './lib/prodConfig.js';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
@@ -70,6 +71,25 @@ export const accessLogOptions = {
       hostname: req.hostname,
       remoteAddress: req.ip,
       remotePort: req.socket?.remotePort,
+    }),
+    /*
+     * The error half of the same contract. `err.message` is exactly where postgres-js puts the
+     * connection string and where drizzle puts the bound parameters of the failing query (in this
+     * app: emails, note text, chat bodies), so the message and the stack — whose first line repeats
+     * the message — go through `safeErrorMessage`, and the code stays: `28P01` / `ECONNREFUSED` /
+     * `401` is what an operator needs. Extra error fields are deliberately not expanded: drizzle
+     * carries `query` and `params` on the object, and a future `{ ...err }` would publish them.
+     */
+    err: (err: {
+      name?: string; message?: string; stack?: string; code?: string | number;
+      statusCode?: string | number; cause?: unknown;
+    }) => ({
+      type: 'err',
+      name: err?.name ?? '',
+      code: err?.code ?? err?.statusCode
+        ?? (err?.cause as { code?: string | number } | undefined)?.code,
+      message: safeErrorMessage(err),
+      stack: err?.stack ? safeErrorMessage(err.stack) : '',
     }),
   },
 };

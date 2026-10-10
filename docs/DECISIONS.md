@@ -530,3 +530,25 @@ committing the current transaction»). Мигратор drizzle на postgres-js
 дефолтный, ни наш сериализатор заголовки не отдают), оставлено как второй слой. И открытый
 вопрос: может ли сообщение ошибки postgres-js включать строку подключения — не проверялось,
 потому что проверка требует подставить значение, похожее на секрет.
+
+## 2026-10-10 (текст ошибки печатается без message; конфигурационный отказ — без значений)
+
+**Решение.** Любая печать исключения наружу (boot-`console.error`, `console.warn` в обвязке
+Telegram, `req.log.warn` вебхука, `serializers.err` у access-лога) идёт через
+`apps/api/src/lib/redact.ts`: либо `describeError` (класс + коды, без message вовсе), либо
+`safeErrorMessage` (message до маркера `params:`, пропущенный через redactor паттернов).
+`envSchema.parse` → `safeParse` и печать имён ключей.
+
+**Почему, а не «на всякий случай».** Измерено на фиктивных значениях: ошибка `postgres-js`
+несёт строку подключения в `message` (`code: ENOTFOUND`, `syscall: getaddrinfo`), а обёртка
+drizzle — `Failed query: <SQL>\nparams: <значения>`; в этом проекте в значениях бывают почты и
+тексты чата. `ZodError` при отказе конфигурации кладёт принятое значение в `received`, то есть
+`JWT_SECRET` попал бы в вывод Node до всякого логгера. Прежний ручной
+`replaceAll(env.TELEGRAM_BOT_TOKEN, '***')` закрывал один токен из одного места.
+
+**Что это стоит.** Строка `boot failed: DrizzleQueryError (ENOTFOUND, -3008)` менее
+человекочитаема, чем полный message — это сознательный обмен: код и класс достаточны, а цена
+утечки в этой системе (чужие уроки и переписка) выше удобства.
+
+**Проверка.** `test/unit/redact.test.ts` (17) и `test/integration/boot-error-output.test.ts` (3,
+реальный процесс `dist/server.js` с фиктивным `DATABASE_URL`); обе проверяют вывод, а не функции.

@@ -511,9 +511,63 @@ Fail-before зафиксирован: с ключом `request` эти же тр
 и до, и после). Оставлено как вторая линия: если завтра кто-то залогирует `{ req }` целиком,
 заголовки всё равно вырежутся.
 
-**Error handler.** Внутренний лог 500 содержит `err.message` и стек (это и есть назначение
-журнала), наружу уходит generic-тело без деталей — закреплено тестом. **Не проверялось** и
-осталось открытым: может ли текст ошибки драйвера БД включать строку подключения с паролем
-(`server.ts` в `main().catch` печатает ошибку как есть). Проверка потребовала бы подставлять
-значение, похожее на секрет, что запрещено правилом «секреты не выводи и не трогай», поэтому
-вопрос зафиксирован здесь, а не «решён на глаз».
+**Ошибка — тот же класс риска, и он закрыт измерением.** Открытый вопрос прошлой записи («может ли
+драйвер БД положить строку подключения в текст ошибки») проверен на фиктивных значениях и ответил
+«да»: `postgres-js` при недоступном хосте бросает ошибку с `code: 'ENOTFOUND'`,
+`syscall: 'getaddrinfo'`, а в `message` — вся строка подключения целиком. Поверх неё drizzle
+кладёт `DrizzleQueryError`, чей `message` = `Failed query: <SQL>
+params: <связанные значения>`;
+в этом приложении в `params` оказываются почты, тексты заметок и сообщения чата. Значит
+«красивый» `console.error(err)` на старте — это печать секрета, а `err.message` в рантайм-логе —
+печать чужих данных.
+
+Что сделано вместо этого:
+
+* `apps/api/src/lib/redact.ts` — один общий redactor. `redactSecrets` вырезает `postgres://…`,
+  `postgresql://…`, `ws(s)://…`, `Bearer …`, `…/bot<token>/…`, голый токен бота `<цифры>:<35>` и
+  пары `password|pass|secret|token|api_key|authorization = значение`. `safeErrorMessage`
+  дополнительно отрезает всё после `params:` и прогоняет остаток через redactor. `describeError`
+  печатает класс и коды, обходя цепочку `cause` (код сети живёт именно там) и заглядывая в
+  `AggregateError.errors`.
+* `main().catch` в `server.ts`: `boot failed: <класс> (<коды>)`. Измеренный вывод на фиктивном URL:
+  `boot failed: DrizzleQueryError (ENOTFOUND, -3008)` — ни пароля, ни хоста, ни SQL.
+* `env.ts`: `envSchema.parse` заменён на `safeParse` + печать **имён** отвергнутых ключей. Причина
+  та же: `ZodError` кладёт принятое значение в `received`, то есть короткая `JWT_SECRET` или
+  опечатка в `DATABASE_URL` были бы напечатаны Node при падении на импорте, до всякого логгера.
+* `serializers.err` в `accessLogOptions`: в журнал идут `type`, `name`, `code` (включая
+  `cause.code`), redacted-`message` и redacted-`stack` (первая строка стека повторяет message).
+  Лишние поля ошибки (`query`, `params`) намеренно не раскрываются.
+* Все `console.warn(… e.message)` в `server.ts` (вебхук Telegram, `deleteWebhook`, `setMyCommands`,
+  `bot.catch`, остановка polling) и `req.log.warn` в `/webhook/telegram` прогоняются через
+  redactor. Ручной `replaceAll(env.TELEGRAM_BOT_TOKEN, '***')` убран: он закрывал только тот токен,
+  который был в окружении в момент вызова.
+* `process.on('unhandledRejection')` и `process.on('uncaughtException')` в `server.ts`: без них
+  Node печатает непроигнорированное отклонение сам — то есть тем самым `message`, из-за которого
+  написан весь этот раздел. Обработчики сохраняют семантику Node (оба случая завершают процесс) и
+  меняют только текст: `describeError`. Их форматтер покрыт тестами выше; сам факт подключения
+  этих двух обработков автоматизированно не проверен — детерминированно вызвать отклонение у
+  незавершённого `main()` без живой базы нечем. Это известный пробел в проверке, а не «решено на глаз».
+* LiveKit: ни одна его ошибка в журнал не попадала и раньше — `media()` в `routes/lessons.ts`
+  проглатывает исключение и возвращает `{ ok: false }`, `applyFloor` отвечает 502 без текста
+  (проверено grep'ом: `.error` из `media()` нигде не печатается).
+
+**Чем закреплено.** `test/unit/redact.test.ts` (17 тестов): каждая форма секрета вырезается,
+обычная диагностика (`invalid input syntax for type integer: "x"`, ссылка `https://…`) остаётся
+нетронутой, `describeError` даёт `DrizzleQueryError (ENOTFOUND)` и не даёт SQL, `safeErrorMessage`
+оставляет `Failed query` и убирает `params:`-хвост, и всё это ещё раз прогоняется через настоящий
+`pino` на `accessLogOptions` — то есть проверяется строка журнала, а не функция.
+`test/integration/boot-error-output.test.ts` (3 теста): запускает собранный `dist/server.js` как
+процесс с фиктивным `DATABASE_URL` и читает его вывод — `boot failed:` есть, `fakepass` и
+`db.invalid` нет; отдельно отказ конфигурации — имя ключа напечатано, значение нет.
+
+**Про pino в devDependencies.** Он нужен только тесту, чтобы собрать логгер из тех же опций.
+`pnpm --filter @klass/api ls --prod --depth 0` его не показывает (как и vitest) — это ровно тот
+набор, который `apps/api/Dockerfile:20` ставит во временный слой `pnpm install --prod`, а runtime
+слой (строки 22–31) копирует именно его. Отдельно: pino и до этого был в образе как собственная
+зависимость fastify (`pnpm why pino`: `fastify 5.12.5 └── pino 10.4.0` — production, плюс
+`pino 10.4.0` — dev only), а diff lockfile — 3 строки в секции devDependencies импортера
+`apps/api` без новой записи о разрешении пакета (`downloaded 0`). То есть содержимое и размер
+рабочего образа этот коммит не меняет. `docker build` локально подтвердить нельзя: docker на этой
+машине не установлен (в комментарии Dockerfile сборка и так предписана на целевой VM), поэтому
+команда для владельца: `docker build -f apps/api/Dockerfile -t blublu:redact . && docker run --rm
+blublu:redact sh -c 'ls node_modules/.pnpm | grep -c vitest'` — ожидание `0`.
