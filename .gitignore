@@ -27,3 +27,8 @@ deploy/turn-certs/*.pem
 
 # Excalidraw fonts copied at build time (scripts/copy-excalidraw-fonts.mjs)
 apps/web/public/excalidraw-assets/
+
+# Local incident/repro scripts: they read a cloud.env given as argv, so they must never
+# be committed. They live inside their own package so that node_modules still resolves.
+/apps/api/incidents/
+/apps/e2e/incidents/
