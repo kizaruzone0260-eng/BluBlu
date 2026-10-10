@@ -44,7 +44,9 @@
 глазок», а следствие двух измеренных фактов:
 
 * `MutePublishedTrack(muted: false)` сервер LiveKit отвечает `412 remote unmute not enabled`
-  (лог CI 2026-10-10, спек `zz-camera`). То есть «включить микрофон ученику удалённо» недоступно
+  (лог CI 2026-10-10, спек `zz-camera`; строка видна и в свежем прогоне 38024456752:
+  `API RoomService.MutePublishedTrack … "muted": false, "status": "412",
+  "error": "remote unmute not enabled"`). То есть «включить микрофон ученику удалённо» недоступно
   при текущей политике сервера; чтобы оно стало доступно, пришлось бы просить право, которого нет
   ни в токене, ни в наборе прав RoomService. От этого варианта отказались заранее.
 * Разрешение участника обновляется атомарно — `RoomServiceClient.d.ts`: «permissions are updated
@@ -145,7 +147,8 @@ Fail-before/pass-after самого спека (это красный тест, 
 | API, локально: `node scripts/with-postgres.mjs pnpm exec vitest run` на чистом env | 58 файла, 395 тестов, exit 0 (было 379 → +16 новых) |
 | e2e, локально полный набор (`pnpm exec playwright test`) | 86 passed (16.5 m), ни пропуска, ни flaky |
 | `zz17-raise-hand` после добавления последовательности «ученик сам опускает руку со словом» | 4 passed (1.3 m), RTC-тест 22.7 s — не пропускался |
-| CI на `c794e4b` (run 38022428548) | `build-test` success: API 58/395; `e2e` success: 86 passed (9.0 m). Ручных перезапусков не было |
+| CI на `c794e4b` (run 38022428548) | `build-test` success: API 58 файлов / 395 тестов; `e2e` success: 86 passed (9.0 m) |
+| CI на `b1a4aa6` и `424e0f0` (run 38024399126, 38024456752) | оба success целиком: `build-test` 58/395, `e2e` 86 passed (9.0 m). Ручных перезапусков не было ни на одном коммите |
 | CI на `d60906b` ( hygiene-коммиты) | success — пункты 1 и 2 этой же задачи |
 | `git status` после полного прогона e2e | только изменённые документы; ноль новых файлов-артефактов (то же доказывает пункт 1: скриншоты zz12 уходят в игнорируемый `apps/e2e/test-results/`) |
 | Игнорирование путей | `git check-ignore`: `apps/e2e/test-results/screenshots/x.png`, `apps/api/incidents/z.mjs`, `apps/e2e/incidents/z.mjs` — IGNORED |
@@ -189,8 +192,9 @@ Fail-before/pass-after самого спека (это красный тест, 
 | Коммит | Что в нём |
 | --- | --- |
 | `c794e4b` feat(api,web) | миграция 0026 + `lesson_hands`, сервис очереди, 6 маршрутов, `clearHands` в `/end`, `floorPermission`, панель учителя и кнопка ученика, 9 ключей × 3 словаря, 20 тестов (5 + 11 + 4) |
-| (`test(e2e)`, следом) | та же очередь, но с добавленной последовательностью «ученик сам опускает руку, держа слово» — 4 passed локально |
-| (`docs:`, следом) | этот отчёт, запись в `docs/DECISIONS.md` о точечном гранте вместо расширения прав, поправка в `LANGUAGE_DEFAULT_AND_LESSON_COMMENTS_REPORT.md` (§7: 2Б больше не «не выполнена»), фикстура руки и 18 скриншотов очереди (`SHOT_ONLY=hands`, 3 языка × 3 ширины × 2 темы) |
+| `4c201a7` test(e2e) | добавленная в `zz17` последовательность «ученик сам опускает руку, держа слово»; локально 4 passed (1.3 m), RTC-тест 22.7 s — не пропускался |
+| `b1a4aa6` docs | этот отчёт, запись в `docs/DECISIONS.md` о точечном гранте вместо расширения прав, поправка в `LANGUAGE_DEFAULT_AND_LESSON_COMMENTS_REPORT.md` (§7: 2Б больше не «не выполнена»), фикстура руки и 18 скриншотов очереди (`SHOT_ONLY=hands`, 3 языка × 3 ширины × 2 темы) |
+| `424e0f0` chore(screenshots) | учётный `docs/screenshots/LAST.txt` (его обновляли и в `9f28802`, и в `f52c57e`) |
 
 Проверки, которыми это закреплено — в §7. Скриншоты очереди: `docs/screenshots/hands-<locale>-<width>-<theme>.png`
 (18 файлов). Смотрены глазами `hands-en-1280-dark.png` и `hands-uz-390-dark.png`: панель
