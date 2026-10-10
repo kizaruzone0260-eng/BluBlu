@@ -146,3 +146,38 @@ jobs:
             echo "FAIL: a connection string or a secret value reached the output"; exit 1
           fi
           echo "ok: non-zero exit, boot failure named by class+code, no connection string"
+
+  # Task 8 (2026-10-10): the image, RUNNING. `docker-image` proves what is inside the layer; this
+  # job starts the container the way a deployment does — NODE_ENV=production, a real Postgres as a
+  # service, TRUST_PROXY=1, PUBLIC_URL set, fictitious secrets — and behaves like an operator for
+  # the first minutes: health, the migration journal, the built SPA, the CSRF gate, a pg-boss job
+  # actually processed, and then Postgres stopped and started under the running app.
+  # The build is --no-cache on purpose: it also answers "does the Dockerfile depend on cached
+  # layers from an earlier build", and the elapsed time is printed.
+  runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: klass
+          POSTGRES_PASSWORD: klass
+          POSTGRES_DB: klass
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U klass" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Clean build of the image, without any layer cache
+        run: |
+          start=$(date +%s)
+          docker build --no-cache -f apps/api/Dockerfile -t klass-api:smoke .
+          echo "clean docker build took $(( $(date +%s) - start ))s"
+      - name: Smoke the running container (health, migrations, SPA, CSRF, queue, DB restart)
+        run: |
+          echo "SMOKE_PG=$(docker ps --filter ancestor=postgres:16-alpine --format '{{.ID}}' | head -1)" >> "$GITHUB_ENV"
+          node scripts/runtime-smoke.mjs
