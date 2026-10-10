@@ -97,23 +97,9 @@ jobs:
         # pnpm's strict layout resolves ONLY direct dependencies from apps/api, which is what makes
         # this a real test: a devDependency would be resolvable there, a transitive one is not.
         # pino therefore shows up only as fastify's own dependency — proved by starting fastify's
-        # logger inside the container, not by resolving pino by name (the first version of this step
-        # expected exactly that and failed for the wrong reason: run 38048190207).
-        run: |
-          set -e
-          docker run --rm --entrypoint sh klass-api:${{ github.sha }} -c '
-            set -e
-            cd /repo/apps/api
-            echo "dev-tool packages still in the pnpm store: $(ls /repo/node_modules/.pnpm | grep -cE "^(vitest|tsx|drizzle-kit|typescript|embedded-postgres)@" || true)"
-            for m in vitest tsx drizzle-kit typescript embedded-postgres @types/ws; do
-              if node -e "require.resolve(process.argv[1])" "$m" >/dev/null 2>&1; then
-                echo "FAIL: $m is resolvable from the runtime layer"; exit 1
-              fi
-              echo "absent: $m"
-            done
-            node -e "const F = require('fastify'); const a = F({ logger: { level: 'info' } }); a.log.info('fastify and its pino work in the runtime layer')"
-            echo "pino in the store: $(ls /repo/node_modules/.pnpm | grep -E '^pino@' | head -1)"
-          '
+        # logger inside the container. The checks live in scripts/check-runtime-image.sh because an
+        # inline `sh -c '…'` cannot contain the quotes that script needs (run 38049533552).
+        run: docker run --rm -i --entrypoint sh klass-api:${{ github.sha }} < scripts/check-runtime-image.sh
       - name: Runs as a non-root user
         run: |
           set -e
