@@ -216,6 +216,26 @@ suite('напоминания и очередь при сне сервиса (а
     expect(row[0]!.attempts).toBe(5);
   });
 
+  it('поток за один проход ограничен 25 рядами: после простоя очередь размывается по проходам', async () => {
+    // 26 просроченных рядов — ровно на один больше лимита прохода: видно, что поток режется по 25
+    const stamp = Date.now();
+    const rowsToInsert = Array.from({ length: 26 }, (_, i) => ({
+      kind: 'materialNew' as const, classId, userId: studentId, chatId: studentChat,
+      payload: { text: `Пакет ${i} ${stamp}` },
+      dedupeKey: `packet:${stamp}:${i}`,
+      sendAt: new Date(stamp - 3600_000),
+      status: 'pending' as const,
+    }));
+    await t.db.insert(notifications).values(rowsToInsert);
+    const before = rec.sent.length;
+    expect(await sendDue(t.db, rec, new Date(stamp), 25)).toBe(25);
+    expect(rec.sent.length - before).toBe(25);
+    expect(await sendDue(t.db, rec, new Date(stamp), 25)).toBe(1);
+    const left = await t.db.select({ id: notifications.id }).from(notifications)
+      .where(and(eq(notifications.status, 'pending'), sql`dedupe_key like ${`packet:${stamp}:%`}`));
+    expect(left).toHaveLength(0);
+  });
+
   it('тихие часы: сдвиг ставит отправку за пределы окна, даже если урок уже прошёл (факт текущей схемы)', async () => {
     const trigger = wallClock(22, 40);          // местный тихий вечер
     const ev = await mkEvent('Тихий вечер', new Date(trigger.getTime() + 10 * 60_000));
