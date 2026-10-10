@@ -79,3 +79,55 @@ jobs:
       - run: pnpm -r build
       - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @klass/e2e test
+
+  # Task 6 (2026-10-10): the runtime IMAGE, not just the runtime dependency list. `pnpm ls --prod`
+  # says what SHOULD be installed; only `docker build` says what the deployed container actually
+  # contains. Nothing here is a size threshold — the number is printed so the next change can be
+  # compared against it.
+  docker-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build apps/api/Dockerfile
+        run: docker build -f apps/api/Dockerfile -t klass-api:${{ github.sha }} .
+      - name: Image size (printed for comparison, not a gate)
+        run: docker images klass-api --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+      - name: No dev dependencies in the runtime layer
+        run: |
+          set -e
+          docker run --rm --entrypoint sh klass-api:${{ github.sha }} -c '
+            set -e
+            cd /repo/apps/api
+            echo "dev-tool packages still in the pnpm store: $(ls /repo/node_modules/.pnpm | grep -cE "^(vitest|tsx|drizzle-kit|typescript|embedded-postgres)@" || true)"
+            for m in vitest tsx drizzle-kit typescript embedded-postgres @types/ws; do
+              if node -e "require.resolve(process.argv[1])" "$m" >/dev/null 2>&1; then
+                echo "FAIL: $m is resolvable from the runtime layer"; exit 1
+              fi
+              echo "absent: $m"
+            done
+            node -e "require.resolve(process.argv[1])" pino >/dev/null
+            echo "resolvable: pino (fastify'"'"'s own logger — production dependency, expected)"
+          '
+      - name: Runs as a non-root user
+        run: |
+          set -e
+          docker run --rm --entrypoint sh klass-api:${{ github.sha }} -c '
+            set -e
+            echo "user=$(id -un) uid=$(id -u)"
+            test "$(id -u)" -ne 0
+            test "$(id -un)" = node
+          '
+      - name: Without DATABASE_URL it exits non-zero and echoes no value
+        run: |
+          set +e
+          out=$(timeout 180 docker run --rm --entrypoint node klass-api:${{ github.sha }} dist/server.js 2>&1)
+          code=$?
+          set -e
+          echo "--- container output ---"; echo "$out"; echo "--- exit code: $code"
+          test "$code" -ne 0
+          echo "$out" | grep -q "boot failed"
+          if echo "$out" | grep -qE "postgres(ql)?://|@localhost|:klass@"; then
+            echo "FAIL: a connection string reached the output"; exit 1
+          fi
+          echo "ok: non-zero exit, boot failure named by class+code, no connection string"
