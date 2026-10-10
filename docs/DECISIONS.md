@@ -552,3 +552,25 @@ drizzle — `Failed query: <SQL>\nparams: <значения>`; в этом пр�
 
 **Проверка.** `test/unit/redact.test.ts` (17) и `test/integration/boot-error-output.test.ts` (3,
 реальный процесс `dist/server.js` с фиктивным `DATABASE_URL`); обе проверяют вывод, а не функции.
+
+## 2026-10-10 (рабочий образ пересобран: dev-зависимости жили в проде)
+
+**Решение.** В `apps/api/Dockerfile` добавлена стадия `deps`, которая ставит
+`pnpm install --prod --frozen-lockfile --filter @klass/api --filter @klass/shared` с нуля, и
+runtime-слой берёт `node_modules` оттуда; из `build` копируются только собранные `dist`
+(`apps/api/dist`, `packages/shared/dist`, `apps/web/dist`).
+
+**Почему, а не «на всякий случай».** Новый job `docker-image` собрал прежний Dockerfile и показал
+`dev-tool packages still in the pnpm store: 5` и `FAIL: vitest is resolvable from the runtime
+layer` (run 38045464863): `pnpm install --prod` поверх уже установленного дерева dev-пакеты не
+вычищает, а старый runtime-слой копировал именно это дерево. В образе жили vitest, tsx,
+drizzle-kit, typescript и embedded-postgres — последний умеет скачивать и запускать бинарный
+Postgres, то есть был лишней поверхностью атаки на сервере заказчика.
+
+**Что это меняет для предыдущей записи.** Запись про pino утверждала, что dev-зависимость не
+попадает в образ, потому что Dockerfile переставляет зависимости с `--prod`. Для списка
+зависимостей это верно, для содержимого образа — нет. pino в образе остаётся и должен оставаться:
+он production-зависимость fastify, а не наша dev-запись; проверяется теперь запуском fastify с
+логгером внутри контейнера (`scripts/check-runtime-image.sh`), а не `require.resolve('pino')` —
+pnpm из строгой раскладки резолвит только прямые зависимости, и отсутствие pino в
+`apps/api/node_modules` как раз и есть признак правильной изоляции.

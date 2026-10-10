@@ -109,7 +109,11 @@ jobs:
             test "$(id -u)" -ne 0
             test "$(id -un)" = node
           '
-      - name: Without DATABASE_URL it exits non-zero and echoes no value
+      - name: Without secrets it refuses to start and prints no values
+        # Measured on run 38050670935: in a production image the FIRST failure is config
+        # validation, not the database — `productionSecretProblems` refuses the dev defaults. The
+        # container said `config invalid: JWT_SECRET, LIVEKIT_API_KEY — values are not printed`,
+        # which is exactly the behaviour this step now pins: names yes, values no.
         run: |
           set +e
           out=$(timeout 180 docker run --rm --entrypoint node klass-api:${{ github.sha }} dist/server.js 2>&1)
@@ -117,8 +121,28 @@ jobs:
           set -e
           echo "--- container output ---"; echo "$out"; echo "--- exit code: $code"
           test "$code" -ne 0
-          echo "$out" | grep -q "boot failed"
-          if echo "$out" | grep -qE "postgres(ql)?://|@localhost|:klass@"; then
-            echo "FAIL: a connection string reached the output"; exit 1
+          echo "$out" | grep -q "config invalid:"
+          echo "$out" | grep -q "JWT_SECRET"
+          if echo "$out" | grep -qE "dev-only-secret|postgres(ql)?://|:klass@"; then
+            echo "FAIL: a value reached the output"; exit 1
+          fi
+          echo "ok: refused to start, named the keys, printed no values"
+      - name: Without DATABASE_URL it exits non-zero and echoes no connection string
+        # Fictitious, deliberately-wrong-but-valid-shaped secrets, so config validation passes and
+        # the failure that surfaces is the database connection.
+        run: |
+          set +e
+          out=$(timeout 180 docker run --rm \
+            -e JWT_SECRET=ci-fictitious-jwt-secret-0123456789abcdef \
+            -e LIVEKIT_API_KEY=ci-fictitious-key \
+            -e LIVEKIT_API_SECRET=ci-fictitious-secret-0123456789abcdef \
+            --entrypoint node klass-api:${{ github.sha }} dist/server.js 2>&1)
+          code=$?
+          set -e
+          echo "--- container output ---"; echo "$out"; echo "--- exit code: $code"
+          test "$code" -ne 0
+          echo "$out" | grep -q "boot failed:"
+          if echo "$out" | grep -qE "postgres(ql)?://|@localhost|:klass@|ci-fictitious-jwt"; then
+            echo "FAIL: a connection string or a secret value reached the output"; exit 1
           fi
           echo "ok: non-zero exit, boot failure named by class+code, no connection string"
