@@ -560,14 +560,14 @@ params: <связанные значения>`;
 процесс с фиктивным `DATABASE_URL` и читает его вывод — `boot failed:` есть, `fakepass` и
 `db.invalid` нет; отдельно отказ конфигурации — имя ключа напечатано, значение нет.
 
-**Про pino в devDependencies.** Он нужен только тесту, чтобы собрать логгер из тех же опций.
-`pnpm --filter @klass/api ls --prod --depth 0` его не показывает (как и vitest) — это ровно тот
-набор, который `apps/api/Dockerfile:20` ставит во временный слой `pnpm install --prod`, а runtime
-слой (строки 22–31) копирует именно его. Отдельно: pino и до этого был в образе как собственная
-зависимость fastify (`pnpm why pino`: `fastify 5.12.5 └── pino 10.4.0` — production, плюс
-`pino 10.4.0` — dev only), а diff lockfile — 3 строки в секции devDependencies импортера
-`apps/api` без новой записи о разрешении пакета (`downloaded 0`). То есть содержимое и размер
-рабочего образа этот коммит не меняет. `docker build` локально подтвердить нельзя: docker на этой
-машине не установлен (в комментарии Dockerfile сборка и так предписана на целевой VM), поэтому
-команда для владельца: `docker build -f apps/api/Dockerfile -t blublu:redact . && docker run --rm
-blublu:redact sh -c 'ls node_modules/.pnpm | grep -c vitest'` — ожидание `0`.
+**Про pino в devDependencies и про сам образ — утверждение пришлось исправить.** Изначально здесь
+было написано, что dev-зависимость не попадает в рабочий образ, потому что `apps/api/Dockerfile`
+переставляет зависимости с `--prod`, а `pnpm ls --prod` pino не показывает. Для списка зависимостей
+это верно, для образа — нет: новый job `docker-image` (run 38045464863) собрал Dockerfile и показал
+`dev-tool packages still in the pnpm store: 5` и `FAIL: vitest is resolvable from the runtime layer`.
+pnpm не вычищает dev-пакеты из node_modules, который уже установлен с ними, а runtime-слой копировал
+именно его — то есть в продакшн-образе жили vitest, tsx, drizzle-kit, typescript и embedded-postgres
+(последний умеет скачивать и запускать бинарный Postgres). Исправлено стадей `deps`: слой ставит
+`pnpm install --prod --frozen-lockfile` с нуля, и runtime копирует node_modules именно оттуда, из
+`build` — только собранные `dist`. pino при этом остаётся и должен остаться: он production-зависимость
+fastify (`pnpm why pino`), а не наша dev-запись.
