@@ -9,6 +9,7 @@ import { createBot } from './services/telegramBot.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
 import { effectiveMigrationsFolder, effectiveWebhookBase } from './lib/prodConfig.js';
 import { describeError, redactSecrets } from './lib/redact.js';
+import { installCrashGuards } from './lib/crashGuards.js';
 
 async function main() {
   const db = getDb(env.DATABASE_URL);
@@ -104,16 +105,9 @@ async function main() {
 }
 
 // A rejection nobody caught would otherwise be printed by Node itself — with the driver's full
-// message, which is where a connection string lives (measured: postgres-js puts it there). These
-// handlers keep Node's own semantics (both cases end the process) and change only the text.
-process.on('unhandledRejection', (reason) => {
-  console.error(`unhandled rejection: ${describeError(reason)}`);
-  process.exit(1);
-});
-process.on('uncaughtException', (err) => {
-  console.error(`uncaught exception: ${describeError(err)}`);
-  process.exit(1);
-});
+// message, which is where a connection string lives (measured: postgres-js puts it there). The
+// guards keep Node's own semantics (both cases end the process) and change only the text.
+installCrashGuards();
 
 // Boot failure: class and code only. This is the one place with no log pipeline left, and a
 // driver/migration error is exactly where a connection string tends to appear.
