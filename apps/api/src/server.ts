@@ -7,7 +7,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { LogTransport, TelegramTransport } from './services/notify.js';
 import { createBot } from './services/telegramBot.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
-import { effectiveMigrationsFolder, effectiveWebhookBase } from './lib/prodConfig.js';
+import { effectiveMigrationsFolder, webhookRegistration } from './lib/prodConfig.js';
 import { describeError, errorLine } from './lib/redact.js';
 import { botErrorLine } from './lib/errorObservers.js';
 import { installCrashGuards } from './lib/crashGuards.js';
@@ -42,14 +42,18 @@ async function main() {
   }, 10 * 60_000).unref?.();
   // Telegram webhook registration (best-effort; server admin does it too).
   // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.
-  const webhookBase = effectiveWebhookBase({ publicUrl: env.PUBLIC_URL, domain: env.DOMAIN });
-  if (bot && webhookBase && env.TELEGRAM_WEBHOOK_SECRET && env.TELEGRAM_MODE === 'webhook') {
+  // The arguments themselves are decided in prodConfig.webhookRegistration — the Bot API never
+  // reports secret_token back, so that object is the only proof the registration is authenticated.
+  const reg = webhookRegistration({
+    publicUrl: env.PUBLIC_URL, domain: env.DOMAIN, secret: env.TELEGRAM_WEBHOOK_SECRET,
+    mode: env.TELEGRAM_MODE, hasBot: Boolean(bot),
+  });
+  if (reg && bot) {
     try {
-      await bot.api.setWebhook(`${webhookBase}/webhook/telegram`, {
-        secret_token: env.TELEGRAM_WEBHOOK_SECRET,
-        drop_pending_updates: false,
+      await bot.api.setWebhook(reg.url, {
+        secret_token: reg.secret_token, drop_pending_updates: reg.drop_pending_updates,
       });
-      console.log(`telegram webhook registered for ${webhookBase.replace(/^https:\/\//, '')}`); // host only, no secrets
+      console.log(`telegram webhook registered for ${reg.url.replace(/^https:\/\//, '').replace(/\/webhook\/telegram$/, '')}`); // host only, no secrets
     } catch (e) {
       // understandable reason, with every credential shape the library may have put in it removed
       // (grammY messages can carry the Bot API URL, which IS a token)

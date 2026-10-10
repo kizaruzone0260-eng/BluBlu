@@ -28,6 +28,7 @@ import {
   PROD_REFRESH_GRACE_CEILING_MS,
   productionSecretProblems,
   rtcSpikeEnabled,
+  webhookRegistration,
 } from '../../src/lib/prodConfig.js';
 
 // the shipped defaults env.ts refuses to boot on in production (values, not secrets: these
@@ -208,5 +209,47 @@ describe('production refuses to boot on shipped defaults (never echoing a value)
         ...base, nodeEnv, jwtSecret: DEV_JWT, livekitApiKey: 'devkey', livekitApiSecret: DEV_LK,
       })).toEqual([]);
     }
+  });
+});
+
+// ─── audit item 1: the webhook registration arguments ─────────────────────────
+//
+// getWebhookInfo does not report secret_token, so nothing on the Telegram side can prove the
+// registration was authenticated. The only proof is this object, which is why the decision moved
+// out of server.ts and into prodConfig.ts.
+describe('webhookRegistration (аудит бота, п.1)', () => {
+  const HOOK = 'fictitious-hook-secret-0123456789';
+  const ok = { publicUrl: 'https://klass.example', secret: HOOK, mode: 'webhook', hasBot: true };
+
+  it('registers against PUBLIC_URL with the configured secret and keeps the queue', () => {
+    expect(webhookRegistration(ok)).toEqual({
+      url: 'https://klass.example/webhook/telegram', secret_token: HOOK, drop_pending_updates: false,
+    });
+  });
+
+  it('DOMAIN is the fallback, and the trailing slash never becomes //webhook', () => {
+    expect(webhookRegistration({ ...ok, publicUrl: '', domain: 'klass.example/' }))
+      ?.toEqual({ url: 'https://klass.example/webhook/telegram', secret_token: HOOK, drop_pending_updates: false });
+  });
+
+  it('no secret ⇒ NO registration at all — a webhook without a shared secret is never installed', () => {
+    expect(webhookRegistration({ ...ok, secret: '' })).toBeNull();
+  });
+
+  it('no address ⇒ NO registration (a CSRF-only origin must not become the bot endpoint)', () => {
+    expect(webhookRegistration({ ...ok, publicUrl: '', domain: '' })).toBeNull();
+  });
+
+  it('polling mode and a bot-less process register nothing', () => {
+    expect(webhookRegistration({ ...ok, mode: 'polling' })).toBeNull();
+    expect(webhookRegistration({ ...ok, hasBot: false })).toBeNull();
+  });
+
+  it('the result object contains the secret under exactly the key Telegram reads', () => {
+    // the class of bug this guards: the code sets a key the library does not read, so the webhook
+    // is registered WITHOUT a secret and every delivery arrives unauthenticated.
+    const reg = webhookRegistration(ok);
+    expect(reg && Object.keys(reg).sort()).toEqual(['drop_pending_updates', 'secret_token', 'url']);
+    expect(reg?.secret_token).toBe(HOOK);
   });
 });

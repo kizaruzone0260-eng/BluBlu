@@ -110,9 +110,32 @@ export function effectiveSiteBase(opts: { publicUrl: string; domain?: string; pu
  * (or a dev host) silently points the live bot somewhere that cannot receive it.
  */
 export function effectiveWebhookBase(opts: { publicUrl: string; domain?: string }): string {
-  if (opts.publicUrl.trim()) return opts.publicUrl.trim().replace(/\/+$/, '');
-  if (opts.domain?.trim()) return `https://${opts.domain.trim().replace(/^https?:\/\//, '')}`;
+  const strip = (s: string) => s.trim().replace(/\/+$/, '');
+  if (opts.publicUrl.trim()) return strip(opts.publicUrl);
+  // the DOMAIN branch must strip too: `DOMAIN=school.example/` used to produce
+  // `https://school.example//webhook/telegram`, which Fastify does not route — the bot would
+  // report a registered webhook while every update 404s.
+  if (opts.domain?.trim()) return `https://${strip(opts.domain.replace(/^https?:\/\//, ''))}`;
   return '';
+}
+
+/**
+ * The exact arguments `setWebhook` is called with, in one testable place.
+ *
+ * Why this is not left inline in server.ts: the webhook is the only credential in the product
+ * that is registered by the app itself, and the Bot API never reports it back — `getWebhookInfo`
+ * does not expose `secret_token`. So the only proof that deliveries are authenticated is THIS
+ * object, and an inline literal could not be asserted on its final output. A missing secret or a
+ * missing base returns null, which means "do not register at all" — never a webhook without a
+ * secret.
+ */
+export function webhookRegistration(opts: {
+  publicUrl: string; domain?: string; secret: string; mode: string; hasBot: boolean;
+}): { url: string; secret_token: string; drop_pending_updates: false } | null {
+  if (!opts.hasBot || opts.mode !== 'webhook') return null;
+  const base = effectiveWebhookBase({ publicUrl: opts.publicUrl, domain: opts.domain });
+  if (!base || !opts.secret) return null;
+  return { url: `${base}/webhook/telegram`, secret_token: opts.secret, drop_pending_updates: false };
 }
 
 /**
