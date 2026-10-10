@@ -328,7 +328,16 @@
     "commentMuted": "Bu darsda sizning izohlaringiz cheklangan.",
     "commentPinLimit": "Faqat uchta izohni bekitish mumkin.",
     "commentsUnmuteStudent": "Bu darsda izoh cheklovini o‘chirish",
-    "commentsModeAria": "Izoh rejimi"
+    "commentsModeAria": "Izoh rejimi",
+    "raiseHand": "Qoʻl koʻtaring",
+    "lowerHand": "Qoʻlngizni tushiring",
+    "handsQueue": "Koʻtarilgan qoʻllar",
+    "handsNone": "Hech kim qoʻl koʻtarmadi",
+    "giveFloor": "Soʻz bering",
+    "takeFloor": "Soʻzni qaytarib oling",
+    "lowerAllHands": "Barcha qoʻllarni tushiring",
+    "floorGiven": "Sizga soʻz berildi",
+    "floorTaken": "Soʻz qaytarib olindi"
   },
   "tg": {
     "title": "Telegram bildirishnomalari",

@@ -328,7 +328,16 @@
     "commentMuted": "Your comments are muted for this lesson.",
     "commentPinLimit": "Only three comments can be pinned.",
     "commentsUnmuteStudent": "Lift this student's comment mute for the lesson",
-    "commentsModeAria": "Comments mode"
+    "commentsModeAria": "Comments mode",
+    "raiseHand": "Raise hand",
+    "lowerHand": "Lower hand",
+    "handsQueue": "Raised hands",
+    "handsNone": "Nobody has raised a hand",
+    "giveFloor": "Give the floor",
+    "takeFloor": "Take the floor back",
+    "lowerAllHands": "Lower all hands",
+    "floorGiven": "You have the floor",
+    "floorTaken": "The floor was taken back"
   },
   "tg": {
     "title": "Telegram notifications",

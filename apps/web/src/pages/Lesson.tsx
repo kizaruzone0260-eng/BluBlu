@@ -8,6 +8,7 @@ import { useAuth } from '../App';
 import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
 import LessonComments, { CommentsFab, useCommentFrames } from '../components/LessonComments';
+import LessonHands, { RaiseHandButton, useHandFrames, useHands } from '../components/LessonHands';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
 
@@ -135,6 +136,53 @@ export default function Lesson() {
   const [lastSessionId, setLastSessionId] = useState<string | null>(null);
   useEffect(() => { if (session?.id) setLastSessionId(session.id); }, [session?.id]);
   const onCommentFrame = useCommentFrames(session?.id ?? null);
+  /*
+   * Task 2Б: the raise-hand queue. It is read while a lesson runs and simply stops existing when
+   * the lesson ends — a hand is not a transcript, there is nothing to keep for the teacher.
+   */
+  const handsQ = useHands(session?.id ?? null, Boolean(session?.id));
+  const onHandFrame = useHandFrames(session?.id ?? null);
+  const myHand = handsQ.q.data?.mine ?? null;
+  const hasFloor = Boolean(myHand?.grantedAt);
+  /*
+   * The socket effect closes over whatever `me` was when it ran, and after a hard reload the token
+   * can be ready before the profile is. A stale `me` inside `onmessage` would then drop the
+   * «вам дали слово» frame for the only person it matters to, so the id lives in a ref.
+   */
+  const meIdRef = useRef<string | null>(me?.id ?? null);
+  useEffect(() => { meIdRef.current = me?.id ?? null; }, [me?.id]);
+  const [floorTakenNotice, setFloorTakenNotice] = useState(false);
+  useEffect(() => {
+    if (!floorTakenNotice) return;
+    const t = window.setTimeout(() => setFloorTakenNotice(false), 8_000);
+    return () => window.clearTimeout(t);
+  }, [floorTakenNotice]);
+  /**
+   * «Дать слово» ends with the microphone ON in this browser, because LiveKit will not do it for
+   * us: `mutePublishedTrack(muted: false)` answers 412 "remote unmute not enabled" (measured in
+   * the CI run of 2026-10-10). The student raising the hand already asked to speak, so turning the
+   * mic on at the grant is the answer to their own request — and the failure is shown, not
+   * swallowed, because a silent no-op here would look like the floor did not arrive.
+   */
+  async function acceptFloor() {
+    const room = roomRef.current;
+    if (!room) return;
+    if (room.localParticipant.isMicrophoneEnabled) return;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(
+        true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
+      setMicErr('');
+      refreshLocal(room);
+    } catch (e: unknown) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        setMicErr('');
+      } catch (e2: unknown) {
+        setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e));
+      }
+      refreshLocal(room);
+    }
+  }
   const roomRef = useRef<Room | null>(null);
   // Part 4а: heartbeat that keeps the LiveKit join-token fresh during a long lesson.
   const tokenRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -211,7 +259,9 @@ export default function Lesson() {
         ws = new WebSocket(`ws${location.protocol === 'https:' ? 's' : ''}://${location.host}/api/ws/lesson/${s.id}?ticket=${encodeURIComponent(ticket)}`);
         ws.onopen = () => { attempt = 0; };
         ws.onmessage = (ev) => {
-          const msg = JSON.parse(ev.data as string) as { type: string; session?: Session; layout?: Session['layout']; on?: boolean };
+          const msg = JSON.parse(ev.data as string) as {
+            type: string; session?: Session; layout?: Session['layout']; on?: boolean; userId?: string;
+          };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
           if (msg.type === 'board') setBoardOpen(!!msg.on); // task B: teacher opened/closed the board for all
@@ -220,6 +270,10 @@ export default function Lesson() {
           // task 2: comments arrive on this same socket — the panel's query is the single source
           // for the mode, so the frame only has to invalidate it (see useCommentFrames)
           onCommentFrame(msg.type);
+          // task 2Б: the hand queue rides the same socket for the same reason
+          onHandFrame(msg.type);
+          if (msg.type === 'handGranted' && msg.userId === meIdRef.current) void acceptFloor();
+          if (msg.type === 'handRevoked' && msg.userId === meIdRef.current) setFloorTakenNotice(true);
           if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); setLectureMode(msg.session.lectureMode); }
         };
         ws.onclose = (ev) => {
@@ -473,7 +527,10 @@ export default function Lesson() {
       // with its own soft→minimal constraint chain and a visible error, never silent.
       // Task 3: a student joining while lecture mode or «mute everyone» is ON
       // starts muted — the banner explains why, the state came with the session.
-      const micBlocked = !isTeacher && (lectureMode || s.lectureMode || muteAll || s.muteAll);
+      // Task 2Б: holding the floor is the one exception the teacher can hand out; LiveKit still
+      // decides whether the publish is allowed, so trusting a stale queue here cannot open a mic
+      // that the media server would refuse.
+      const micBlocked = !isTeacher && !hasFloor && (lectureMode || s.lectureMode || muteAll || s.muteAll);
       let micKey = '';
       let micE: unknown;
       if (!micBlocked) {
@@ -561,7 +618,9 @@ export default function Lesson() {
     if (!room) return;
     // task 3: while the teacher muted everyone (or lecture mode is on) a student
     // can mute themselves but NOT talk over the class — the banners say why
-    if (!localMicOn && !isTeacher && (muteAll || lectureMode)) return;
+    // task 2Б: «дать слово» is exactly the exception to that rule, and it arrives here as state
+    // from the queue, which the socket keeps fresh
+    if (!localMicOn && !isTeacher && !hasFloor && (muteAll || lectureMode)) return;
     if (localMicOn) await room.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
     else {
       try {
@@ -901,6 +960,12 @@ export default function Lesson() {
                         </div>
                       ))}
                     </details>
+                    {/* task 2Б: the hand queue sits with the other teacher controls, next to the room */}
+                    <LessonHands
+                      sessionId={session.id}
+                      hands={handsQ.q.data?.hands ?? []}
+                      lectureMode={lectureMode}
+                    />
                     {/* task 2: «Комментарии» sits next to «Участники» for the teacher too */}
                     <LessonComments
                       sessionId={session.id} isTeacher lectureMode={lectureMode}
@@ -920,6 +985,14 @@ export default function Lesson() {
                 {!isTeacher && (
                   <>
                     <button className="secondary" style={{ marginTop: 0 }} onClick={() => void leaveRoom()}>{t('lesson.leave')}</button>
+                    {/* task 2Б: the student's own hand, and what the teacher did with it */}
+                    <RaiseHandButton sessionId={session.id} raised={Boolean(myHand)} />
+                    {hasFloor && (
+                      <span className="badge" role="status" data-testid="floor-banner">🎙 {t('lesson.floorGiven')}</span>
+                    )}
+                    {floorTakenNotice && (
+                      <span className="muted" role="status" data-testid="floor-taken">{t('lesson.floorTaken')}</span>
+                    )}
                     {/* task 2: the same panel, for the student side of the lesson */}
                     <LessonComments
                       sessionId={session.id} isTeacher={false} lectureMode={lectureMode}
@@ -1087,6 +1160,16 @@ export default function Lesson() {
                 sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode}
                 open={commentsOpen} onToggle={setCommentsOpen}
               />
+              {/* a teacher who has not joined media yet still runs the queue — «дать слово» is a
+                  REST + LiveKit action, it does not need this browser to be in the room */}
+              {isTeacher && (
+                <LessonHands sessionId={session.id} hands={handsQ.q.data?.hands ?? []} lectureMode={lectureMode} />
+              )}
+              {/* a hand needs no microphone and no room — it is raised from this screen too */}
+              {!isTeacher && <RaiseHandButton sessionId={session.id} raised={Boolean(myHand)} />}
+              {!isTeacher && hasFloor && (
+                <span className="badge" role="status" data-testid="floor-banner">🎙 {t('lesson.floorGiven')}</span>
+              )}
             </div>
           )}
           {!isTeacher && session && (

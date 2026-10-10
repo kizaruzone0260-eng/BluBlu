@@ -13,6 +13,7 @@ import { users, events } from '../db/schema.js';
 import { enqueueNotification, siteUrl } from '../services/notify.js';
 import { classTitle } from '../services/notifyQueue.js';
 import { createWsTicket, consumeWsTicket } from '../services/wsTicket.js';
+import { clearHands } from '../services/lessonHands.js'; // task 2Б: a hand is live-lesson state
 import { wsOriginAllowed } from '../lib/wsOrigin.js';
 import type { WebSocket as WsSocket } from 'ws';
 
@@ -78,6 +79,11 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s) return;
     const ended = await endLesson(db, id);
     if (!ended) return reply.code(404).send({ error: 'notFound' });
+    // A hand is live-lesson state: the queue goes with the lesson, and every floor that was given
+    // with it (task 2Б). Removing the participants below already ends their media; the rows must
+    // not survive to be re-read if this session is ever looked at again.
+    const handsDown = await clearHands(db, id);
+    if (handsDown > 0) wsBroadcast(id, { type: 'handsCleared', cleared: handsDown });
     // завершить урок для всех: kick every participant from the room (§3.6)
     const rs = await media(() => getRoomService().listParticipants(s.roomName));
     if (rs.ok) {

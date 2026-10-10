@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import {
   users, refreshTokens, wsTickets, chatWsTickets, chatMessages, chatReads, chatMutes,
-  lessonComments, lessonCommentReads, lessonCommentMutes,
+  lessonComments, lessonCommentReads, lessonCommentMutes, lessonHands,
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
   notifications, policyAcceptances, classMembers, loginAttempts,
 } from '../db/schema.js';
@@ -47,6 +47,9 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     await tx.delete(lessonComments).where(eq(lessonComments.authorId, userId));
     await tx.delete(lessonCommentReads).where(eq(lessonCommentReads.userId, userId));
     await tx.delete(lessonCommentMutes).where(eq(lessonCommentMutes.userId, userId));
+    // raise-hand queue (task 2Б): a row is «this person wanted to speak in that lesson» — personal
+    // enough to go with the account, and it would otherwise outlive every lesson they were in.
+    await tx.delete(lessonHands).where(eq(lessonHands.userId, userId));
     // notes / sheets (private by design)
     await tx.delete(studentNotes).where(eq(studentNotes.userId, userId));
     await tx.delete(teacherNotes).where(eq(teacherNotes.teacherId, userId));

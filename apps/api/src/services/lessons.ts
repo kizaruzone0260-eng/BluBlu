@@ -92,6 +92,44 @@ export const studentPermission = (lectureMode: boolean, screenShare = false) => 
       : [TrackSource.CAMERA, TrackSource.MICROPHONE],
 });
 
+/** The shape LiveKit reports for one participant (only the fields we reason about). */
+export interface CurrentPermission {
+  canPublish?: boolean;
+  canSubscribe?: boolean;
+  canPublishData?: boolean;
+  canPublishSources?: TrackSource[];
+}
+
+/**
+ * «Дать слово» (task 2Б, 2026-10-10) — the permission of ONE student, computed, never a room-wide
+ * change.
+ *
+ * Two measured facts shape it:
+ *  - in lecture mode a student's token says `canPublish: false, canPublishSources: []`, so the
+ *    floor really has to lift that — a signal alone would leave them unable to speak;
+ *  - LiveKit refuses a remote UNMUTE (`MutePublishedTrack` with `muted: false` answers
+ *    412 "remote unmute not enabled"; measured in the CI run of 2026-10-10), so the server can
+ *    never turn a student's microphone on. The grant therefore makes publishing POSSIBLE, and the
+ *    student's own client is the one that unmutes.
+ *
+ * The SDK also warns that a permission update is atomic — "all desired permissions would need to
+ * be set" — so this composes instead of overwriting: a screen-share the teacher already granted
+ * survives giving and taking the floor, and taking the floor returns exactly the baseline of the
+ * lesson (`studentPermission`), which is why revoking cannot leave anybody able to publish.
+ */
+export function floorPermission(
+  current: CurrentPermission | undefined, lectureMode: boolean, on: boolean,
+) {
+  const sources = current?.canPublishSources ?? [];
+  const hadScreen = sources.includes(TrackSource.SCREEN_SHARE);
+  const base = studentPermission(lectureMode, hadScreen);
+  if (!on) return base;
+  const withMic = base.canPublishSources.includes(TrackSource.MICROPHONE)
+    ? base.canPublishSources
+    : [...base.canPublishSources, TrackSource.MICROPHONE];
+  return { ...base, canPublish: true, canPublishSources: withMic };
+}
+
 let roomService: RoomServiceClient | null = null;
 export function getRoomService(): RoomServiceClient {
   roomService ??= new RoomServiceClient(

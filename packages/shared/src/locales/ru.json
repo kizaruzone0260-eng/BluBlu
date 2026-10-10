@@ -328,7 +328,16 @@
     "commentMuted": "На этом уроке вам ограничили комментарии.",
     "commentPinLimit": "Можно закрепить только три комментария.",
     "commentsUnmuteStudent": "Снять ограничение комментариев на этом уроке",
-    "commentsModeAria": "Режим комментариев"
+    "commentsModeAria": "Режим комментариев",
+    "raiseHand": "Поднять руку",
+    "lowerHand": "Опустить руку",
+    "handsQueue": "Подняли руку",
+    "handsNone": "Руку никто не поднимал",
+    "giveFloor": "Дать слово",
+    "takeFloor": "Забрать слово",
+    "lowerAllHands": "Опустить все руки",
+    "floorGiven": "Вам дали слово",
+    "floorTaken": "Слово забрали"
   },
   "tg": {
     "title": "Telegram-уведомления",

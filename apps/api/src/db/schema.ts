@@ -1,5 +1,5 @@
 import {
-  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, bigserial, jsonb, boolean, bigint, integer,
+  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, unique, bigserial, jsonb, boolean, bigint, integer,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -284,6 +284,32 @@ export const lessonCommentReads = pgTable('lesson_comment_reads', {
   sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
   lastReadAt: timestamp('last_read_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.userId, t.sessionId] })]);
+
+/**
+ * «Поднять руку» (task 2Б, 2026-10-10) — one row per person per lesson.
+ *
+ * Lowering the hand DELETEs the row rather than marking it: the queue is the live state of a
+ * running lesson, and a finished lesson must not keep a list of who wanted to speak. The same
+ * reason makes the key the session and not the class — a hand cannot leak into the next lesson
+ * (same argument as `lesson_comment_mutes`).
+ *
+ * `granted_at` is the teacher's «дать слово». It is deliberately only a fact about the lesson:
+ * the LiveKit publish permission is DERIVED from it (`floorPermission` in services/lessons.ts,
+ * called from routes/lessonHands.ts), so ending the
+ * lesson, lowering the hand or revoking the floor cannot leave a student able to publish — the
+ * permission is rewritten every time the flag changes, and the tokens themselves are never
+ * widened for anybody else.
+ */
+export const lessonHands = pgTable('lesson_hands', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  raisedAt: timestamp('raised_at', { withTimezone: true }).notNull().defaultNow(),
+  grantedAt: timestamp('granted_at', { withTimezone: true }),
+}, (t) => [
+  unique('lesson_hands_session_user_key').on(t.sessionId, t.userId),
+  index('lesson_hands_session_idx').on(t.sessionId, t.raisedAt),
+]);
 
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
