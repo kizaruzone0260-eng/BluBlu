@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyBaseLogger } from 'fastify';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -29,36 +29,69 @@ import { chatRoutes } from './routes/chat.js';
 import { lessonCommentRoutes } from './routes/lessonComments.js';
 import { lessonHandRoutes } from './routes/lessonHands.js';
 
-/** Strip query strings from request logs — tickets/tokens must never hit logs. */
+/**
+ * What the access log is allowed to know about a URL.
+ *
+ * Two shapes hide a credential, and both occur here:
+ *  - a query string (`/api/ws/lesson/<id>?ticket=<one-time ticket>`) — dropped entirely;
+ *  - a token that IS a path segment (`/api/ical/<secret>` — the personal ICS subscription,
+ *    §3.5, whose token must never be logged). Stripping the query would not have touched it, so
+ *    the segment is replaced by a fixed marker; the route itself stays recognizable.
+ */
 export function sanitizeRequestUrl(url: string | undefined): string {
-  return (url ?? '').split('?')[0] ?? '';
+  return ((url ?? '').split('?')[0] ?? '').replace(/^\/api\/ical\/[^/]+/, '/api/ical/[redacted]');
 }
 
-export async function buildApp(db: DB): Promise<FastifyInstance> {
-  const app = Fastify({
-    logger: env.NODE_ENV === 'test'
-      ? false
-      : {
-          level: 'info',
-          // access-token/bearer заголовки в логи не пишутся
-          redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
-          serializers: {
-            request: (req) => ({
-              type: 'request',
-              method: req.method,
-              url: sanitizeRequestUrl(req.url),
-              hostname: req.hostname,
-              remoteAddress: req.ip,
-              remotePort: req.socket?.remotePort,
-            }),
-          },
-        },
-    // §rate-limit task: trust X-Forwarded-For ONLY when we really run behind a
-    // proxy (Caddy in production, cloudflared in demo, Render in the cloud).
-    // Configurable via TRUST_PROXY env; default off — otherwise a client could
-    // forge the header and dodge the per-IP auth limits.
-    trustProxy: env.TRUST_PROXY,
-  });
+/**
+ * The logger options Fastify hands to pino. Exported because the only honest test of a log
+ * format is the OUTPUT of the real object: `test/integration/access-log.test.ts` builds the
+ * same app with a pino instance created from these very options and asserts on the lines.
+ *
+ * The serializer key is `req`, not `request`. pino (and therefore Fastify, which just passes
+ * this object through) reads `serializers.req/res/err`; a `request` key is not an error, not a
+ * warning, and not even a type error — it is simply ignored, and the DEFAULT serializer runs
+ * instead. That is how `/api/ws/lesson/<id>?ticket=<one-time ticket>` reached the access log
+ * while `sanitizeRequestUrl` had a green unit test next to it (measured 2026-10-10: zero lines
+ * with our `type:"request"` field, 18 lines carrying `?ticket=`).
+ */
+export const accessLogOptions = {
+  level: 'info',
+  // Second line of defence: the serializer below never returns headers at all, so these paths
+  // have no target today — they stay so that a future `{ req }` log cannot widen the shape.
+  redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
+  serializers: {
+    req: (req: {
+      method?: string; url?: string; hostname?: string; ip?: string;
+      socket?: { remotePort?: number };
+    }) => ({
+      type: 'request',
+      method: req.method,
+      url: sanitizeRequestUrl(req.url),
+      hostname: req.hostname,
+      remoteAddress: req.ip,
+      remotePort: req.socket?.remotePort,
+    }),
+  },
+};
+
+export async function buildApp(
+  db: DB, opts: { logger?: FastifyBaseLogger } = {},
+): Promise<FastifyInstance> {
+  // `loggerInstance` (a logger we were handed) and `logger` (options for Fastify's own pino)
+  // are mutually exclusive in Fastify, hence the two branches rather than one spread.
+  const app = opts.logger
+    ? Fastify({
+        loggerInstance: opts.logger,
+        trustProxy: env.TRUST_PROXY,
+      })
+    : Fastify({
+        logger: env.NODE_ENV === 'test' ? false : accessLogOptions,
+        // §rate-limit task: trust X-Forwarded-For ONLY when we really run behind a
+        // proxy (Caddy in production, cloudflared in demo, Render in the cloud).
+        // Configurable via TRUST_PROXY env; default off — otherwise a client could
+        // forge the header and dodge the per-IP auth limits.
+        trustProxy: env.TRUST_PROXY,
+      });
 
   // CSP: connect-src names ONLY concrete origins — same-origin API/WS via 'self'
   // (CSP treats https:'self' as matching its wss counterpart) plus the LiveKit

@@ -92,6 +92,9 @@ importers:
       embedded-postgres:
         specifier: 18.4.0-beta.17
         version: 18.4.0-beta.17
+      pino:
+        specifier: ^10.4.0
+        version: 10.4.0
       tsx:
         specifier: ^4.19.2
         version: 4.23.15

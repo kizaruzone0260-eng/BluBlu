@@ -8,6 +8,19 @@ describe('request-log sanitizer (audit: no secrets in logs)', () => {
     expect(sanitizeRequestUrl('/api/health/live')).toBe('/api/health/live');
     expect(sanitizeRequestUrl(undefined)).toBe('');
   });
+
+  /**
+   * Added 2026-10-10: the personal ICS subscription carries its secret token as a PATH segment
+   * (`/api/ical/<token>`), which dropping the query string never touched. The route must stay
+   * recognizable in the log — only the segment is replaced.
+   */
+  it('masks a token that lives in the path, and only that segment', () => {
+    expect(sanitizeRequestUrl('/api/ical/Vxsabc123_xyz')).toBe('/api/ical/[redacted]');
+    expect(sanitizeRequestUrl('/api/ical/abc?from=1')).toBe('/api/ical/[redacted]');
+    expect(sanitizeRequestUrl('/api/me/ical-token')).toBe('/api/me/ical-token'); // the issuer, not a token
+    expect(sanitizeRequestUrl('/api/ical')).toBe('/api/ical');
+    expect(sanitizeRequestUrl('/api/classes/7/ical-token')).toBe('/api/classes/7/ical-token');
+  });
 });
 
 describe('tokens (§3.1)', () => {
