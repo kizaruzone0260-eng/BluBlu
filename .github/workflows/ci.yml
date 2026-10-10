@@ -94,6 +94,11 @@ jobs:
       - name: Image size (printed for comparison, not a gate)
         run: docker images klass-api --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
       - name: No dev dependencies in the runtime layer
+        # pnpm's strict layout resolves ONLY direct dependencies from apps/api, which is what makes
+        # this a real test: a devDependency would be resolvable there, a transitive one is not.
+        # pino therefore shows up only as fastify's own dependency — proved by starting fastify's
+        # logger inside the container, not by resolving pino by name (the first version of this step
+        # expected exactly that and failed for the wrong reason: run 38048190207).
         run: |
           set -e
           docker run --rm --entrypoint sh klass-api:${{ github.sha }} -c '
@@ -106,8 +111,8 @@ jobs:
               fi
               echo "absent: $m"
             done
-            node -e "require.resolve(process.argv[1])" pino >/dev/null
-            echo "resolvable: pino (fastify'"'"'s own logger — production dependency, expected)"
+            node -e "const F = require('fastify'); const a = F({ logger: { level: 'info' } }); a.log.info('fastify and its pino work in the runtime layer')"
+            echo "pino in the store: $(ls /repo/node_modules/.pnpm | grep -E '^pino@' | head -1)"
           '
       - name: Runs as a non-root user
         run: |
