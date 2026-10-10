@@ -178,6 +178,8 @@ jobs:
           docker build --no-cache -f apps/api/Dockerfile -t klass-api:smoke .
           echo "clean docker build took $(( $(date +%s) - start ))s"
       - name: Smoke the running container (health, migrations, SPA, CSRF, queue, DB restart)
+        # the id is passed inline: `$GITHUB_ENV` only reaches LATER steps, and the first run of this
+        # job failed on `docker exec  psql …` with an empty container id for exactly that reason.
         run: |
-          echo "SMOKE_PG=$(docker ps --filter ancestor=postgres:16-alpine --format '{{.ID}}' | head -1)" >> "$GITHUB_ENV"
-          node scripts/runtime-smoke.mjs
+          SMOKE_PG=$(docker ps --filter ancestor=postgres:16-alpine --format '{{.ID}}' | head -1) \
+            node scripts/runtime-smoke.mjs

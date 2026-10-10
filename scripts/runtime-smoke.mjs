@@ -17,6 +17,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const IMAGE = process.env.SMOKE_IMAGE ?? 'klass-api:smoke';
+if (!process.env.SMOKE_PG) {
+  console.error('SMOKE_PG must be the id of the running Postgres container (docker ps --format {{.ID}})');
+  process.exit(2);
+}
 const PORT = 3000;
 const BASE = `http://127.0.0.1:${PORT}`;
 const PG_USER = 'klass';
