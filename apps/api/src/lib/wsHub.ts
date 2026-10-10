@@ -1,4 +1,5 @@
 import type { WebSocket } from 'ws';
+import { attachErrorLogging } from './errorObservers.js';
 
 /**
  * Minimal WS hub shared by lesson status (§3.6) and whiteboard (§3.7):
@@ -14,6 +15,9 @@ export function wsJoin(sessionId: string, socket: WebSocket): void {
     rooms.set(sessionId, set);
   }
   set.add(socket);
+  // an 'error' with no listener is thrown by Node as an uncaughtException — which would take the
+  // whole API down in the middle of a lesson; this logs class+code and lets `close` follow.
+  attachErrorLogging(socket, 'lesson socket');
   socket.on('close', () => {
     set!.delete(socket);
     if (set!.size === 0) rooms.delete(sessionId);

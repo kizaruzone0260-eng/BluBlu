@@ -167,6 +167,9 @@ suite('access log output (task 5)', () => {
     const r = await app.inject({ method: 'GET', url: '/api/classes', headers: auth(teacherTok) });
     expect(r.statusCode).toBe(500);
     expect(r.json(), 'no driver text in the client response').toEqual({ error: 'serverError' });
+    // the same claim from the other side: the body is five words, with no stack, no SQL and no
+    // connection string anywhere in the bytes the client receives
+    expect(r.body).not.toMatch(/at .*\(|Failed query|postgres:\/\/|params:/);
     const errLine = msgLines('unhandled error').at(-1);
     expect(errLine, 'the server does keep an internal record of a 500').toBeTruthy();
     expect(typeof errLine?.reqId).toBe('string');

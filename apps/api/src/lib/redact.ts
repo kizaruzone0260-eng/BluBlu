@@ -61,7 +61,8 @@ export function describeError(err: unknown): string {
     const e = current as {
       name?: string; constructor?: { name?: string }; code?: string | number; errno?: string | number;
       sqlstate?: string; status?: string | number; statusCode?: string | number;
-      cause?: unknown; errors?: unknown;
+      error_code?: string | number; // grammY's GrammyError calls its code this
+      cause?: unknown; error?: unknown; errors?: unknown;
     };
     if (!className) {
       // `name` wins when it says something (LiveKitError, PostgresError); drizzle's query error
@@ -72,7 +73,7 @@ export function describeError(err: unknown): string {
         ? e.constructor.name : undefined;
       className = named ?? ctor;
     }
-    for (const key of ['code', 'errno', 'sqlstate', 'status', 'statusCode'] as const) {
+    for (const key of ['code', 'errno', 'sqlstate', 'status', 'statusCode', 'error_code'] as const) {
       const v = e[key];
       if (v !== undefined && v !== null && v !== '') codes.add(String(v));
     }
@@ -83,7 +84,9 @@ export function describeError(err: unknown): string {
         if (c !== undefined && c !== null) codes.add(String(c));
       }
     }
-    current = e.cause;
+    // …and one step down: postgres-js puts its code on `cause`, grammY wraps the real error in
+    // `.error` (BotError and HttpError both do), and an AggregateError hides it in `errors`.
+    current = e.cause ?? e.error;
   }
   const name = className ?? (err instanceof Error ? 'Error' : typeof err);
   return codes.size ? `${name} (${[...codes].join(', ')})` : name;
@@ -102,4 +105,15 @@ export function safeErrorMessage(err: unknown): string {
     : (err as { message?: string })?.message ?? String(err ?? '');
   const cut = raw.split(/\n?params:/i)[0];
   return redactSecrets(cut).trim();
+}
+
+/**
+ * One line for one failure channel: `telegram bot: GrammyError (401)`.
+ *
+ * Every `console.*` that reports an exception is supposed to go through this, which is what makes
+ * the source scan in `test/unit/no-raw-error-logging.test.ts` enforceable: a channel name plus
+ * `describeError`, never a message, never the error object.
+ */
+export function errorLine(channel: string, err: unknown): string {
+  return `${channel}: ${describeError(err)}`;
 }

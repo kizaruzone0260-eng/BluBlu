@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getDb, closeDb } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { hashPassword } from '../lib/password.js';
+import { errorLine } from '../lib/redact.js';
 import { eq, and } from 'drizzle-orm';
 import { isNull } from 'drizzle-orm';
 
@@ -35,4 +36,4 @@ async function main() {
   await closeDb();
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => { console.error(errorLine('seed-teacher failed', e)); process.exit(1); });

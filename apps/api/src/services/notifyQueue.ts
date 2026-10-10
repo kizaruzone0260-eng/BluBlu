@@ -4,6 +4,7 @@ import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { sendDue, scanReminders, type NotifyTransport } from './notify.js';
 import { publishDuePosts } from './posts.js';
+import { attachErrorLogging } from '../lib/errorObservers.js';
 import { classes } from '../db/schema.js';
 
 let boss: PgBoss | null = null;
@@ -19,6 +20,9 @@ let heartbeat: NodeJS.Timeout | null = null;
  */
 export async function initNotifyWorker(db: DB, transport: NotifyTransport): Promise<void> {
   boss = new PgBoss({ connectionString: env.DATABASE_URL, schema: 'pgboss' });
+  // pg-boss extends EventEmitter: an unhandled 'error' would surface as an uncaughtException and
+  // take the API down. Log the class and the code, keep the queue running.
+  attachErrorLogging(boss, 'pg-boss');
   await boss.start();
   await boss.createQueue('notify-flush');
   await boss.work('notify-flush', () => sendDue(db, transport));

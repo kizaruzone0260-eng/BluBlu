@@ -8,7 +8,8 @@ import { LogTransport, TelegramTransport } from './services/notify.js';
 import { createBot } from './services/telegramBot.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
 import { effectiveMigrationsFolder, effectiveWebhookBase } from './lib/prodConfig.js';
-import { describeError, redactSecrets } from './lib/redact.js';
+import { describeError, errorLine } from './lib/redact.js';
+import { botErrorLine } from './lib/errorObservers.js';
 import { installCrashGuards } from './lib/crashGuards.js';
 
 async function main() {
@@ -52,7 +53,7 @@ async function main() {
     } catch (e) {
       // understandable reason, with every credential shape the library may have put in it removed
       // (grammY messages can carry the Bot API URL, which IS a token)
-      console.warn(`telegram webhook registration FAILED (bot is up, Telegram will not reach it until this works): ${redactSecrets(e)}`);
+      console.warn(`telegram webhook registration FAILED (bot is up, Telegram will not reach it until this works): ${errorLine('telegram', e)}`);
     }
   } else if (bot && env.TELEGRAM_MODE === 'webhook') {
     console.warn('telegram webhook skipped: set PUBLIC_URL (or DOMAIN) and TELEGRAM_WEBHOOK_SECRET');
@@ -60,7 +61,7 @@ async function main() {
   // bot task §1: default-scope command menu (basic set) refreshed at every boot
   if (bot && env.TELEGRAM_TRANSPORT === 'telegram') {
     const { applyMenu, grammyApi } = await import('./services/botApi.js');
-    await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn('setMyCommands failed:', redactSecrets(e)));
+    await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn(errorLine('setMyCommands failed', e)));
   }
   // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
   if (bot && env.TELEGRAM_MODE === 'polling') {
@@ -71,13 +72,15 @@ async function main() {
     try {
       await bot.api.deleteWebhook({ drop_pending_updates: false });
     } catch (e) {
-      console.warn('deleteWebhook failed:', redactSecrets(e));
+      console.warn(errorLine('deleteWebhook failed', e));
     }
     const deps = botDeps(db, bot);
     bot.on('message', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
     bot.on('callback_query', async (ctx) => { await handleUpdate(deps, ctx.update as never); });
-    bot.catch((err) => console.warn('telegram polling error:', redactSecrets((err.error as Error) ?? err)));
-    void bot.start().catch((e: Error) => console.warn('telegram polling stopped:', redactSecrets(e)));
+    // grammY's own default handler prints the whole error object, and a GrammyError carries the
+    // request payload — the text that was being sent to the class. Class and code only.
+    bot.catch((err) => console.warn(botErrorLine(err)));
+    void bot.start().catch((e: Error) => console.warn(errorLine('telegram polling stopped', e)));
   }
 
   const app = await buildApp(db);

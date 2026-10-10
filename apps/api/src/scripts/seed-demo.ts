@@ -2,6 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { getDb, closeDb } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { hashPassword } from '../lib/password.js';
+import { errorLine } from '../lib/redact.js';
 
 /**
  * Demo seed (docs/DEMO.md) — MINIMAL by design (task C.1):
@@ -35,4 +36,4 @@ async function main() {
   await closeDb();
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => { console.error(errorLine('seed-demo failed', e)); process.exit(1); });

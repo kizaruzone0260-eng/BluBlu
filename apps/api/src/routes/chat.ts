@@ -6,6 +6,7 @@ import type { DB } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { audit } from '../services/audit.js';
 import { wsOriginAllowed } from '../lib/wsOrigin.js';
+import { attachErrorLogging } from '../lib/errorObservers.js';
 import {
   chatAccess, clearMute, consumeChatTicket, createChatTicket, deleteMessage, deleteMessageAny,
   editMessage, findReplyTarget, isMuted, listMessages, markRead, postMessage, setMute, chatSummary,
@@ -238,7 +239,7 @@ export async function chatRoutes(app: FastifyInstance, opts: { db: DB }) {
         set!.delete(socket);
         if (set!.size === 0) rooms.delete(classId);
       });
-      socket.on('error', () => { /* close follows */ });
+      attachErrorLogging(socket, 'chat socket'); // was silent; close still follows
       socket.send(JSON.stringify({ type: 'ready', classId, mode: access.chatMode }));
     })().catch(() => socket.close(1011));
   });

@@ -571,3 +571,23 @@ pnpm не вычищает dev-пакеты из node_modules, который у
 `pnpm install --prod --frozen-lockfile` с нуля, и runtime копирует node_modules именно оттуда, из
 `build` — только собранные `dist`. pino при этом остаётся и должен остаться: он production-зависимость
 fastify (`pnpm why pino`), а не наша dev-запись.
+
+### Каналы чужих библиотек (task 7, 2026-10-10)
+
+Предыдущий раздел закрыл наши собственные `catch`. Дальше были проверены каналы, где объект
+ошибки создаёт не наш код — и там утечка оказалась не в тексте сообщения, а в самом объекте.
+
+| канал | что печаталось до | что печатается после |
+| --- | --- | --- |
+| grammY, стандартный обработчик | `console.error("Error in middleware…", update_id, err.error)`; `err` — `GrammyError`, у которого перечислимое поле `payload` = тело запроса, то есть текст, отправляемый классу (измерено: `inspect(grammyError)` содержит маркер чата) | `telegram bot: GrammyError (401)` — класс и `error_code`, ни payload, ни `description` |
+| grammY `HttpError` | внутри лежит fetch-ошибка, в `message` которой URL запроса `https://api.telegram.org/bot<токен>/sendMessage` | `telegram bot: HttpError (UND_ERR_CONNECT_TIMEOUT)` — класс сохранён (не разворачивается, в отличие от `BotError`), код взят из обёрнутой ошибки, токена в строке нет |
+| pg-boss | слушателя `'error'` не было вовсе: EventEmitter бросает при `emit('error')` без слушателя → `uncaughtException` (а до task 5 — ещё и с полным сообщением драйвера) | `attachErrorLogging(boss, 'pg-boss')` → `pg-boss: Error (ECONNREFUSED)`, очередь продолжает работать |
+| сокеты урока / доски / чата | чат: пустой слушатель (ошибка невидима); урок и доска: слушателя нет → тот же `uncaughtException` | `lesson socket` / `board socket` / `chat socket: Class (code)` |
+| LiveKit | `media()` в `routes/lessons.ts` проглатывал ошибку и не печатал — утечки не было и раньше (проверено grep'ом: `.error` из `media()` не читает никто) | если ошибка всё же дойдёт до печати, канал общий: `livekit: Error (502)`, а `wss://…?key=…` вырезается redactor'ом |
+| 500 клиенту | `{error:'serverError'}` — уже было корректно | то же, плюс тест проверяет тело на `at (`, `Failed query`, `postgres://`, `params:` |
+| `seed-teacher` / `seed-demo` | `console.error(e)` — при падении печати строку подключения | `seed-teacher failed: Error (ECONNREFUSED)` |
+
+Механика: `src/lib/errorObservers.ts` (`attachErrorLogging`, `botErrorLine`) и `errorLine(channel,
+err)` в `src/lib/redact.ts`. `describeError` научился читать `error_code` (как grammY называет код
+Telegram) и спускаться по цепочке `cause` **или** `.error` (grammY использует `.error` и в
+`BotError`, и в `HttpError`), поэтому класс остаётся внешний (тот, что назвала библиотека), а код находится внутри.

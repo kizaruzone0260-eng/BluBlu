@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { DB } from '../db/index.js';
 import { consumeWsTicket } from '../services/wsTicket.js';
 import { wsOriginAllowed } from '../lib/wsOrigin.js';
+import { attachErrorLogging } from '../lib/errorObservers.js';
 import { resolveClass } from '../services/classes.js';
 import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
@@ -222,6 +223,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
       const r = await getBoardRoom(db, sessionId);
       if (role === 'teacher') r.teacherId = consumed.userId;
       r.sockets.set(socket, { role });
+      attachErrorLogging(socket, 'board socket'); // see lib/errorObservers.ts
       socket.on('close', () => {
         r.sockets.delete(socket);
         // flush pending edits, then persist; keep the room in the map until the
