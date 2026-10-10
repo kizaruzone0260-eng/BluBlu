@@ -210,6 +210,20 @@ if (lessonSession) {
   }
 }
 
+// ── raise-hand fixture (task 2Б): one hand is up, so the queue has something to show ──
+if (lessonSession && stuToken) {
+  const hand = async (method) => fetch(`${BASE}/api/lessons/${lessonSession.id}/hand`, {
+    method, headers: method === 'POST'
+      ? { authorization: `Bearer ${stuToken}`, 'content-type': 'application/json' }
+      : { authorization: `Bearer ${stuToken}` },
+    body: method === 'POST' ? '{}' : undefined,
+  });
+  // lowered first: the row survives from a previous run with an old timestamp, and the picture
+  // should read «кто-то только что поднял руку»
+  await hand('DELETE').catch(() => undefined);
+  await hand('POST').catch(() => undefined);
+}
+
 // ── capture ───────────────────────────────────────────────────────────────────
 const browser = await chromium.launch({ channel: 'msedge' });
 const widths = process.env.SHOT_WIDTHS ? process.env.SHOT_WIDTHS.split(',').map(Number) : [390, 768, 1280];
@@ -307,6 +321,29 @@ for (const locale of locales) {
           await page.screenshot({ path: path.join(outDir, `lesson-comments-${locale}-${width}-${theme}.png`) });
           count++;
           fs.writeFileSync(path.join(outDir, 'LAST.txt'), `lesson-comments-${locale}-${width}-${theme}.png`);
+        }
+      }
+      // task 2Б: the teacher's queue with a student's hand up. «Дать слово» is not shown here on
+      // purpose — the grant needs that person to be a real participant in a live room, and this
+      // script never joins media; the picture documents the ask and the queue, not the answer.
+      if (!only || only.includes('hands')) {
+        await page.goto(`${BASE}/lesson?classId=${cls.id}`);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+        const queue = page.getByTestId('hands-panel');
+        if (await queue.count()) {
+          await queue.locator('summary').click();
+          await page.waitForTimeout(900);
+          /*
+           * The queue sits under the board, so a plain viewport shot showed the summary and cut off
+           * the very row this picture is about (measured on the first run), and `fullPage: true`
+           * painted the sticky header and the mobile tab bar ON TOP of the list. Scrolling the open
+           * panel into view and shooting the viewport is the only version that shows the row.
+           */
+          await queue.scrollIntoViewIfNeeded();
+          await page.waitForTimeout(300);
+          await page.screenshot({ path: path.join(outDir, `hands-${locale}-${width}-${theme}.png`) });
+          count++;
+          fs.writeFileSync(path.join(outDir, 'LAST.txt'), `hands-${locale}-${width}-${theme}.png`);
         }
       }
       // task A: the «Создать материал» page (form + right panel)
