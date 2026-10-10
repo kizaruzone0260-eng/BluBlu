@@ -8,9 +8,15 @@
  *
  * The export must also be a purely local operation: every request the page makes while building
  * the file is recorded, and only our own origin may appear (task 2ж).
+ *
+ * The two font-check PNGs this spec takes go to `test-results/screenshots/` (see `shot()`);
+ * `docs/screenshots/board-text-1280.png` and `-390.png` are the copies committed on 2026-10-08 as
+ * review evidence and are no longer rewritten by a run — before that change every e2e suite left
+ * the working tree dirty.
  */
 import { test, expect, request as pw } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import {
   BASE, dbBoard, drawText, inkOf, loginUi, m, makeLesson, openLesson, paint, stack,
@@ -20,6 +26,18 @@ import {
 
 const MM_PT = 72 / 25.4;                 // 1 mm in PostScript points (PDFs are 72 pt per inch)
 const A4 = { width: 297 * MM_PT, height: 210 * MM_PT };
+
+/**
+ * Evidence a test writes goes under `test-results/` (already gitignored), not into `docs/`.
+ * This spec used to save two PNGs straight into docs/screenshots, so every suite left the working
+ * tree dirty and a committed review artifact silently drifted. The pictures in docs/screenshots
+ * come from the `*-shots.mjs` scripts, which are run on purpose and can be reviewed on purpose.
+ */
+function shot(name: string): string {
+  const dir = join(process.cwd(), 'test-results', 'screenshots');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, name);
+}
 
 test.describe('board → PDF (task 2)', () => {
   let api: Ctx = null as unknown as Ctx;
@@ -280,7 +298,7 @@ test.describe('board → PDF (task 2)', () => {
     const inText = await inkOf(p, 'text');
     m('ink in the text line', inText);
     expect(inText, 'something is painted where the text sits').toBeGreaterThan(200);
-    await p.getByTestId('board').screenshot({ path: '../../docs/screenshots/board-text-1280.png' });
+    await p.getByTestId('board').screenshot({ path: shot('board-text-1280.png') });
     await p.context().close();
 
     // the same at phone width, for the screenshot review
@@ -288,7 +306,7 @@ test.describe('board → PDF (task 2)', () => {
     const phone = await ctx.newPage();
     await loginUi(phone, stack.teacherEmail, stack.teacherPassword);
     await openLesson(phone, classId);
-    await phone.getByTestId('board').screenshot({ path: '../../docs/screenshots/board-text-390.png' });
+    await phone.getByTestId('board').screenshot({ path: shot('board-text-390.png') });
     await ctx.close();
   });
 });
