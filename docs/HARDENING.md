@@ -609,3 +609,38 @@ Telegram) и спускаться по цепочке `cause` **или** `.error
 одного из форматтеров, или если печать появилась в файле вне списка. Третий тест держит общее
 число вызовов (≤ 22) — не порог, а растяжка: новая строка запуска легальна, новая печать ошибки
 обязана пройти через форматтер и попасть в обзор.
+
+### Вывод job'а `docker-image` (run 38051850671, коммит `f9fdd4a`)
+
+Это тот случай, когда проверка придумана правильно: она нашла не опечатку в тесте, а содержимое
+продакшн-образа. Полный прогон после переезда на стадию `deps`:
+
+```
+klass-api:f9fdd4…  313MB
+dev-tool packages still in the pnpm store: 0
+absent: vitest
+absent: tsx
+absent: drizzle-kit
+absent: typescript
+absent: embedded-postgres
+absent: @types/ws
+{"level":30,…,"msg":"fastify and its pino logger work in the runtime layer"}
+pino in the store: pino@10.4.0
+user=node uid=1000
+--- container output ---
+config invalid: JWT_SECRET, LIVEKIT_API_KEY — values are not printed
+--- exit code: 1
+ok: refused to start, named the keys, printed no values
+--- container output ---
+boot failed: DrizzleQueryError (ECONNREFUSED, -111)
+--- exit code: 1
+ok: non-zero exit, boot failure named by class+code, no connection string
+```
+
+Что из этого следует для эксплуатации: размер 313 MB — число для сравнения, порога в job нет;
+в контейнере не осталось ни одного dev-инструмента, при этом рабочий логгер (pino внутри fastify)
+на месте; процесс запускается от `node` (uid 1000); без настоящих секретов образ отказывается
+стартовать, называя только имена ключей, а без доступной базы — `boot failed:` с классом и кодом
+(`ECONNREFUSED, -111`), и строка подключения в вывод не попадает. До правки `deps` тот же job
+печатал `dev-tool packages still in the pnpm store: 5` и `FAIL: vitest is resolvable from the
+runtime layer` (run 38045464863).
