@@ -164,8 +164,17 @@ test.describe('raise hand and the floor (task 2Б)', () => {
     // the hand itself stays up: taking the word back is not the same act as lowering it
     await expect(row(t.page)).toBeVisible({ timeout: 15_000 });
 
+    /*
+     * The other way a floor ends: the student puts their own hand down. The row and the widened
+     * permission must disappear TOGETHER — if they lived in different places, «he stopped talking»
+     * and «he can still publish» could disagree forever.
+     */
+    await grantBtn(t.page).click();
+    await expect(s.page.getByTestId('floor-banner')).toBeVisible({ timeout: 20_000 });
+    await expect(s.page.getByTestId('mic-toggle')).toContainText('🎙', { timeout: 20_000 });
     await s.page.getByTestId('raise-hand').click();
     await expect(t.page.getByTestId('hands-empty')).toBeVisible({ timeout: 15_000 });
+    await expect(s.page.getByTestId('mic-toggle')).toContainText('🔇', { timeout: 20_000 });
     await s.ctx.close(); await t.ctx.close();
     await lectureMode(false);
   });
