@@ -41,3 +41,14 @@ apps/web/public/excalidraw-assets/
 /lesson-tiles.json
 /lesson-tiles-after.json
 /lesson-tiles-base.json
+/lesson-join-timing*.json
+/board-open-time.json
+/rep-anon-*.json
+/rep-fra-*.json
+/lesson-join-timing*.json
+/board-open-time.json
+/rep-anon-*.json
+/rep-fra-*.json
+
+# e2e json-отчёт: нужен гейту ci-no-skips.mjs, в дерево не попадает
+apps/e2e/e2e-results.json

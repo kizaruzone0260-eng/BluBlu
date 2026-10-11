@@ -296,6 +296,78 @@ test.describe('панель управления уроком (часть 1, 202
     await s.ctx.close();
   });
 
+  /*
+   * Задача 2026-10-11, п.5: «выбор устройства и включённость запоминаются между уроками».
+   * До этого шага требование проверялось только по коду — тест физический: тот же контекст
+   * браузера (значит тот же localStorage), реальный выход из комнаты и новый вход в неё.
+   * Ключи читаются ровно те, что пишет Lesson.tsx: blublu.camDevice и blublu.camWanted.
+   */
+  test('выключенная перед выходом камера остаётся выключенной и на следующем входе', async ({ browser }) => {
+    test.setTimeout(420_000);
+    await ensureLesson();
+    const wsUrl = await roomUrl();
+    test.skip(!(await livekitReachable(wsUrl)), 'нужен живой LiveKit — это тест на настоящие публикации');
+    await ensureStudent(browser);
+
+    const ctx = await browser.newContext({
+      baseURL: BASE, permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 900 },
+    });
+    const page = await ctx.newPage();
+    await loginUi(page, studentEmail, STUDENT_PW);
+    await page.goto(`/lesson?classId=${classId}`);
+    await page.getByTestId('check-devices').click();
+    await expect(page.getByTestId('join-lesson')).toBeEnabled({ timeout: 30_000 });
+    await page.getByTestId('join-lesson').click();
+    await expect(page.getByTestId('lesson-bar')).toBeVisible({ timeout: 30_000 });
+    /*
+     * Гонка, которую нашёл именно этот тест: полоса управления появляется сразу, а экран
+     * проверки устройств живёт, пока `connected` не стал истиной, — то есть несколько секунд обе
+     * поверхности отдают одинаковые `cam-pick-*`. Это не поломка интерфейса (экран проверки
+     * во время подключения и должен быть виден), но тест обязан ждать настоящего входа, иначе
+     * клик по «своей» камере попадает в чужой список.
+     */
+    await expect(page.getByTestId('device-check')).toHaveCount(0, { timeout: 60_000 });
+
+    // 1) выбор камеры из стрелки кнопки → запоминается deviceId
+    await barClick(page, 'camera-toggle-menu');
+    await expect(page.getByTestId('cam-menu')).toBeVisible();
+    const ids = await page.locator('[data-testid^="cam-pick-"]')
+      .evaluateAll((els) => els.map((e) => (e.getAttribute('data-testid') ?? '').replace('cam-pick-', '')));
+    const picked = ids.find((x) => x && x !== 'default') ?? '';
+    m('cam rows', ids);
+    expect(picked, `в списке камер нет настоящего устройства, только ${JSON.stringify(ids)}`).not.toBe('');
+    await page.getByTestId(`cam-pick-${picked}`).click();
+    await expect(page.getByTestId('cam-menu')).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem('blublu.camDevice'))).toBe(picked);
+
+    // 2) выключенная камера → флаг «хотел выключенной»
+    await expect(page.getByTestId('camera-toggle')).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
+    await barClick(page, 'camera-toggle');
+    await expect(page.getByTestId('camera-toggle')).toHaveAttribute('aria-pressed', 'false', { timeout: 15_000 });
+    expect(await page.evaluate(() => localStorage.getItem('blublu.camWanted'))).toBe('0');
+
+    // 3) выход и новый вход тем же контекстом: камера снова выключена, выбор тот же
+    await barClick(page, 'leave-btn');
+    await expect(page.getByTestId('device-check')).toBeVisible({ timeout: 30_000 });
+    if (!(await page.getByTestId('join-lesson').isEnabled())) {
+      await page.getByTestId('check-devices').click();
+      await expect(page.getByTestId('join-lesson')).toBeEnabled({ timeout: 30_000 });
+    }
+    await page.getByTestId('join-lesson').click();
+    await expect(page.getByTestId('lesson-bar')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('device-check')).toHaveCount(0, { timeout: 60_000 });
+    await expect(page.getByTestId('camera-toggle')).toHaveAttribute('aria-pressed', 'false', { timeout: 15_000 });
+    const own = page.locator('[data-local="1"] video');
+    if (await own.count()) expect(await own.evaluate((v) => v.videoWidth)).toBe(0);
+    await barClick(page, 'camera-toggle-menu');
+    await expect(page.getByTestId(`cam-pick-${picked}`)).toHaveAttribute('aria-checked', 'true');
+    await page.keyboard.press('Escape');
+
+    // микрофон тест не трогает: он остался включённым, и это ровно то, что обещано —
+    // запоминается каждый переключатель отдельно
+    await expect(page.getByTestId('mic-toggle')).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 });
+    await ctx.close();
+  });
   test('без комнаты: количество кнопок, хоткеи и их молчание в поле ввода', async ({ browser }) => {
     test.setTimeout(180_000);
     await ensureLesson();
