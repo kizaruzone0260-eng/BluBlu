@@ -83,33 +83,80 @@ function die(msg) {
   process.exit(2);
 }
 
+/**
+ * git-вызов, который нельзя проглотить: код выхода проверяется (execSync бросает исключение, но
+ * сообщение об ошибке — это сырой текст stderr, поэтому он хотя бы печатается), а пустой результат
+ * считается сбоем проверки, а не «чисто». Пустой список файлов или пустой дифф — это не «секретов
+ * нет», это «нечего не прочитано».
+ */
+function git(args, what, { maxBuffer = 32 * 1024 * 1024 } = {}) {
+  try {
+    return execSync(`git ${args}`, { encoding: 'utf8', maxBuffer });
+  } catch (e) {
+    const why = String(e?.stderr ?? e?.message ?? e).split('\n')[0].trim();
+    die(`${what}: git ${args} не выполнился (${why})`);
+    return '';
+  }
+}
+
 // 1) tracked working-tree files
-const files = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(Boolean);
-let unreadable = 0;
+const files = git('ls-files', 'список отслеживаемых файлов').split('\n').filter(Boolean);
+if (files.length === 0) die('git ls-files вернул 0 файлов — в дереве проверять нечего');
+let unreadable = 0, scanned = 0;
 for (const f of files) {
   if (ALLOW.test(f)) continue;
   let body = null;
   try { body = execSync(`git show :${f}`, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }); }
   catch { unreadable += 1; console.error(`security-scan: cannot read tracked file ${f}`); continue; }
+  scanned += 1;
   found += scan('tree', body, f);
 }
 if (unreadable > 0) die(`${unreadable} tracked file(s) could not be read`);
+if (scanned === 0) die(`все ${files.length} файлов совпали с allow-списком — проверка дерева ничего не видела`);
+console.log(`security-scan: дерево — ${scanned} файлов проверено (из ${files.length} отслеживаемых).`);
 
 // 2) full git history blobs (bounded to commit diffs)
 if (process.env.SCAN_HISTORY !== '0') {
   let log = '';
   try {
-    log = execSync('git log --all -p --no-color --no-textconv', { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    log = execSync('git log --all -p --no-color --no-textconv --format="commit %H%x09%s"',
+      { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   } catch (e) {
     die(`git log -p failed (${String(e.message).split('\n')[0]}) — the history was not scanned`);
   }
   if (log.length < 1000) die(`git history diff is ${log.length} bytes — that is not a real scan`);
-  console.log(`security-scan: history diff read, ${(log.length / 1024 / 1024).toFixed(2)} MB.`);
-  // dedupe: only report the first occurrence per shape
-  for (const [re, why] of PATTERNS) {
-    if (ALLOW.test(why)) continue;
-    if (re.test(log)) { console.log(`  [history] shape present: ${why} (investigate — may be a test fixture)`); found += 1; }
+
+  /*
+   * раньше этот шаг просто регекспил весь дифф одной строкой: находка не имела ни файла, ни
+   * коммита, а шаблоны самого сканера (строка «-----BEGIN … PRIVATE KEY-----» в его же PATTERNS)
+   * давали ложное срабатывание ровно в том коммите, где их написали. Поэтому дифф разбирается
+   * по заголовкам: добавленные строки проверяются в контексте их файла и коммита, пути из
+   * ALLOW (фикстуры, примеры, сам сканер) отбрасываются так же, как в проверке дерева.
+   * Печатается только форма, файл и коммит — никогда само значение.
+   */
+  let commit = '';
+  let file = '';
+  let addedScanned = 0, addedSkipped = 0;
+  const seen = new Set();
+  for (const line of log.split('\n')) {
+    if (line.startsWith('commit ')) { commit = line.slice(7, 15); file = ''; continue; }
+    if (line.startsWith('+++ b/')) { file = line.slice(6).replace(/\t.*$/, ''); continue; }
+    if (line.startsWith('diff --git ')) { const m = / b\/(.*)$/.exec(line); file = m ? m[1] : file; continue; }
+    if (!line.startsWith('+') || line.startsWith('+++')) continue;
+    if (!file || ALLOW.test(file)) { addedSkipped++; continue; }
+    addedScanned++;
+    const body = line.slice(1);
+    for (const [re, why] of PATTERNS) {
+      if (!re.test(body)) continue;
+      const key = `${why}\t${file}\t${commit}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      console.log(`  [история] ${why} :: ${file} :: commit ${commit}`);
+      found += 1;
+    }
   }
+  if (addedScanned === 0) die(`история прочитана (${(log.length / 1048576).toFixed(2)} МБ), но ни одной добавленной строки не проверено`);
+  console.log(`security-scan: история — ${(log.length / 1048576).toFixed(2)} МБ диффа, проверено добавленных строк: ${addedScanned}, пропущено по allow-списку: ${addedSkipped}.`);
 }
 
 if (found === 0) {

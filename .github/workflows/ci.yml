@@ -23,6 +23,11 @@ jobs:
       DATABASE_URL_TEST: postgres://klass:klass@localhost:5433/klass
     steps:
       - uses: actions/checkout@v4
+        # полная история обязательна: этот job проверяет секреты по всем коммитам, а shallow-клон
+        # (fetch-depth: 1 по умолчанию) дал бы «история прочитана — 0 находок» там, где
+        # история не прочитана вовсе
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4          # packageManager pinned in root package.json
       - uses: actions/setup-node@v4
         with:
@@ -34,6 +39,11 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm -r build
       - run: pnpm --filter @klass/api test          # unit + integration (real Postgres 16)
+      # Секреты: сначала positive control детектора (8 форм обязаны ловиться), потом сам скан.
+      # Скрипт выходит с кодом 2, если не смог прочитать дерево или историю — «чисто» и
+      # «не посмотрел» больше не печатают одно и то же.
+      - run: node scripts/security-scan.mjs --selftest
+      - run: node scripts/security-scan.mjs
       - run: pnpm audit --prod --audit-level=high
         continue-on-error: true
 
@@ -79,6 +89,9 @@ jobs:
       - run: pnpm -r build
       - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @klass/e2e test
+      # RTC-спеки умеют пропускать себя сами, когда медиа-сервер недоступен. Без этого гейта job с
+      # мёртвым LiveKit-контейнером был бы зелёным — поэтому пропущенный тест = упавший CI.
+      - run: node scripts/ci-no-skips.mjs apps/e2e/e2e-results.json
 
   # Task 6 (2026-10-10): the runtime IMAGE, not just the runtime dependency list. `pnpm ls --prod`
   # says what SHOULD be installed; only `docker build` says what the deployed container actually

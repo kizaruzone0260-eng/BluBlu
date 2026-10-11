@@ -5,7 +5,12 @@ export default defineConfig({
   // loginAs retries a 10/min login limit with a 20 s backoff — give it room
   timeout: 150_000,
   workers: 1,
-  reporter: [['list']],
+  /*
+   * json-отчёт нужен CI-гейту «пропущенных тестов не бывает»: у RTC-спеков есть self-skip, когда
+   * медиа-сервер недоступен, и без счётчика пропусков такой прогон выглядел бы зелёным, хотя
+   * половина проверок не выполнялась. Файл — apps/e2e/e2e-results.json, в .gitignore.
+   */
+  reporter: [['list'], ['json', { outputFile: 'e2e-results.json' }]],
   use: {
     baseURL: 'http://127.0.0.1:3123',
     // local dev box has no browser download → installed Edge; CI installs chromium

@@ -48,7 +48,26 @@ if (!cmd) {
     shell: process.platform === 'win32',
     env: { ...process.env, DATABASE_URL_TEST: 'postgres://klass:klass@127.0.0.1:5433/klass' },
   });
-  child.on('exit', (code) => {
-    pg.stop().finally(() => process.exit(code ?? 0));
+  /*
+   * Обёрка обязана отдать наружу ровно тот же исход, что у команды внутри. Прежний вариант
+   * `process.exit(code ?? 0)` превращал смерть по сигналу в успех: у Node при этом code === null,
+   * и весь API-набор получал exit 0, даже если vitest был убит извне. Второй дырой был
+   * необработанный 'error': если команда не нашлась, 'exit' не приходит вовсе, и обёрка висела
+   * с поднявшимся Postgres вместо того, чтобы упасть.
+   */
+  const finish = (code) => {
+    pg.stop().finally(() => process.exit(code));
+  };
+  child.on('error', (e) => {
+    console.error(`[with-postgres] не удалось запустить «${cmd}»: ${e.message}`);
+    finish(1);
+  });
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      console.error(`[with-postgres] команда умерла по сигналу ${signal} (code=${String(code)}) — это не успех`);
+      finish(1);
+      return;
+    }
+    finish(code === null ? 1 : code);
   });
 }

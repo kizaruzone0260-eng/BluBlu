@@ -178,6 +178,10 @@ async function shot(name, locale, width, theme) {
 }
 
 let count = 0;
+// комбинация, которая упала, не должна превращать прогон в успех: её записываем и в конце выходим с кодом 1
+const failedCombinations = [];
+/** первая строка сообщения об ошибке — без дампа стека в консоль и без переносов внутри записи */
+const firstLine = (e) => String((e && e.message) || e).split(/[\r\n]+/)[0].slice(0, 200);
 /** One (locale, width, theme) combination: tabs, the tab menu, the picker, the progress bar. */
 async function capture(locale, width, theme) {
   await shot('board-tabs', locale, width, theme); count++;
@@ -239,8 +243,10 @@ for (const locale of ['ru', 'uz', 'en']) {
       try {
         await capture(locale, width, theme);
       } catch (e) {
-        // one bad combination must not cost the other eleven: log where it broke, keep shooting
-        console.log('FAILED', locale, theme, width, String(e.message).split('\n')[0].slice(0, 200));
+        // комбинация, которая упала, не должна превращать прогон в успех: её записываем,
+        // остальные снимаем, а в конце выходим с кодом 1
+        failedCombinations.push(`${locale}/${theme}/${width}: ${firstLine(e)}`);
+        console.log('FAILED', locale, theme, width, firstLine(e));
         console.log('  url', await page.url(), '| board cards', await page.locator('[data-testid=board]').count(),
           '| tabs', await page.locator('[data-testid=board-tabs] [data-testid^=board-tab-]').count(),
           '| dialog', await page.locator('[data-testid=pdf-dialog]').count());
@@ -254,5 +260,10 @@ for (const locale of ['ru', 'uz', 'en']) {
 
 await api(TT, 'POST', `/api/lessons/${session.id}/end`, {});
 await browser.close();
-console.log(`board-shots done (${count} png)`);
+console.log(`board-shots done (${count} png, упавших комбинаций: ${failedCombinations.length})`);
+if (failedCombinations.length) {
+  for (const f of failedCombinations) console.error('  FAILED', f);
+  console.error('board-shots: часть кадров не снята — это не «готово»');
+  await bye(1);
+}
 await bye(0);
