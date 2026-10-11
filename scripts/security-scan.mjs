@@ -28,11 +28,35 @@ const PATTERNS = [
 // files/paths that legitimately contain look-alikes (fixtures, examples)
 const ALLOW = /(\.example$|\/test\/|\.test\.|e2e-stack|camera-repro|security-scan|node_modules|\.min\.)/i;
 
+/**
+ * Точные значения-примеры из документации вендоров. Это не «форма», а конкретная строка,
+ * которую вендор публикует как пример: она не может быть живым секретом и встречается в
+ * текстах про тесты (например, когда объясняешь, почему внешний сканер её не находит).
+ * Пустить её по allow-списку путей означало бы ослепить целый файл, поэтому разрешено
+ * ровно это значение и ничего, на него не похожего.
+ */
+const VENDOR_EXAMPLES = new Set([
+  'AKIAIOSFODNN7EXAMPLE',        // AWS: пример access key id в документации
+  'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', // AWS: пример secret в той же странице
+]);
+
+/** Все совпадения шаблона, а не первое: файл, где разрешённый пример стоит выше живого ключа,
+ *  должен находиться (иначе allow-список становится выключателем проверки для всего файла). */
+function matches(re, text) {
+  const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  const out = [];
+  let m;
+  while ((m = g.exec(text)) !== null) {
+    out.push(m[0]);
+    if (m[0] === '') g.lastIndex += 1;
+  }
+  return out;
+}
+
 function scan(label, text, where) {
   const hits = [];
   for (const [re, why] of PATTERNS) {
-    const m = re.exec(text);
-    if (m) hits.push(`${why}`);
+    if (matches(re, text).some((v) => !VENDOR_EXAMPLES.has(v))) hits.push(`${why}`);
   }
   if (hits.length) console.log(`  [${label}] ${where}: ${hits.join(', ')}`);
   return hits.length;
@@ -147,7 +171,7 @@ if (process.env.SCAN_HISTORY !== '0') {
     addedScanned++;
     const body = line.slice(1);
     for (const [re, why] of PATTERNS) {
-      if (!re.test(body)) continue;
+      if (!matches(re, body).some((v) => !VENDOR_EXAMPLES.has(v))) continue;
       const key = `${why}\t${file}\t${commit}`;
       if (seen.has(key)) continue;
       seen.add(key);
