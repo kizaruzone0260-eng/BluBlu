@@ -48,15 +48,24 @@ async function bye(code = 0) {
 process.on('SIGINT', () => void bye(0));
 
 const credsFile = path.join(root, 'apps/e2e/.stack.json');
-// /api/health/live answers BEFORE the stack has finished migrating and seeding, and the seeded
-// teacher + its credentials file arrive after that — so wait for the file, not just the port.
+// The old check returned as soon as `.stack.json` existed — but that file survives a previous run,
+// so a fresh script said «стек готов» and immediately got ECONNREFUSED on :3123 (замерено
+// 2026-10-11). Health first, file second (the stack writes it a moment after it becomes healthy),
+// and a stack child that already died is reported as died, not waited on for 120 seconds.
+let stackExited = null;
+stack.on('exit', (code, signal) => { stackExited = signal ? `сигнал ${signal}` : `код ${code}`; });
 async function waitStack() {
+  let healthy = false;
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 1000));
+    if (stackExited) throw new Error(`e2e-stack завершился (${stackExited}), стек не поднялся`);
+    if (!healthy) {
+      try { healthy = (await fetch(`${BASE}/api/health/live`)).ok; } catch { /* поднимается */ }
+      if (!healthy) continue;
+    }
     if (fs.existsSync(credsFile)) return;
-    try { if ((await fetch(`${BASE}/api/health/live`)).ok) continue; } catch { /* up… */ }
   }
-  throw new Error('stack did not come up');
+  throw new Error(`stack did not come up in 120 s (healthy=${healthy})`);
 }
 await waitStack();
 const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
@@ -73,6 +82,16 @@ const TT = (await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ email: creds.teacherEmail, password: creds.teacherPassword }),
 })).json()).accessToken;
+
+// язык и имя сид-учителя до съёмки: скрипт меняет их в той же базе, что и тесты, и обязан
+// вернуть обратно — иначе следующий прогон zz11/zz12 проснётся с «Board 1» вместо «Доска 1».
+// Не прочитали профиль — останавливаемся: продолжать и оставить чужое состояние хуже, чем не снять кадры.
+const profileRes = await api(TT, 'GET', '/api/me');
+if (profileRes.status !== 200 || !profileRes.json?.locale) {
+  console.error(`board-shots: /api/me вернул ${profileRes.status}, профиль до съёмки не прочитан — нечего возвращать`);
+  await bye(1);
+}
+const profileBefore = profileRes.json;
 
 const classes = (await api(TT, 'GET', '/api/classes')).json;
 let cls = classes.find((c) => c.name === '7B — board shots');
@@ -260,6 +279,14 @@ for (const locale of ['ru', 'uz', 'en']) {
 
 await api(TT, 'POST', `/api/lessons/${session.id}/end`, {});
 await browser.close();
+// возвращаем то, что было: съёмка не должна оставлять после себя чужое состояние
+if (profileBefore.locale) {
+  const back = await api(TT, 'PATCH', '/api/me/profile', {
+    name: profileBefore.name, lastName: profileBefore.lastName, locale: profileBefore.locale, tz: profileBefore.tz,
+  });
+  if (back.status !== 200) failedCombinations.push(`не удалось вернуть язык профиля (${back.status})`);
+  else console.log('язык и имя сид-учителя возвращены:', profileBefore.locale);
+}
 console.log(`board-shots done (${count} png, упавших комбинаций: ${failedCombinations.length})`);
 if (failedCombinations.length) {
   for (const f of failedCombinations) console.error('  FAILED', f);

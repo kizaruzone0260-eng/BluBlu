@@ -19,10 +19,31 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import {
-  BASE, dbBoard, drawText, inkOf, loginUi, m, makeLesson, openLesson, paint, stack,
-  teacherLessonPage, teacherToken, urlHost, TEXT,
+  BASE,
+  dbBoard,
+  drawText,
+  inkOf,
+  loginUi,
+  m,
+  makeLesson,
+  openLesson,
+  paint,
+  stack,
+  teacherLessonPage,
+  teacherToken,
+  urlHost,
+  TEXT,
   type Ctx,
+  pinTeacherRussian,
 } from './boardFixtures';
+
+/*
+ * Язык интерфейса закрепляется явно (pinTeacherRussian в beforeAll), а не «как получится»:
+ * каталог Postgres e2e-стека переживает перезапуск (embedded-postgres persistent: true), а
+ * скрипты съёмки скриншотов меняют язык сид-учителя (ru→uz→en) в той же базе — и делают его
+ * locale_explicit, то есть профиль побеждает язык браузера. Без закрепленья «Доска 1» приезжает
+ * как «Board 1», и тест падает из-за состояния чужого прогона (замерено 2026-10-11).
+ */
 
 const MM_PT = 72 / 25.4;                 // 1 mm in PostScript points (PDFs are 72 pt per inch)
 const A4 = { width: 297 * MM_PT, height: 210 * MM_PT };
@@ -46,6 +67,7 @@ test.describe('board → PDF (task 2)', () => {
   test.beforeAll(async () => {
     api = await pw.newContext({ baseURL: BASE });
     token = await teacherToken(api);
+    await pinTeacherRussian(api, token);
   });
   test.afterAll(async () => { await api?.dispose(); });
 

@@ -93,6 +93,24 @@ export async function makeLesson(api: Ctx, token: string, name: string) {
   return { classId, className: String((cls as { name: string }).name), sessionId, inviteCode: String((inv as { code: string }).code) };
 }
 
+/**
+ * Закрепить за сид-учителем русский язык интерфейса: эти спеки утверждают русские подписи
+ * («Доска 1», «пусто»). Язык берётся из профиля, а скрипты съёмки скриншотов ставят его же
+ * explicit-выбором (ru→uz→en) в той же сохранённой базе, поэтому «как получится» здесь не
+ * работает. Код ответа проверяется: незакреплённый язык должен валить тест, а не молча
+ * превращать «Доска 1» в «Board 1».
+ */
+export async function pinTeacherRussian(api: Ctx, token: string): Promise<void> {
+  const me = await api.get('/api/me', { headers: { authorization: `Bearer ${token}` } });
+  expect(me.status(), `pinTeacherRussian: /api/me вернул ${me.status()}`).toBe(200);
+  const p = await me.json();
+  const r = await api.patch('/api/me/profile', {
+    headers: { authorization: `Bearer ${token}` },
+    data: { name: p.name, lastName: p.lastName ?? '', tz: p.tz, locale: 'ru' },
+  });
+  expect(r.status(), `pinTeacherRussian: PATCH /api/me/profile вернул ${r.status()}`).toBe(200);
+}
+
 export async function loginUi(page: Page, email: string, password: string): Promise<void> {
   for (let attempt = 0; attempt < 3; attempt++) {
     await page.goto('/login');

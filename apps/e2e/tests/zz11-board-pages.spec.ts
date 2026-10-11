@@ -17,9 +17,27 @@
 import { test, expect, request as pw } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, inkOf, loginUi, m, makeLesson, openLesson, paint, registerStudent, stack, teacherToken,
+  BASE,
+  inkOf,
+  loginUi,
+  m,
+  makeLesson,
+  openLesson,
+  paint,
+  registerStudent,
+  stack,
+  teacherToken,
   type Ctx,
+  pinTeacherRussian,
 } from './boardFixtures';
+
+/*
+ * Язык интерфейса закрепляется явно (pinTeacherRussian в beforeAll), а не «как получится»:
+ * каталог Postgres e2e-стека переживает перезапуск (embedded-postgres persistent: true), а
+ * скрипты съёмки скриншотов меняют язык сид-учителя (ru→uz→en) в той же базе — и делают его
+ * locale_explicit, то есть профиль побеждает язык браузера. Без закрепленья «Доска 1» приезжает
+ * как «Board 1», и тест падает из-за состояния чужого прогона (замерено 2026-10-11).
+ */
 
 const DB = `postgres://klass:klass@127.0.0.1:5455/klass`;
 
@@ -45,6 +63,7 @@ test.describe('board pages: independence, names, rights (task 1)', () => {
   test.beforeAll(async () => {
     api = await pw.newContext({ baseURL: BASE });
     token = await teacherToken(api);
+    await pinTeacherRussian(api, token);
   });
   test.afterAll(async () => { await api?.dispose(); });
 
