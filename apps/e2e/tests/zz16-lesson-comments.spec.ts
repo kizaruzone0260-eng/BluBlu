@@ -203,17 +203,27 @@ test.describe('lesson comments (task 2)', () => {
     await pre.ctx.close();
     const s = await student(browser, s1);
     await s.page.getByTestId('comments-close').click();
+    /*
+     * Задача 2026-10-10, часть 2: счётчик больше не живёт на фоновом опросе. GET /comments
+     * отмечает прочтение на сервере, поэтому прежний опрос раз в 20 с сам же и обнулял счётчик —
+     * человек мог не успеть ничего прочитать, а бейдж уже исчезал. Теперь число на кнопке
+     * складывается из одного запроса при входе и кадров «comment» из сокета, который уже открыт.
+     * Проверка от этого только стала точнее: сравнивается конкретное значение ДО и ПОСЛЕ.
+     */
+    const badge = async () => {
+      const el = s.page.getByTestId('comments-unread');
+      return (await el.isVisible().catch(() => false)) ? Number(await el.textContent()) : 0;
+    };
+    const before = await badge();
     const t = await teacher(browser);
     await say(t.page, 'это вы не прочитали');
-    // Задача 2026-10-10: счётчик переехал с кнопки-вкладки на кнопку панели, и он показывается,
-    // только когда панель ЗАКРЫТА (открытая вкладка и есть прочитанное). Проверка ровно та же,
-    // что была: чужое сообщение поднимает счётчик.
-    await expect(s.page.getByTestId('comments-unread')).toBeVisible({ timeout: 15_000 });
-    // чтение — открыть вкладку; после этого счётчик сброшен сервером и при повторном открытии
-    // его уже нет (раньше это же докладывал закрытие/открытие кнопки)
+    await expect(async () => { expect(await badge()).toBe(before + 1); }).toPass({ timeout: 20_000 });
+    // чтение — открыть вкладку; после этого счётчик сброшен, и при повторном открытии его нет
     await openTab(s.page, 'comments');
     await s.page.getByTestId('comments-close').click();
     await expect(s.page.getByTestId('comments-unread')).toHaveCount(0, { timeout: 15_000 });
+    await openTab(s.page, 'comments');
+    await expect(s.page.getByTestId('comments-list')).toBeVisible();
     await t.ctx.close(); await s.ctx.close();
   });
 

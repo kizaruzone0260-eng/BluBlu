@@ -32,3 +32,11 @@ apps/web/public/excalidraw-assets/
 # be committed. They live inside their own package so that node_modules still resolves.
 /apps/api/incidents/
 /apps/e2e/incidents/
+
+# Output of apps/e2e/scripts/lesson-perf.mjs and lesson-tiles.mjs: one run's numbers.
+# They are ephemeral measurement data; the ones that matter are written into
+# docs/PERFORMANCE.md, so the raw files stay out of the tree.
+/lesson-perf.json
+/lesson-perf-after.json
+/lesson-tiles.json
+/lesson-tiles-base.json

@@ -1,19 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Room, RoomEvent, Track, type Track as LkTrack } from 'livekit-client';
+import { Room, RoomEvent, Track, VideoPresets, type Track as LkTrack } from 'livekit-client';
 import { api, getToken, wsTicket } from '../lib/api';
 import { useAuth } from '../App';
-import Board from '../components/Board';
 import NotesDrawer from '../components/NotesDrawer';
-import { CommentsPanel, useCommentFrames, useCommentUnread } from '../components/LessonComments';
+import { useCommentFrames, useCommentUnread } from '../components/LessonComments';
 import { useHandFrames, useHands } from '../components/LessonHands';
 import LessonBar, { type BarActions, type BarDevices, type BarState } from '../components/LessonBar';
-import LessonPanel, { type PanelTab } from '../components/LessonPanel';
+import type { PanelTab } from '../components/LessonPanel';
 import { DeviceSettings, speakerPickSupported, useMicMeter } from '../components/DeviceSettings';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
+
+/*
+ * Часть 2 задачи 2026-10-10 (измерено, а не «на глаз»): и Excalidraw, и панель вкладок жили в
+ * чанке страницы урока, поэтому человек, который открыл урок, скачивал холст всегда — 1 180,2 kB
+ * (384,2 kB gzip) одним куском. После разделения чанк урока — 62,1 kB (17,4 kB gzip), холст —
+ * отдельные 1 132,4 kB, панель — 3,8 kB (числа из `vite build`, таблица в docs/PERFORMANCE.md,
+ * там же — как проверить их на боевом проде). Доска грузится, когда её действительно рендерим,
+ * панель — когда её открывают. Fallback держит ту же высоту, чтобы приход чанка не дёргал
+ * раскладку (то же требование «панель не сдвигает контент»).
+ */
+const Board = lazy(() => import('../components/Board'));
+const LessonPanelLazy = lazy(() => import('../components/LessonPanel'));
+const CommentsPanelLazy = lazy(() => import('../components/LessonComments').then((m) => ({ default: m.CommentsPanel })));
 
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
@@ -81,7 +93,7 @@ function useMediaErrorText() {
   };
 }
 
-function VideoTile({ tile, track, big = false, hideName = false }: {
+function VideoTileBase({ tile, track, big = false, hideName = false }: {
   tile: Tile; track?: LkTrack; big?: boolean;
   /** the screen stage paints its own caption band, so the tile must not add a second one */
   hideName?: boolean;
@@ -107,6 +119,13 @@ function VideoTile({ tile, track, big = false, hideName = false }: {
     </div>
   );
 }
+
+/**
+ * Часть 2: тайл мемоизирован. Без этого каждая смена состояния страницы (счётчик непрочитанных,
+ * тост, раскладка) перерисовывала все <video>, а `track.attach(el)` привязан к ref'у и при
+ * перемонтировании тайла отдирал и снова вешал медиаэлемент.
+ */
+const VideoTile = memo(VideoTileBase);
 
 export default function Lesson() {
   const { t } = useTranslation();
@@ -161,7 +180,7 @@ export default function Lesson() {
   const participantsOpen = panelOpen && panelTab === 'people';
   const toggleTab = (tab: PanelTab) => {
     if (panelOpen && panelTab === tab) setPanelOpen(false);
-    else { setPanelTab(tab); setPanelOpen(true); }
+    else { if (tab === 'comments') setBadge(0); setPanelTab(tab); setPanelOpen(true); }
   };
   /** лист настроек устройств из меню «Ещё» */
   const [devicesOpen, setDevicesOpen] = useState(false);
@@ -186,13 +205,24 @@ export default function Lesson() {
   const onHandFrame = useHandFrames(session?.id ?? null);
   const myHand = handsQ.q.data?.mine ?? null;
   const hasFloor = Boolean(myHand?.grantedAt);
-  const unread = useCommentUnread(session?.id ?? null);
+  /*
+   * Счётчик на кнопке «Комментарии»: одно число при входе (useCommentUnread) + то, что пришло по
+   * сокету, пока панель закрыта. Фоновый опрос здесь был бы вреден: GET отмечает прочтение на
+   * сервере, так что счётчик сгорал сам, не дождавшись человека (см. LessonComments.tsx).
+   */
+  const unreadSeed = useCommentUnread(session?.id ?? null);
+  const [badge, setBadge] = useState(0);
+  // сид приходит одним запросом на урок; дальше его двигает только сокет
+  useEffect(() => { setBadge(unreadSeed); }, [unreadSeed]);
+  const unread = commentsOpen ? 0 : badge;
   /*
    * The socket effect closes over whatever `me` was when it ran, and after a hard reload the token
    * can be ready before the profile is. A stale `me` inside `onmessage` would then drop the
    * «вам дали слово» frame for the only person it matters to, so the id lives in a ref.
    */
   const meIdRef = useRef<string | null>(me?.id ?? null);
+  const commentsOpenRef = useRef(false);
+  useEffect(() => { commentsOpenRef.current = commentsOpen; }, [commentsOpen]);
   useEffect(() => { meIdRef.current = me?.id ?? null; }, [me?.id]);
   const [floorTakenNotice, setFloorTakenNotice] = useState(false);
   useEffect(() => {
@@ -290,7 +320,14 @@ export default function Lesson() {
       `/api/lessons/active?${eventId ? `eventId=${eventId}` : `classId=${classIdParam}`}`,
     ),
     enabled: !!eventId || !!classIdParam,
-    refetchInterval: 10_000,
+    /*
+     * Пока человек НЕ в комнате, опрос — единственный способ узнать, что урок начался: сокета
+     * ещё нет. Внутри комнаты «началось/кончилось/изменилось» приносит WebSocket, и опрос
+     * остаётся только страховкой на случай его потери (замер apps/e2e/scripts/lesson-perf.mjs:
+     * журнал API — 58 обращений к /api/lessons/active на двух клиентов за прогон ≈123 с;
+     * окно одного клиента в комнате — 18 запросов в минуту вместо 2 после правки).
+     */
+    refetchInterval: connected ? 30_000 : 10_000,
   });
 
   useEffect(() => {
@@ -320,6 +357,7 @@ export default function Lesson() {
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as {
             type: string; session?: Session; layout?: Session['layout']; on?: boolean; userId?: string;
+            comment?: { authorId?: string };
           };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
@@ -329,6 +367,8 @@ export default function Lesson() {
           // task 2: comments arrive on this same socket — the panel's query is the single source
           // for the mode, so the frame only has to invalidate it (see useCommentFrames)
           onCommentFrame(msg.type);
+          if (msg.type === 'comment' && msg.comment?.authorId && msg.comment.authorId !== meIdRef.current
+            && !commentsOpenRef.current) setBadge((n) => n + 1);
           // task 2Б: the hand queue rides the same socket for the same reason
           onHandFrame(msg.type);
           if (msg.type === 'handGranted' && msg.userId === meIdRef.current) void acceptFloor();
@@ -547,7 +587,17 @@ export default function Lesson() {
     stopPreview(); // release the preview streams so LiveKit can own the devices
     try {
       const { token, wsUrl } = await api<{ token: string; wsUrl: string }>(`/api/lessons/${s.id}/join`, { method: 'POST' });
-      const room = new Room({ adaptiveStream: true, dynacast: true });
+      /*
+       * Часть 2: качество по умолчанию. `adaptiveStream` и `dynacast` были; добавлен потолок
+       * захвата 720p — без него браузер может отдать с камеры всё, что та умеет, а полоса
+       * участников всё равно показывает картинку 140 px. Замер на фейковой камере этого не
+       * видит (она отдаёт 640×480 независимо от запроса), поэтому числом не проверяется:
+       * см. таблицу «до и после» в отчёте.
+       */
+      const room = new Room({
+        adaptiveStream: true, dynacast: true,
+        videoCaptureDefaults: { resolution: VideoPresets.h720.resolution },
+      });
       roomRef.current = room;
       room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
         addTile(
@@ -1153,7 +1203,9 @@ export default function Lesson() {
                         )}
                         {stage.kind === 'board' ? (
                           <>
-                            <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                            <Suspense fallback={<div className="card board-loading" style={{ height: boardFull ? 'calc(100vh - 64px)' : '62vh' }} />}>
+                              <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                            </Suspense>
                             <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
                               onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
                           </>
@@ -1257,15 +1309,18 @@ export default function Lesson() {
                 60vh и «остаток экрана минус сетка, заголовок и панель».
               */}
               {!(connected && boardOpen) && (
-                <Board sessionId={session.id} classId={session.classId}
-                  height={layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))'} />
+                <Suspense fallback={<div className="card board-loading" style={{ height: layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))' }} />}>
+                  <Board sessionId={session.id} classId={session.classId}
+                    height={layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))'} />
+                </Suspense>
               )}
             </div>
 
             {/* правая панель: поднятые руки и участники — в одной вкладке, комментарии — в другой.
                 Она работает и до входа в комнату: рука и комментарии не требуют медиа. */}
             {panelOpen && (
-              <LessonPanel
+            <Suspense fallback={<div className="side-panel" aria-hidden="true" />}>
+              <LessonPanelLazy
                 tab={panelTab} onTab={setPanelTab} onClose={() => setPanelOpen(false)}
                 sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode} muteAll={muteAll}
                 peers={peers} hands={handsQ.q.data?.hands ?? []} unread={unread}
@@ -1276,6 +1331,7 @@ export default function Lesson() {
                 onLecture={setLecture}
                 comments={{ isTeacher, lectureMode }}
               />
+            </Suspense>
             )}
           </div>
 
@@ -1311,8 +1367,10 @@ export default function Lesson() {
           </button>
           {commentsOpen && (
             <div className="panel-body" data-testid="comments-panel">
-              <CommentsPanel sessionId={lastSessionId!} isTeacher lectureMode={false}
-                onClose={() => setPanelOpen(false)} />
+              <Suspense fallback={<p className="muted">…</p>}>
+                <CommentsPanelLazy sessionId={lastSessionId!} isTeacher lectureMode={false}
+                  onClose={() => setPanelOpen(false)} />
+              </Suspense>
             </div>
           )}
         </div>

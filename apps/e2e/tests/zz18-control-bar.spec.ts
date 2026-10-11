@@ -18,7 +18,7 @@
  * Спеки, проверявшие те же кнопки в старом месте (zz2, zz13, zz16, zz17), обновлены только в
  * шагах навигации — открытия панели и меню; сами утверждения не ослаблены.
  */
-import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
+import { test, expect, request as pw, type Browser, type Page, type Request } from '@playwright/test';
 import { AxeBuilder } from '@axe-core/playwright';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -353,6 +353,19 @@ test.describe('панель управления уроком (часть 1, 202
 
     // списки устройств убраны с основного экрана: их нет в DOM, пока не открыто меню
     await expect(page.locator('select[data-testid="cam-select"], select[data-testid="mic-select"]')).toHaveCount(0);
+
+    /*
+     * Часть 2 задачи (измерено lesson-perf.mjs): закрытая панель комментариев больше не должна
+     * опрашивать сервер. Прежний фоновый опрос раз в 20 с давал 16 обращений на двух клиентов
+     * за прогон ≈123 с — и сам же обнулял счётчик, потому что GET отмечает прочтение на сервере.
+     */
+    const commentReqs: string[] = [];
+    const watch = (rq: Request) => { if (/\/api\/lessons\/[^/]+\/comments/.test(rq.url())) commentReqs.push(rq.url()); };
+    page.on('request', watch);
+    await page.waitForTimeout(30_000);
+    page.off('request', watch);
+    m('closed-panel comment requests / 30s', commentReqs.length);
+    expect(commentReqs.length, 'за 30 с с закрытой панелью — ни одного запроса комментариев').toBe(0);
 
     /*
      * Подписи кнопок обязаны быть КОРОТКИМИ и включаться там, где для них есть место. Числа сняты

@@ -237,11 +237,25 @@ export function CommentsPanel({ sessionId, isTeacher, lectureMode, onClose, open
 }
 
 /**
- * Счётчик непрочитанных для панели управления (значок на кнопке «Комментарии»). Отдельный хук,
- * потому что кнопка живёт в `LessonBar`, а список — в этой панели; react-query объединяет оба
- * запроса в один, поэтому второй сети нет.
+ * Счётчик непрочитанных для кнопки панели (сам список — в `CommentsPanel` ниже). Хук отдельный,
+ * потому что кнопка живёт в `LessonBar` и должна работать, когда панель не открыта и её чанк
+ * ещё не загружен.
+ *
+ * Фоновых опросов здесь нет намеренно (часть 2 задачи 2026-10-10): `GET /comments` отмечает
+ * прочтение на сервере, поэтому фоновый опрос сам же и сбрасывал счётчик — человек не успевал
+ * ничего увидеть. По замеру до правки это стоило 16 обращений на двух клиентов за прогон ≈123 с
+ * (`apps/e2e/scripts/lesson-perf.mjs`, журнал API). Теперь один запрос при входе даёт начальное
+ * число, а дальше его двигает только сокет: кадры `comment` считает обработчик сокета в
+ * `Lesson.tsx`, и не считает, если панель открыта (открытая вкладка и есть прочитанное).
  */
 export function useCommentUnread(sessionId: string | null): number {
-  const { q } = useLessonComments(sessionId, Boolean(sessionId));
+  const q = useQuery({
+    queryKey: ['lesson-comments-seed', sessionId],
+    queryFn: () => api<CommentsView>(`/api/lessons/${sessionId}/comments`),
+    enabled: Boolean(sessionId),
+    staleTime: Infinity,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+  });
   return q.data?.unread ?? 0;
 }

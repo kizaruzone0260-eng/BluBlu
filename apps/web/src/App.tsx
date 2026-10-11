@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, Suspense, lazy } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
 import { resolveLocale, shouldCarryStoredChoice } from '@klass/shared';
@@ -14,7 +14,13 @@ import AcceptPolicies from './pages/AcceptPolicies';
 import ChangePasswordGate from './pages/ChangePassword';
 import Classes from './pages/Classes';
 import Profile from './pages/Profile';
-import ChatRoom, { ChatList } from './pages/Chat';import Spike from './pages/Spike';
+import ChatRoom, { ChatList } from './pages/Chat';
+/*
+ * Часть 2 задачи 2026-10-10: «Спайк» — отладочная страница звонка, и она статически тянула за
+ * собой livekit-client в НАЧАЛЬНЫЙ бандл, то есть 300+ kB медиа-клиента получал каждый, кто
+ * открыл «Главную». Теперь он ленивый, как и остальные маршруты (числа — в таблице «до и после»).
+ */
+const Spike = lazy(() => import('./pages/Spike'));
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import ErrorScreen from './pages/ErrorScreen';
@@ -191,7 +197,9 @@ export default function App() {
 }
 
 function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
-  const live = useLiveClass();
+  // на странице урока проба «где идёт урок» не нужна: там свой статус-запрос и сокет
+  const where = useLocation();
+  const live = useLiveClass(!where.pathname.startsWith('/lesson'));
   return (
     <div className="app-shell">
       <Nav me={me} live={live} />

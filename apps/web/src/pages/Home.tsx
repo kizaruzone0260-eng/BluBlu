@@ -11,11 +11,19 @@ interface Occ {
 }
 interface FeedPost { id: string; kind: 'material' | 'announcement'; title: string; body: string; createdAt: string; className?: string; classId?: string }
 
-export function useLiveClass(): { liveClassId: string | null; liveClassName: string | null } {
+/**
+ * «Есть ли сейчас живой урок» — для бейджа в навигации. Один такой цикл стоит 1 + N обращений
+ * (класс, потом активный урок каждого класса), поэтому на странице урока он выключен: там и так
+ * есть собственный статус-запрос и сокет. Замер до правки (`apps/e2e/scripts/lesson-perf.mjs`,
+ * журнал API): 58 обращений к `/api/lessons/active` на двух клиентов за прогон ≈123 с — при том,
+ * что сам статус урока опрашивается раз в 10 с. В журнале URL без query string, поэтому, какой
+ * именно это запрос, видно только из арифметики окна (см. таблицу в docs/PERFORMANCE.md).
+ */
+export function useLiveClass(enabled = true): { liveClassId: string | null; liveClassName: string | null } {
   const { me } = useAuth();
   const q = useQuery({
     queryKey: ['live', me?.id],
-    enabled: !!me,
+    enabled: !!me && enabled,
     refetchInterval: 30_000,
     queryFn: async () => {
       const classes = await api<ClassView[]>('/api/classes');

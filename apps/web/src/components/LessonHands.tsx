@@ -38,7 +38,7 @@ export function useHands(sessionId: string | null, enabled = true) {
     queryKey: ['lesson-hands', sessionId],
     queryFn: () => api<HandsView>(`/api/lessons/${sessionId}/hands`),
     enabled: enabled && Boolean(sessionId),
-    refetchInterval: 20_000, // the socket is the fast path; this is the safety net
+    refetchInterval: 60_000, // сокет — быстрый путь; это страховка раз в минуту (замер 2026-10-11)
   });
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['lesson-hands', sessionId] });
   return { q, invalidate };
