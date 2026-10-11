@@ -44,6 +44,40 @@ jobs:
       # «не посмотрел» больше не печатают одно и то же.
       - run: node scripts/security-scan.mjs --selftest
       - run: node scripts/security-scan.mjs
+      # Второй глаз: независимый сканер по всей истории. Это инструмент CI, не зависимость
+      # проекта (gitleaks 8.30.1, лицензия MIT). Версия пиннится, сумма сверяется.
+      # Почему шаг не может быть просто `gitleaks …`: на этой истории инструмент, не сумев
+      # прочитать часть диффов, печатает «no leaks found» и выходит с 0 (замерено: 3 строки ERR,
+      # 151 коммит из 162, exit 0). Значит «проверка не состоялась» отделяется от «чисто» здесь:
+      # по наличию ERR в выводе — exit 2. Находка секрета — exit 1. Значения redact-ятся.
+      - name: gitleaks — независимый скан истории
+        env:
+          GL_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}"
+          asset="gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          curl -sSfLo "$asset" "$base/$asset"
+          curl -sSfLo checksums.txt "$base/gitleaks_${GL_VERSION}_checksums.txt"
+          grep " ${asset}\$" checksums.txt > only.sha256
+          sha256sum -c only.sha256
+          tar -xzf "$asset" gitleaks
+          ./gitleaks version
+          rc=0; out=$(./gitleaks git --redact --no-banner --log-opts=--all . 2>&1) || rc=$?
+          # gitleaks красит уровни ANSI-последовательностями: без их снятия поиск «ERR» не
+          # срабатывает никогда (проверено локально: крашеная строка с ERR есть, grep молчит).
+          plain=$(printf '%s\n' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')
+          printf '%s\n' "$plain"
+          if printf '%s\n' "$plain" | grep -qE '(^| )ERR( |$)'; then
+            echo "::error::gitleaks не прочитал часть истории — «чисто» в этом случае ничего не значит"
+            exit 2
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gitleaks: находки (выведены redact-ными, значения не печатаются)"
+            exit 1
+          fi
+          scanned=$(printf '%s\n' "$plain" | grep -oE '[0-9]+ commits scanned' | grep -oE '^[0-9]+' || echo '?')
+          echo "gitleaks: находок нет; прочитано ${scanned} коммитов, достижимо из refs — $(git rev-list --all --count)"
       - run: pnpm audit --prod --audit-level=high
         continue-on-error: true
 
