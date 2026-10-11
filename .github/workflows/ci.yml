@@ -63,7 +63,7 @@ jobs:
           sha256sum -c only.sha256
           tar -xzf "$asset" gitleaks
           ./gitleaks version
-          rc=0; out=$(./gitleaks git --redact --no-banner --log-opts=--all . 2>&1) || rc=$?
+          rc=0; out=$(./gitleaks git --redact --no-banner --log-opts=--all -c .gitleaks.toml . 2>&1) || rc=$?
           # gitleaks красит уровни ANSI-последовательностями: без их снятия поиск «ERR» не
           # срабатывает никогда (проверено локально: крашеная строка с ERR есть, grep молчит).
           plain=$(printf '%s\n' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')
