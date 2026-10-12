@@ -287,20 +287,46 @@ export default function Lesson() {
     const room = roomRef.current;
     if (!room || !want || !restore || isTeacher) return;
     const turnedOn: { mic: boolean; cam: boolean } = { mic: false, cam: false };
-    if (want.mic) {
-      try {
-        await room.localParticipant.setMicrophoneEnabled(
-          true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
-        setMicErr(''); turnedOn.mic = true;
-      } catch (e: unknown) {
-        try { await room.localParticipant.setMicrophoneEnabled(true); setMicErr(''); turnedOn.mic = true; }
-        catch (e2: unknown) { setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e)); }
+    /*
+     * Возврат прав и кадр `lecture_off` расходятся во времени: сервер обновляет разрешение
+     * участника, а до клиента это доходит следующим сообщением. Первая же проверка в браузере
+     * (CI, 2026-10-12) это и поймала: один вызов `setMicrophoneEnabled(true)` попадал в момент,
+     * когда комната ещё считала себя публикацию не имеющей права, и молча оставил ученика без
+     * голоса. Поэтому здесь несколько попыток с короткой паузой — это ожидание распространения
+     * разрешения, а не «перетирание» ошибки устройства: отказ разрешения (NotAllowedError)
+     * возвращается сразу и повторами не лечится.
+     */
+    const enableWithRetry = async (kind: 'microphone' | 'camera') => {
+      const lp = room.localParticipant;
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          if (kind === 'microphone') {
+            await lp.setMicrophoneEnabled(true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
+          } else {
+            const cam = await enableCameraIn(room);
+            if (!cam.errKey) return { ok: true as const };
+            lastErr = cam.err;
+          }
+          if (kind === 'microphone') return { ok: true as const };
+        } catch (e: unknown) {
+          lastErr = e;
+          if ((e as { name?: string })?.name === 'NotAllowedError' || (e as { name?: string })?.name === 'PermissionDeniedError') break;
+        }
+        await new Promise((r) => setTimeout(r, 1_500));
       }
+      return { ok: false as const, err: lastErr };
+    };
+
+    if (want.mic) {
+      const r = await enableWithRetry('microphone');
+      if (r.ok) { setMicErr(''); turnedOn.mic = true; }
+      else setMicErr(mediaErrorText(mediaErrorKey(r.err, 'microphone'), r.err));
     }
     if (want.cam) {
-      const cam = await enableCameraIn(room);
-      if (cam.errKey) setCamErr(mediaErrorText(cam.errKey, cam.err));
-      else turnedOn.cam = true;
+      const r = await enableWithRetry('camera');
+      if (r.ok) turnedOn.cam = true;
+      else setCamErr(mediaErrorText(mediaErrorKey(r.err, 'camera'), r.err));
     }
     refreshLocal(room);
     const off = () => {
