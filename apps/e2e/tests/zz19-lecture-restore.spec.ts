@@ -21,6 +21,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { loginUi, makeLesson, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
+import { openMore } from './controlBar';
 
 const BASE = `http://127.0.0.1:${stack.port}`;
 const STUDENT_PW = 'Secret1234';
@@ -112,8 +113,15 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   const selfPublishesVideo = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.videos video')]
     .some((v) => v.closest('[data-local="1"]') && v.videoWidth > 0));
 
-  /** переключатель возврата — по умолчанию включён; выключить его можно только здесь */
+  /**
+   * Переключатель возврата — по умолчанию включён; выключить его можно только здесь.
+   *
+   * После подтверждения меню «Ещё» закрыто (панель ловит pointerdown вне себя — см.
+   * LessonBar), поэтому состояние кнопки проверяется после повторного открытия меню: сама
+   * проверка при этом та же, что и в zz2/zz18.
+   */
   async function lectureOn(page: Page, restore: boolean) {
+    await openMore(page);
     await page.getByTestId('lecture-mode').click();
     const dialog = page.getByTestId('lecture-confirm');
     await expect(dialog).toBeVisible({ timeout: 10_000 });
@@ -122,10 +130,13 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     if (!restore) await box.uncheck();
     await page.getByTestId('lecture-confirm-ok').click();
     await expect(dialog).toHaveCount(0);
+    await openMore(page);
     await expect(page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
   }
   async function lectureOff(page: Page) {
+    await openMore(page);
     await page.getByTestId('lecture-mode').click();
+    await openMore(page);
     await expect(page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'false');
   }
 
@@ -163,6 +174,24 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await a.page.getByTestId('lesson-toast-action').click();
     await expect(micOn(a.page)).toBe('false', { timeout: 20_000 });
 
+    /*
+     * Доступность самого подтверждения проверяется здесь, а не отдельным спеком: диалог живёт
+     * только на панели урока, а панель — только в комнате. Отдельным тестом он превратился бы в
+     * вечный «skipped» (в CI гейт `ci-no-skips` как раз за такие пропуска и роняет прогон).
+     */
+    await openMore(t.page);
+    await t.page.getByTestId('lecture-mode').click();
+    const dialog = t.page.getByTestId('lecture-confirm');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('heading')).toBeVisible();
+    expect((await t.page.getByTestId('lecture-restore-row').boundingBox())?.height ?? 0,
+      'строка переключателя — не меньше 44 px').toBeGreaterThanOrEqual(44);
+    const { AxeBuilder } = await import('@axe-core/playwright');
+    const res = await new AxeBuilder({ page: t.page }).include('.modal').analyze();
+    expect(res.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
+    await t.page.getByTestId('lecture-confirm-cancel').click();
+    await expect(dialog).toHaveCount(0);
+
     for (const v of [t, a, b, c]) await v.ctx.close();
   });
 
@@ -177,7 +206,14 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
 
     // решение учителя лежит на сессии: его видит и тот, кто перезагрузил страницу посреди лекции
     await a.page.reload();
+    // перезагрузка — это заново пройденный вход (экран проверки устройств и «Войти»), иначе
+    // следующая проверка смотрит на страницу, которая ещё не в комнате
+    await a.page.getByTestId('check-devices').click();
+    await expect(a.page.getByTestId('join-lesson')).toBeEnabled({ timeout: 30_000 });
+    await a.page.getByTestId('join-lesson').click();
     await expect(a.page.getByTestId('mic-toggle')).toBeVisible({ timeout: 30_000 });
+    await expect(a.page.getByTestId('device-check')).toHaveCount(0, { timeout: 60_000 });
+    await expect(micOn(a.page), 'перезаходивший во время лекции остаётся выключенным').toBe('false');
     const st = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
     expect((await st.json()).session.lectureRestore, 'lectureRestore переживает перезагрузку').toBe(false);
 
@@ -189,24 +225,4 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     for (const v of [t, a]) await v.ctx.close();
   });
 
-  test('the confirmation dialog is labelled, tappable and clean under axe', async ({ browser }) => {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    const page = await ctx.newPage();
-    await loginUi(page, stack.teacherEmail, stack.teacherPassword);
-    await page.goto(`/lesson?classId=${classId}`);
-    const open = page.getByTestId('lecture-mode');
-    test.skip(await open.count() === 0, 'панель управления появляется только в комнате');
-    await open.click();
-    const dialog = page.getByTestId('lecture-confirm');
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('heading')).toBeVisible();
-    expect((await page.getByTestId('lecture-restore-row').boundingBox())?.height ?? 0,
-      'строка переключателя — не меньше 44 px').toBeGreaterThanOrEqual(44);
-    const { AxeBuilder } = await import('@axe-core/playwright');
-    const res = await new AxeBuilder({ page }).include('.modal').analyze();
-    expect(res.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
-    await page.getByTestId('lecture-confirm-cancel').click();
-    await expect(dialog).toHaveCount(0);
-    await ctx.close();
-  });
 });

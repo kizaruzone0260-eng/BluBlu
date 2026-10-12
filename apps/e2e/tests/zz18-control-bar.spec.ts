@@ -226,6 +226,9 @@ test.describe('панель управления уроком (часть 1, 202
     // «вернуть устройства после»). Утверждения ниже не изменены — добавлен только клик, который
     // теперь обязателен, потому что таков интерфейс.
     await t.page.getByTestId('lecture-confirm-ok').click();
+    // подтверждение лежит вне меню «Ещё», а панель закрывает меню на pointerdown вне себя —
+    // поэтому состояние кнопки снова проверяется после повторного открытия (проверка та же)
+    await openMore(t.page);
     await expect(t.page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
     await expect(s.page.getByTestId('banner-lecture')).toBeVisible({ timeout: 20_000 });
     /*

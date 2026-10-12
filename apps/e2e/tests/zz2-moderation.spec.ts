@@ -120,6 +120,9 @@ test('moderation feedback: mute everyone → toast + student banner, unmute rest
   // часть 1 (2026-10-13): включение лекции подтверждается диалогом — утверждения ниже те же,
   // добавлен только обязательный теперь клик
   await pT.getByTestId('lecture-confirm-ok').click();
+  // диалог подтверждения вне меню «Ещё» закрывает его (панель ловит pointerdown), поэтому
+  // состояние кнопки проверяется после повторного открытия меню
+  await openMore(pT);
   await expect(pT.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
   await expect(pS.getByTestId('banner-lecture')).toBeVisible({ timeout: 15_000 });
 
