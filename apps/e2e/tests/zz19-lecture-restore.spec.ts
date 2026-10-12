@@ -108,7 +108,9 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   const student = (browser: Browser, email: string) => joinRoom(browser, email, STUDENT_PW);
 
   const micOn = (page: Page) => page.getByTestId('mic-toggle').getAttribute('aria-pressed');
-  const camOn = (page: Page) => page.getByTestId('cam-toggle').getAttribute('aria-pressed');
+  // кнопка камеры в панели называется camera-toggle (mic — mic-toggle); первая версия файла
+  // искала cam-toggle и висела на ожидании элемента, которого в разметке нет
+  const camOn = (page: Page) => page.getByTestId('camera-toggle').getAttribute('aria-pressed');
   /*
    * getAttribute возвращает Promise, а `expect(promise)` ничего не ждёт — первая версия файла
    * спотыкалась именно об это (`Received: Promise {}`). Для состояний панели — только poll.
@@ -138,14 +140,20 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     if (!restore) await box.uncheck();
     await page.getByTestId('lecture-confirm-ok').click();
     await expect(dialog).toHaveCount(0);
-    await openMore(page);
-    await expect(page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
+    // состояние проверяем сервером и баннером ученика: сама кнопка живёт в меню «Ещё»,
+    // а подтверждение вне этого меню его закрывает (aria-checked кнопки проверяют zz2 и zz18)
+    await expect.poll(async () => {
+      const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
+      return (await r.json()).session.lectureMode;
+    }, { timeout: 20_000 }).toBe(true);
   }
   async function lectureOff(page: Page) {
     await openMore(page);
     await page.getByTestId('lecture-mode').click();
-    await openMore(page);
-    await expect(page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
+      return (await r.json()).session.lectureMode;
+    }, { timeout: 20_000 }).toBe(false);
   }
 
   test('what burned at the moment of the lecture is what comes back', async ({ browser }) => {
@@ -156,7 +164,7 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     // «горело до лекции» обязано быть фактом теста, а не догадкой о дефолтах: включаем явно то,
     // что потом собираемся получить обратно, и проверяем, что включилось
     if (await micOn(a.page) !== 'true') await a.page.getByTestId('mic-toggle').click();
-    if (await camOn(a.page) !== 'true') await a.page.getByTestId('cam-toggle').click();
+    if (await camOn(a.page) !== 'true') await a.page.getByTestId('camera-toggle').click();
     await isMic(a.page, 'true', 'у Анны микрофон включён до лекции');
     await isCam(a.page, 'true', 'у Анны камера включена до лекции');
     expect(await selfPublishesVideo(a.page), 'камера Анны публикуется').toBe(true);
