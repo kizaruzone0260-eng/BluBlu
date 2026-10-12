@@ -109,6 +109,14 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
 
   const micOn = (page: Page) => page.getByTestId('mic-toggle').getAttribute('aria-pressed');
   const camOn = (page: Page) => page.getByTestId('cam-toggle').getAttribute('aria-pressed');
+  /*
+   * getAttribute возвращает Promise, а `expect(promise)` ничего не ждёт — первая версия файла
+   * спотыкалась именно об это (`Received: Promise {}`). Для состояний панели — только poll.
+   */
+  const isMic = (page: Page, want: string, why = '') =>
+    expect.poll(() => micOn(page), { timeout: 30_000, message: why || undefined }).toBe(want);
+  const isCam = (page: Page, want: string, why = '') =>
+    expect.poll(() => camOn(page), { timeout: 30_000, message: why || undefined }).toBe(want);
   /** свой тайл с кадром: трек опубликован, а не «кнопка нажата» */
   const selfPublishesVideo = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.videos video')]
     .some((v) => v.closest('[data-local="1"]') && v.videoWidth > 0));
@@ -145,34 +153,37 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const a = await student(browser, aEmail);   // микрофон и камера горят
     const b = await student(browser, bEmail);   // выключит себя САМ до лекции
 
-    await expect.poll(() => micOn(a.page), { timeout: 30_000 }).toBe('true');
-    await expect.poll(() => camOn(a.page), { timeout: 30_000 }).toBe('true');
-    expect(await selfPublishesVideo(a.page)).toBe(true);
+    // «горело до лекции» обязано быть фактом теста, а не догадкой о дефолтах: включаем явно то,
+    // что потом собираемся получить обратно, и проверяем, что включилось
+    if (await micOn(a.page) !== 'true') await a.page.getByTestId('mic-toggle').click();
+    if (await camOn(a.page) !== 'true') await a.page.getByTestId('cam-toggle').click();
+    await isMic(a.page, 'true', 'у Анны микрофон включён до лекции');
+    await isCam(a.page, 'true', 'у Анны камера включена до лекции');
+    expect(await selfPublishesVideo(a.page), 'камера Анны публикуется').toBe(true);
     await b.page.getByTestId('mic-toggle').click();
-    await expect(micOn(b.page)).toBe('false');
+    await isMic(b.page, 'false', 'Борис выключил себя сам ДО лекции');
 
     await lectureOn(t.page, true);
     // Вера приходит уже во время лекции: ей возвращать нечего
     const c = await student(browser, cEmail);
-    await expect(micOn(c.page)).toBe('false');
+    await isMic(c.page, 'false', 'пришедшая во время лекции молчит');
     // Анна замолкает уже при лекции — это и есть тот случай, который не возвращался
     await a.page.getByTestId('mic-toggle').click();
-    await expect(micOn(a.page)).toBe('false');
+    await isMic(a.page, 'false', 'Анна выключилась во время лекции');
 
     await lectureOff(t.page);
 
-    await expect.poll(() => micOn(a.page), { timeout: 30_000 }).toBe('true',
-      'микрофон, горевший в момент включения лекции, обязан включиться сам');
-    await expect.poll(() => camOn(a.page), { timeout: 30_000 }).toBe('true');
+    await isMic(a.page, 'true', 'микрофон, горевший в момент включения лекции, обязан включиться сам');
+    await isCam(a.page, 'true', 'камера тоже возвращается');
     expect(await selfPublishesVideo(a.page), 'камера вернулась по-настоящему, с кадром').toBe(true);
-    await expect(micOn(b.page)).toBe('false', 'выключивший себя ДО лекции остаётся выключенным');
-    await expect(micOn(c.page)).toBe('false', 'пришедшему во время лекции ничего не включается');
+    await isMic(b.page, 'false', 'выключивший себя ДО лекции остаётся выключенным');
+    await isMic(c.page, 'false', 'пришедшему во время лекции ничего не включается');
 
     const toast = a.page.getByTestId('lesson-toast');
     await expect(toast).toBeVisible();
     expect(await toast.innerText()).toMatch(anyLoc('lectureRestoredMic', 'lectureRestoredBoth'));
     await a.page.getByTestId('lesson-toast-action').click();
-    await expect(micOn(a.page)).toBe('false', { timeout: 20_000 });
+    await isMic(a.page, 'false', 'кнопка «Выключить» в тосте обязана работать');
 
     /*
      * Доступность самого подтверждения проверяется здесь, а не отдельным спеком: диалог живёт
@@ -198,11 +209,12 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   test('with the switch off nothing is turned on, and the choice survives a reload', async ({ browser }) => {
     const t = await teacher(browser);
     const a = await student(browser, aEmail);
-    await expect.poll(() => micOn(a.page), { timeout: 30_000 }).toBe('true');
+    if (await micOn(a.page) !== 'true') await a.page.getByTestId('mic-toggle').click();
+    await isMic(a.page, 'true', 'микрофон Анны включён до лекции');
 
     await lectureOn(t.page, false);
     await a.page.getByTestId('mic-toggle').click();
-    await expect(micOn(a.page)).toBe('false');
+    await isMic(a.page, 'false');
 
     // решение учителя лежит на сессии: его видит и тот, кто перезагрузил страницу посреди лекции
     await a.page.reload();
@@ -213,12 +225,12 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await a.page.getByTestId('join-lesson').click();
     await expect(a.page.getByTestId('mic-toggle')).toBeVisible({ timeout: 30_000 });
     await expect(a.page.getByTestId('device-check')).toHaveCount(0, { timeout: 60_000 });
-    await expect(micOn(a.page), 'перезаходивший во время лекции остаётся выключенным').toBe('false');
+    await isMic(a.page, 'false', 'перезаходивший во время лекции остаётся выключенным');
     const st = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
     expect((await st.json()).session.lectureRestore, 'lectureRestore переживает перезагрузку').toBe(false);
 
     await lectureOff(t.page);
-    await expect(micOn(a.page)).toBe('false', { timeout: 20_000 });
+    await isMic(a.page, 'false', 'переключатель выключен — никто сам не включается');
     await expect(a.page.getByTestId('lesson-toast')).toHaveCount(0);
     await expect(a.page.getByTestId('lesson-toast-action')).toHaveCount(0);
 
