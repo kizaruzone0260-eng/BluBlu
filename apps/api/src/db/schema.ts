@@ -235,6 +235,12 @@ export const lessonSessions = pgTable('lesson_sessions', {
   /** moderation feedback (task 3): «mute everyone» state, restored on reconnect */
   muteAll: boolean('mute_all').notNull().default(false),
   /**
+   * Часть 1 (2026-10-13): ответ на переключатель «Вернуть микрофоны и камеры учеников после
+   * лекции». Живёт на сессии, а не в теле запроса: ученик переподключается посреди лекции, и
+   * решение учителя должно остаться в силе после его перезагрузки страницы.
+   */
+  lectureRestore: boolean('lecture_restore').notNull().default(true),
+  /**
    * Layout for everyone (task B): gallery/stage/teacher are the classic modes,
    * 'auto' lets the client pick; boardOpen promotes the whiteboard to the main
    * stage window for ALL participants (jsonb — no migration needed).

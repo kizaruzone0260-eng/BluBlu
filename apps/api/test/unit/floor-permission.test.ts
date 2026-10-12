@@ -60,4 +60,21 @@ describe('floorPermission — giving and taking the word (task 2Б)', () => {
     expect(granted.canPublish).toBe(true);
     expect(sourcesOf(granted)).toEqual([TrackSource.MICROPHONE]);
   });
+
+  /**
+   * Часть 1 (2026-10-13): то же сложение применяет и ВЫКЛЮЧЕНИЕ режима лекции. Раньше маршрут
+   * ставил базовое разрешение, не спросив, что у участника уже есть, — и «дать слово» посреди
+   * лекции терялось, а вместе с ним молчало и всё остальное.
+   */
+  it('turning lecture mode off returns the floor holder a publishable baseline, not silence', () => {
+    const during = floorPermission(studentPermission(true), true, true); // gave the word inside the lecture
+    expect(during.canPublish).toBe(true);
+    const after = floorPermission(during, false, false);
+    expect(after.canPublish).toBe(true);
+    expect(sourcesOf(after)).toEqual([TrackSource.CAMERA, TrackSource.MICROPHONE]);
+  });
+
+  it('turning lecture mode off without any grant restores the plain student baseline', () => {
+    expect(floorPermission(studentPermission(true), false, false)).toEqual(studentPermission(false));
+  });
 });

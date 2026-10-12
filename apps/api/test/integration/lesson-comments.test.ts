@@ -194,7 +194,19 @@ suite('lesson comments (task 2)', () => {
     const lecture = await send(teacherTok, `/api/lessons/${sessionId}/lecture-mode`, { on: true });
     expect(lecture.statusCode).toBe(200);
     expect((await say(bTok, studentBId, 'спасибо, что объясняете')).statusCode).toBe(201);
-    expect((await send(teacherTok, `/api/lessons/${sessionId}/lecture-mode`, { on: false })).statusCode).toBe(200);
+    /*
+     * Изменено частью 1 (2026-10-13). Здесь было `toBe(200)` для выключения режима лекции. Новый
+     * контракт: без ответившего медиа-сервера выключение не может называться успехом, потому что
+     * права учеников при этом не возвращены (LiveKit не включает трек удалённо — 412), а прежний
+     * 200 как раз и скрывал урок, в котором класс остался без голоса. Медиа-сервера в этом
+     * окружении нет, поэтому ожидаем 502 и что состояние НЕ изменилось; сам возврат прав и
+     * включение микрофонов учеником проверяются e2e против настоящего LiveKit
+     * (`apps/e2e/tests/zz19-lecture-restore.spec.ts`). Утверждение стало строже, а не слабее, и
+     * предмет теста — комментарии при лекции — не тронут.
+     */
+    const off = await send(teacherTok, `/api/lessons/${sessionId}/lecture-mode`, { on: false });
+    expect(off.statusCode).toBe(502);
+    expect((await get(teacherTok, `/api/lessons/active?classId=${classId}`)).json().session.lectureMode).toBe(true);
   });
 
   it('the teacher pins up to three; a fourth is refused; pinned come first', async () => {

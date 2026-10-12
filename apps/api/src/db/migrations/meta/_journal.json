@@ -190,6 +190,13 @@
       "when": 1791600583004,
       "tag": "0026_lesson_hands",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791831926151,
+      "tag": "0027_lecture_restore",
+      "breakpoints": true
     }
   ]
 }

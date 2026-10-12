@@ -30,6 +30,8 @@ const CommentsPanelLazy = lazy(() => import('../components/LessonComments').then
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
   startedAt: string; endedAt: string | null; lectureMode: boolean; muteAll: boolean;
+  /** часть 1: решение учителя возвращать устройства учеников после лекции (живёт на сессии) */
+  lectureRestore: boolean;
   layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen: boolean; wsUrl: string;
   /** task 2: who may write comments in this lesson */
   commentsMode: 'on' | 'off' | 'slow';
@@ -166,6 +168,15 @@ export default function Lesson() {
   const dragRef = useRef<{ x0: number; y0: number; px0: number; py0: number } | null>(null);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
+  /** Часть 1: у тоста возврата после лекции есть кнопка «Выключить». */
+  const [toastAction, setToastAction] = useState<{ label: string; run: () => void } | null>(null);
+  /**
+   * Часть 1: какие именно устройства были включены у ученика в МОМЕНТ включения лекции. Только
+   * этот снимок решает, что возвращать: текущее состояние после лекции — всегда «выключено», а
+   * пришедший во время лекции ничего не включал и включать ему нечего.
+   */
+  const preLectureRef = useRef<{ mic: boolean; cam: boolean } | null>(null);
+  const [lectureAsk, setLectureAsk] = useState<{ restore: boolean } | null>(null);
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
@@ -256,7 +267,60 @@ export default function Lesson() {
       refreshLocal(room);
     }
   }
+
+  /** Часть 1: снимок «что было включено» в момент, когда лекция включается. */
+  function capturePreLecture() {
+    const lp = roomRef.current?.localParticipant;
+    if (!lp) { preLectureRef.current = null; return; }
+    preLectureRef.current = { mic: lp.isMicrophoneEnabled, cam: lp.isCameraEnabled };
+  }
+
+  /**
+   * Часть 1: `lecture_off`. Сервер вернул ПРАВО публиковать (сам он этого сделать не может:
+   * LiveKit отвечает 412 на удалённое включение), устройство включает ученик — и ровно то, что
+   * у него горело до лекции. Пришедшему во время лекции снимать нечего, значит и включаться
+   * не будет; отказ браузера (разрешение отозвано) — отдельная понятная подсказка, а не тишина.
+   */
+  async function restoreAfterLecture(restore: boolean) {
+    const want = preLectureRef.current;
+    preLectureRef.current = null;
+    const room = roomRef.current;
+    if (!room || !want || !restore || isTeacher) return;
+    const turnedOn: { mic: boolean; cam: boolean } = { mic: false, cam: false };
+    if (want.mic) {
+      try {
+        await room.localParticipant.setMicrophoneEnabled(
+          true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
+        setMicErr(''); turnedOn.mic = true;
+      } catch (e: unknown) {
+        try { await room.localParticipant.setMicrophoneEnabled(true); setMicErr(''); turnedOn.mic = true; }
+        catch (e2: unknown) { setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e)); }
+      }
+    }
+    if (want.cam) {
+      const cam = await enableCameraIn(room);
+      if (cam.errKey) setCamErr(mediaErrorText(cam.errKey, cam.err));
+      else turnedOn.cam = true;
+    }
+    refreshLocal(room);
+    const off = () => {
+      const r = roomRef.current;
+      if (!r) return;
+      if (turnedOn.mic) void r.localParticipant.setMicrophoneEnabled(false).catch(() => undefined);
+      if (turnedOn.cam) void r.localParticipant.setCameraEnabled(false).catch(() => undefined);
+      writeFlag(LS_WANTED_MIC, false);
+      refreshLocal(r);
+      setToast(''); setToastAction(null);
+    };
+    const stop = { label: t('lesson.lectureRestoreOff'), run: off };
+    if (turnedOn.mic && turnedOn.cam) showToast(t('lesson.lectureRestoredBoth'), stop);
+    else if (turnedOn.mic) showToast(t('lesson.lectureRestoredMic'), stop);
+    else if (turnedOn.cam) showToast(t('lesson.lectureRestoredCam'), stop);
+    else if (want.mic || want.cam) showToast(t('lesson.lectureRestoreBlocked'));
+  }
+
   const roomRef = useRef<Room | null>(null);
+
   // Part 4а: heartbeat that keeps the LiveKit join-token fresh during a long lesson.
   const tokenRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -357,12 +421,19 @@ export default function Lesson() {
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as {
             type: string; session?: Session; layout?: Session['layout']; on?: boolean; userId?: string;
+            /** часть 1: `restore` приходит в кадрах lectureMode и lecture_off */
+            restore?: boolean;
             comment?: { authorId?: string };
           };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
           if (msg.type === 'board') setBoardOpen(!!msg.on); // task B: teacher opened/closed the board for all
-          if (msg.type === 'lectureMode') setLectureMode(!!msg.on);
+          if (msg.type === 'lectureMode') {
+            setLectureMode(!!msg.on);
+            // часть 1: снимать «что было включено» нужно в момент включения, пока ученик ещё говорит
+            if (msg.on && !isTeacher) capturePreLecture();
+          }
+          if (msg.type === 'lecture_off') void restoreAfterLecture(msg.restore !== false);
           if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
           // task 2: comments arrive on this same socket — the panel's query is the single source
           // for the mode, so the frame only has to invalidate it (see useCommentFrames)
@@ -492,10 +563,15 @@ export default function Lesson() {
     setScreenOn(pubs.some((p) => p.source === Track.Source.ScreenShare && p.track));
   }
 
-  function showToast(msg: string) {
+  /**
+   * Часть 1: тост может нести кнопку (возврат микрофона после лекции — «Выключить»).
+   * С кнопкой он живёт дольше: 3.5 с нажатить нечего, и человек теряет управление устройством.
+   */
+  function showToast(msg: string, action?: { label: string; run: () => void }) {
     setToast(msg);
+    setToastAction(action ?? null);
     window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(''), 3_500);
+    toastTimer.current = window.setTimeout(() => { setToast(''); setToastAction(null); }, action ? 10_000 : 3_500);
   }
 
   /** students obey «mute everyone»: mic off when the teacher mutes, back when not */
@@ -1021,12 +1097,27 @@ export default function Lesson() {
     ? `/notes?new=1&classId=${session?.classId ?? classIdParam ?? ''}&eventId=${eventId ?? session?.eventId ?? ''}`
     : '/sheets?new=1';
 
+  /**
+   * Часть 1: выключение не спрашивает ничего (это возвращение слова), включение — спрашивает,
+   * включать ли ученикам устройства обратно. Оптимизм здесь ограничен: при 502 сервер state не
+   * тронул, значит и кнопка обязана вернуться в прежнее положение, а не остаться «выключенной».
+   */
   const setLecture = () => {
     const s = session; if (!s) return;
-    const on = !lectureMode;
-    setLectureMode(on);
-    act.mutate({ path: `/api/lessons/${s.id}/lecture-mode`, body: { on } });
+    if (lectureMode) { void sendLecture(false, s.lectureRestore ?? true); return; }
+    setLectureAsk({ restore: true });
   };
+
+  async function sendLecture(on: boolean, restore: boolean) {
+    const s = session; if (!s) return;
+    setLectureMode(on);
+    try {
+      await api(`/api/lessons/${s.id}/lecture-mode`, { method: 'POST', body: JSON.stringify({ on, restore }) });
+    } catch {
+      setLectureMode(!on);
+      setError(t(on ? 'lesson.lectureStartFailed' : 'lesson.lectureStopFailed'));
+    }
+  }
 
   const barState: BarState = {
     connected, micOn: localMicOn, camOn: localCamOn, screenOn, handRaised: Boolean(myHand),
@@ -1296,7 +1387,44 @@ export default function Lesson() {
                       {peers.length === 0 && <p className="muted" data-testid="waiting-peers">{t('lesson.waitingPeers')}</p>}
                     </>
                   )}
-                  {toast && <div className="toast" role="status" data-testid="lesson-toast">{toast}</div>}
+                  {toast && (
+                    <div className="toast" role="status" data-testid="lesson-toast">
+                      {toast}
+                      {toastAction && (
+                        <button type="button" className="toast-action" data-testid="lesson-toast-action"
+                          onClick={toastAction.run}>
+                          {toastAction.label}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {/* Часть 1: подтверждение учителя перед включением лекции — с переключателем
+                      «вернуть устройства после». Он по умолчанию включён и уезжает на сервер,
+                      где лежит на сессии: переподключение ученика не должно менять решение. */}
+                  {lectureAsk && (
+                    <div className="modal-backdrop" role="presentation" onClick={() => setLectureAsk(null)}>
+                      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="lecture-ask-title"
+                        data-testid="lecture-confirm" onClick={(e) => e.stopPropagation()}>
+                        <h2 id="lecture-ask-title" className="modal-title">{t('lesson.lectureConfirmTitle')}</h2>
+                        <p className="muted">{t('lesson.lectureConfirmBody')}</p>
+                        <label className="check-row" data-testid="lecture-restore-row">
+                          <input type="checkbox" checked={lectureAsk.restore} data-testid="lecture-restore"
+                            onChange={(e) => setLectureAsk({ restore: e.target.checked })} />
+                          <span>{t('lesson.lectureRestoreLabel')}</span>
+                        </label>
+                        <div className="modal-actions">
+                          <button type="button" className="ghost" data-testid="lecture-confirm-cancel"
+                            onClick={() => setLectureAsk(null)}>
+                            {t('common.cancel')}
+                          </button>
+                          <button type="button" data-testid="lecture-confirm-ok"
+                            onClick={() => { const r = lectureAsk.restore; setLectureAsk(null); void sendLecture(true, r); }}>
+                            {t('lesson.lectureConfirmOk')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
               {/* board is WS-based: while a session exists it is reachable even before

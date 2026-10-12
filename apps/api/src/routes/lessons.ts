@@ -4,7 +4,8 @@ import type { DB } from '../db/index.js';
 import { resolveClass } from '../services/classes.js';
 import {
   startLesson, endLesson, getActiveSessionForClass, getActiveSessionForEvent,
-  getSession, buildJoinToken, getRoomService, studentPermission, type LessonSession,
+  getSession, buildJoinToken, getRoomService, studentPermission, floorPermission,
+  type CurrentPermission, type LessonSession,
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env, livekitPublicWsUrl } from '../env.js';
@@ -21,6 +22,7 @@ const withRoom = (s: LessonSession) => ({
   id: s.id, classId: s.classId, eventId: s.eventId, roomName: s.roomName,
   startedAt: s.startedAt, endedAt: s.endedAt, lectureMode: s.lectureMode,
   muteAll: s.muteAll, // task 3: student banners survive reconnects
+  lectureRestore: s.lectureRestore, // часть 1: решение учителя переживает переподключение ученика
   layout: s.layoutState.layout,
   boardOpen: s.layoutState.boardOpen ?? false, // task B: the board as the main window
   commentsMode: s.commentsMode, // task 2: the comments panel learns the mode with the session
@@ -160,29 +162,78 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true, on: p.data.on };
   });
 
-  async function setLecture(id: string, on: boolean) {
+  async function setLecture(id: string, on: boolean, restore?: boolean) {
     const { lessonSessions } = await import('../db/schema.js');
-    await db.update(lessonSessions).set({ lectureMode: on }).where(eq(lessonSessions.id, id));
+    await db.update(lessonSessions).set(
+      on ? { lectureMode: true, lectureRestore: !!restore } : { lectureMode: false },
+    ).where(eq(lessonSessions.id, id));
   }
 
-  // Lecture mode: forbid students from enabling mic (§3.6). New joiners get it from the token.
+  /**
+   * Режим лекции: ученик не публикует, пока учитель не разрешит (§3.6); новые входящие получают
+   * это из токена.
+   *
+   * ВКЛЮЧЕНИЕ пишет состояние и отнимает права; недоступный медиа-сервер запись не отменяет
+   * (закреплено тестом `stage4`: 200 без медиа-сервера), потому что запрет для входящих живёт в
+   * базе и не зависит от того, дошёл ли сигнал до комнаты.
+   *
+   * ВЫКЛЮЧЕНИЕ — направление, в котором и рождался симптом. Раньше здесь стояло
+   * `studentPermission(false)` без вопроса серверу: `media()` глотает ошибку, маршрут отвечал 200,
+   * а ученики оставались с `canPublish: false`; включить их удалённо нельзя (LiveKit отвечает 412
+   * на remote unmute — замерено 2026-10-10), значит молчание медиа-сервера превращалось в «остальные
+   * молчат до конца урока». Теперь: сначала читается ФАКТИЧЕСКОЕ разрешение каждого ученика и
+   * компонуется с ним (выданные слово и показ экрана не теряются), недоступный сервер даёт 502 без
+   * записи нового состояния, а обновление одного участника атомарно само по себе (SDK: «all desired
+   * permissions would need to be set»). Сервер возвращает ПРАВО, устройство включает сам ученик по
+   * кадру `lecture_off`.
+   */
   app.post('/api/lessons/:id/lecture-mode', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const s = await teacherSession(req, reply, id);
     if (!s) return;
-    const on = !!(req.body as { on?: boolean }).on;
-    await setLecture(id, on);
-    const rs = await media(() => getRoomService().listParticipants(s.roomName));
-    if (rs.ok) {
-      for (const p of rs.value) {
-        if (p.identity === s.createdBy) continue; // teacher identity
-        await media(() => getRoomService().updateParticipant(s.roomName, p.identity, {
-          permission: studentPermission(on) as never,
-        }));
+    const p = z.object({ on: z.boolean().default(false), restore: z.boolean().default(true) })
+      .safeParse(req.body ?? {});
+    if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
+    const { on, restore } = p.data;
+    const rs = getRoomService();
+
+    if (on) {
+      await setLecture(id, true, restore);
+      const list = await media(() => rs.listParticipants(s.roomName));
+      let live = 0;
+      if (list.ok) {
+        for (const part of list.value) {
+          if (part.identity === s.createdBy) continue; // учитель говорит всегда
+          live += 1;
+          await media(() => rs.updateParticipant(s.roomName, part.identity, {
+            permission: studentPermission(true) as never,
+          }));
+        }
       }
+      wsBroadcast(id, { type: 'lectureMode', on: true, restore });
+      return { ok: true, liveParticipants: live };
     }
-    wsBroadcast(id, { type: 'lectureMode', on });
-    return { ok: true, liveParticipants: rs.ok ? rs.value.length : 0 };
+
+    const list = await media(() => rs.listParticipants(s.roomName));
+    if (!list.ok) return reply.code(502).send({ error: 'mediaServerUnavailable' });
+    const students = list.value.filter((part) => part.identity !== s.createdBy);
+    const failed: string[] = [];
+    for (const part of students) {
+      const cur = await media(() => rs.getParticipant(s.roomName, part.identity));
+      const permission = floorPermission(
+        cur.ok ? (cur.value as { permission?: CurrentPermission }).permission : undefined, false, false,
+      );
+      const up = await media(() => rs.updateParticipant(s.roomName, part.identity, { permission: permission as never }));
+      if (!up.ok) failed.push(part.identity);
+    }
+    // Половинчатого состояния не сообщаем успехом: при 502 учитель нажимает кнопку ещё раз,
+    // а повтор восстановления идемпотентен — разрешение вычисляется, а не прибавляется.
+    if (failed.length) return reply.code(502).send({ error: 'mediaServerUnavailable' });
+    await setLecture(id, false);
+    const doRestore = s.lectureRestore;
+    wsBroadcast(id, { type: 'lectureMode', on: false, restore: doRestore });
+    wsBroadcast(id, { type: 'lecture_off', restore: doRestore });
+    return { ok: true, liveParticipants: students.length, restore: doRestore };
   });
 
   // Mute/unmute one participant or everybody but the teacher (task 3:

@@ -222,6 +222,10 @@ test.describe('панель управления уроком (часть 1, 202
     // режим лекции из «Ещё» и баннер у ученика
     await openMore(t.page);
     await t.page.getByTestId('lecture-mode').click();
+    // частью 1 (2026-10-13) включение лекции стало требовать подтверждения (там же переключатель
+    // «вернуть устройства после»). Утверждения ниже не изменены — добавлен только клик, который
+    // теперь обязателен, потому что таков интерфейс.
+    await t.page.getByTestId('lecture-confirm-ok').click();
     await expect(t.page.getByTestId('lecture-mode')).toHaveAttribute('aria-checked', 'true');
     await expect(s.page.getByTestId('banner-lecture')).toBeVisible({ timeout: 20_000 });
     /*
