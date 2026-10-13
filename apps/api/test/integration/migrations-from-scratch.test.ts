@@ -116,17 +116,51 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
           : (Array.isArray(snapshot[0].relacl) ? snapshot[0].relacl.join(',') : String(snapshot[0].relacl));
         expect(acl).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
 
+        // 5б. migration 0029 adds the drawing permission and the author map as COLUMNS on the two
+        //     existing tables. «Who may draw» and «who drew this» are both personal enough to
+        //     prove the posture per column, not per table.
+        const drawCols = await sql`
+          select (c.relname || '.' || a.attname) as col, c.relrowsecurity as rls, c.relacl as acl,
+                 a.attnotnull as not_null, pg_get_expr(d.adbin, d.adrelid) as def
+            from pg_attribute a
+            join pg_class c on c.oid = a.attrelid
+            left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+           where (a.attrelid = 'lesson_sessions'::regclass
+                    and a.attname in ('board_draw_all', 'board_draw_students'))
+              or (a.attrelid = 'whiteboards'::regclass and a.attname = 'authors')
+           order by a.attname`;
+        expect(drawCols.map((r) => r.col)).toEqual(
+          ['whiteboards.authors', 'lesson_sessions.board_draw_all', 'lesson_sessions.board_draw_students'],
+        );
+        for (const row of drawCols) {
+          const r = row as { col: string; rls: boolean; acl: unknown; not_null: boolean; def: string };
+          expect(r.not_null, `${r.col}: NOT NULL`).toBe(true);
+          expect(r.rls, `${r.col}: the table keeps ROW LEVEL SECURITY`).toBe(true);
+          const a = r.acl == null ? '' : (Array.isArray(r.acl) ? r.acl.join(',') : String(r.acl));
+          expect(a, `${r.col}: no grant to a Data API role or PUBLIC`).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+          expect(String(r.def ?? ''), `${r.col}: a default the routes rely on`).toMatch(/(false|'\{\}'::jsonb)/);
+        }
+
         // has_column_privilege ERRORS on a missing role, and only Supabase creates these two
         const roles = await sql`select rolname from pg_roles where rolname in ('anon', 'authenticated')`;
         const have = new Set(roles.map((r) => String((r as { rolname: string }).rolname)));
         for (const role of ['anon', 'authenticated'] as const) {
           if (!have.has(role)) continue;
           const p = await sql`
-            select pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'select') as s,
-                   pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'update') as u`;
+            select pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'select') as snap_s,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'update') as snap_u,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'board_draw_all', 'select') as all_s,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'board_draw_students', 'update') as stu_u,
+                   pg_catalog.has_column_privilege(${role}, 'whiteboards', 'authors', 'select') as auth_s,
+                   pg_catalog.has_column_privilege(${role}, 'whiteboards', 'authors', 'update') as auth_u`;
           const q = (p[0] ?? {}) as Record<string, boolean>;
-          expect(q.s, `${role} cannot read the snapshot`).toBe(false);
-          expect(q.u, `${role} cannot rewrite the snapshot`).toBe(false);
+          for (const [key, label] of Object.entries({
+            snap_s: 'the device snapshot, select', snap_u: 'the device snapshot, update',
+            all_s: '«разрешить всем», select', stu_u: 'the student list, update',
+            auth_s: 'the author map, select', auth_u: 'the author map, update',
+          }) as [string, string][]) {
+            expect(q[key], `${role} cannot touch ${label}`).toBe(false);
+          }
         }
       });
     } finally {

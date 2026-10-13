@@ -31,7 +31,9 @@ export async function loadPage(db: DB, sessionId: string, pageNo: number) {
     .where(and(eq(whiteboards.sessionId, sessionId), eq(whiteboards.pageNo, pageNo))).limit(1);
   const elements: Record<string, ExEl> = {};
   for (const el of (row?.snapshot.elements ?? []) as ExEl[]) elements[el.id] = el;
-  return { elements, appState: row?.snapshot.appState ?? {} };
+  // Элемент без автора (вся доска, нарисованная до части 3) — НЕ ученика: прав на него у ученика
+  // это не даёт ни одного, а учителю и не нужно, он правит всё.
+  return { elements, appState: row?.snapshot.appState ?? {}, authors: { ...(row?.authors ?? {}) } as Record<string, string> };
 }
 
 export async function listPages(db: DB, sessionId: string) {
@@ -83,6 +85,147 @@ export function mergeElements(target: Record<string, ExEl>, incoming: ExEl[]): {
     }
   }
   return { changed };
+}
+
+/**
+ * Часть 3 (2026-10-14): что одному ученику можно нарисовать на одной доске. Считается по
+ * ФАКТИЧЕСКОЙ сцене сервера, а не по тому, что прислал клиент, и только по элементам, автором
+ * которых сервер его записал.
+ */
+export const MAX_STUDENT_ELEMENTS = 300;
+export const MAX_STUDENT_BYTES = 1_048_576;
+
+/** Размер элемента в байтах (UTF-8), для лимита «1 МБ на ученика на доску». */
+function sizeOf(el: ExEl): number {
+  return Buffer.byteLength(JSON.stringify(el) ?? '', 'utf8');
+}
+
+export interface GateReport {
+  accepted: ExEl[];
+  /** элементы, которые отправителю трогать нельзя (чужие или сверх лимита) */
+  rejected: string[];
+  /** среди отказов есть хотя бы один по лимиту — клиенту нужна другая подсказка */
+  overLimit: boolean;
+}
+
+/**
+ * Серверный гейт правки доски: что применить, что отбросить и кому принадлежит элемент.
+ *
+ * Три правила, которые здесь живут, и которые нельзя вынести на клиента:
+ *  - автор берётся ИЗ ИДЕНТИЧНОСТИ СОКЕТА (`userId`), а не из тела сообщения: поле `authorId`
+ *    в присланном элементе не читается вообще, иначе «поддельный автор» был бы тривиален;
+ *  - ученик правит и удаляет только свои элементы. Чужой элемент (учителя или другого ученика)
+ *    отбрасывается целиком — не «принимается, но потом откатывается», а не попадает в сцену;
+ *  - учитель правит всё, но авторство НЕ переходит: исправленный им ученический элемент остаётся
+ *    ученика, иначе «удалить рисунки ученика» оставляло бы на доске то, что ученик и нарисовал.
+ *
+ * `locked` из запроса выкидывается всегда: это свойство ПОЛУЧАТЕЛЯ, его сервер навешивает при
+ * рассылке (чужое ученику не выделилось), и принимать его от клиента означало бы позволить ему
+ * разблокировать чужой рисунок.
+ *
+ * `authors` и счётчики меняются на месте: сообщение может нести несколько элементов сразу, и
+ * лимит считается накопленно, а не по каждому элементу отдельно.
+ */
+export function gateEdits(params: {
+  incoming: ExEl[];
+  scene: Record<string, ExEl>;
+  authors: Record<string, string>;
+  userId: string;
+  teacher: boolean;
+  maxElements?: number;
+  maxBytes?: number;
+}): GateReport {
+  const { incoming, scene, authors, userId, teacher } = params;
+  const maxElements = params.maxElements ?? MAX_STUDENT_ELEMENTS;
+  const maxBytes = params.maxBytes ?? MAX_STUDENT_BYTES;
+  const accepted: ExEl[] = [];
+  const rejected: string[] = [];
+  let overLimit = false;
+
+  let mine = 0;
+  let mineBytes = 0;
+  if (!teacher) {
+    for (const [id, el] of Object.entries(scene)) {
+      if (authors[id] !== userId || el.isDeleted) continue;
+      mine += 1;
+      mineBytes += sizeOf(el);
+    }
+  }
+
+  for (const el of incoming) {
+    if (!el || typeof el.id !== 'string' || typeof el.version !== 'number') continue;
+    delete (el as { locked?: unknown }).locked;
+    const cur = scene[el.id];
+    const author = authors[el.id];
+
+    if (teacher) {
+      if (!cur) authors[el.id] = userId;
+      if (el.isDeleted) delete authors[el.id];
+      accepted.push(el);
+      continue;
+    }
+
+    if (cur && author !== userId) { rejected.push(el.id); continue; }
+    if (!cur && el.isDeleted) continue; // удалять нечего — это не право на чужое, а пустой кадр
+
+    const curSize = cur ? sizeOf(cur) : 0;
+    const nextCount = el.isDeleted ? mine - 1 : cur ? mine : mine + 1;
+    const nextBytes = el.isDeleted
+      ? mineBytes - curSize
+      : cur ? mineBytes - curSize + sizeOf(el) : mineBytes + sizeOf(el);
+    if (nextCount > maxElements || nextBytes > maxBytes) {
+      rejected.push(el.id);
+      overLimit = true;
+      continue;
+    }
+    mine = nextCount;
+    mineBytes = nextBytes;
+    if (!cur) authors[el.id] = userId;
+    if (el.isDeleted) delete authors[el.id];
+    accepted.push(el);
+  }
+  return { accepted, rejected, overLimit };
+}
+
+/**
+ * Часть 3: «закрыть чужое» для конкретного получателя. Ученик не может выделить, сдвинуть,
+ * изменить размер или стереть ластиком элемент, у которого `locked: true` (проверено в сборке
+ * @excalidraw/excalidraw 0.18.1: `getElementsAtPosition`, лассо, select-all, drag, ручки
+ * трансформации, `handleEraser`). Это только удобство интерфейса — право по-прежнему проверяет
+ * `gateEdits`, а не клиент.
+ */
+export function lockForeign(elements: ExEl[], authors: Record<string, string>, userId: string): ExEl[] {
+  return elements.map((el) => (authors[el.id] === userId ? el : { ...el, locked: true }));
+}
+
+/** Сколько элементов какого ученика лежит на доске — для учительского «удалить рисунки ученика». */
+export function countByAuthor(scene: Record<string, ExEl>, authors: Record<string, string>) {
+  const out: Record<string, number> = {};
+  for (const [id, el] of Object.entries(scene)) {
+    if (el.isDeleted) continue;
+    const a = authors[id];
+    if (!a) continue;
+    out[a] = (out[a] ?? 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * Мягкое удаление всех элементов одного автора: возвращаются ТУМБСТОУНЫ с новой версией (иначе
+ * mergeElements сочтёт их устаревшими и удаление никуда не поедет), а сцена остаётся на совести
+ * обычного merge — тот же путь, что и у любой правки, поэтому и удаление исчезает из карты
+ * элементов ровно так же, как у ученика, стёршего ластиком.
+ */
+export function wipeAuthor(scene: Record<string, ExEl>, authors: Record<string, string>, userId: string): ExEl[] {
+  const wiped: ExEl[] = [];
+  for (const [id, el] of Object.entries(scene)) {
+    if (el.isDeleted || authors[id] !== userId) continue;
+    wiped.push({
+      ...el, isDeleted: true, version: (el.version ?? 0) + 1, versionNonce: (Math.random() * 2 ** 31) | 0,
+    });
+    delete authors[id];
+  }
+  return wiped;
 }
 
 export function snapshotOf(r: BoardRoom) {

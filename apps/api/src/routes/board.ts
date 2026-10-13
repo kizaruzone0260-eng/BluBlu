@@ -10,7 +10,8 @@ import { resolveClass } from '../services/classes.js';
 import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
 import {
-  loadPage, listPages, listPagesWithTitles, mergeElements, type ExEl,
+  loadPage, listPages, listPagesWithTitles, mergeElements, gateEdits, lockForeign,
+  countByAuthor, wipeAuthor, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
 
@@ -33,6 +34,20 @@ export function sanitizeBoardTitle(raw: unknown): string {
   return [...flat].slice(0, MAX_BOARD_TITLE).join('');
 }
 
+/**
+ * Часть 3: частота сообщений ученика. Клиент троттлит правки ~30 мс (BROADCAST_MS), то есть шлёт
+ * не больше ~34 кадров в секунду; 60 — это «вдвое больше, чем может честный клиент», и ловит
+ * только цикл-по-ошибке или злой скрипт.
+ *
+ * Размер кадра здесь не проверяется намеренно: потолок стоит на самом сокете
+ * (`maxPayload: 256 КБ` в app.ts), и сообщение больше него до обработчика не доходит — соединение
+ * рвётся на уровне протокола. Проверка «внутри» обработчика была бы мёртвым кодом.
+ */
+const MAX_MSGS_PER_SEC = 60;
+
+/** Что клиенту показать в подсказке при отказе по лимиту (часть 3). */
+const LIMITS = { elements: MAX_STUDENT_ELEMENTS, bytes: MAX_STUDENT_BYTES };
+
 interface BoardRoom {
   sessionId: string;
   teacherId: string;
@@ -40,7 +55,12 @@ interface BoardRoom {
   pages: number[];
   titles: Record<number, string>;
   elements: Record<string, ExEl>;
-  sockets: Map<WebSocket, { role: 'teacher' | 'student' }>;
+  /** часть 3: `id элемента → userId` автора; пишет только сервер, из идентичности сокета */
+  authors: Record<string, string>;
+  /** часть 3: право рисовать, прочитанное с сессии при создании комнаты */
+  drawAll: boolean;
+  drawStudents: Record<string, true>;
+  sockets: Map<WebSocket, { role: 'teacher' | 'student'; userId: string; msgs: number; window: number }>;
   pending: ExEl[];
   broadcastTimer: NodeJS.Timeout | null;
   autosaveTimer: NodeJS.Timeout | null;
@@ -49,6 +69,11 @@ interface BoardRoom {
 }
 
 const rooms = new Map<string, BoardRoom>();
+
+/** Часть 3: имеет ли этот участник право рисовать прямо сейчас. */
+function canDrawFor(r: BoardRoom, who: { role: 'teacher' | 'student'; userId: string }): boolean {
+  return who.role === 'teacher' || r.drawAll || r.drawStudents[who.userId] === true;
+}
 
 async function getBoardRoom(db: DB, sessionId: string): Promise<BoardRoom> {
   let r = rooms.get(sessionId);
@@ -63,7 +88,9 @@ async function getBoardRoom(db: DB, sessionId: string): Promise<BoardRoom> {
   const snap = await loadPage(db, sessionId, first);
   r = {
     sessionId, teacherId: s.createdBy, current: first, pages, titles,
-    elements: snap.elements, sockets: new Map(), pending: [],
+    elements: snap.elements, authors: snap.authors,
+    drawAll: s.boardDrawAll, drawStudents: { ...s.boardDrawStudents },
+    sockets: new Map(), pending: [],
     broadcastTimer: null, autosaveTimer: null, dirty: false, saving: null,
   };
   rooms.set(sessionId, r);
@@ -76,10 +103,13 @@ async function persistNow(db: DB, r: BoardRoom) {
   r.dirty = false;
   const snapshot = { elements: Object.values(r.elements), appState: {} };
   await db.insert(whiteboards)
-    .values({ sessionId: r.sessionId, pageNo: r.current, snapshot: snapshot as never, updatedAt: new Date() })
+    .values({
+      sessionId: r.sessionId, pageNo: r.current, snapshot: snapshot as never,
+      authors: r.authors as never, updatedAt: new Date(),
+    })
     .onConflictDoUpdate({
       target: [whiteboards.sessionId, whiteboards.pageNo],
-      set: { snapshot: snapshot as never, updatedAt: new Date() },
+      set: { snapshot: snapshot as never, authors: r.authors as never, updatedAt: new Date() },
     });
 }
 
@@ -102,6 +132,35 @@ function broadcast(r: BoardRoom, msg: unknown, except?: WebSocket) {
   }
 }
 
+/**
+ * Часть 3: кадр со СЦЕНОЙ шлётся каждому по-своему. Ученику чужие элементы приезжают с
+ * `locked: true` — Excalidraw 0.18.1 не даёт такой элемент ни выделить, ни сдвинуть, ни стереть
+ * ластиком, поэтому человек не оказывается в ситуации «я дёрнул чужой рисунок, а он сам вернулся».
+ * Право при этом по-прежнему решает сервер в `gateEdits`: блокировка здесь — вежливость, а не
+ * защита. Учителю сцена уходит как есть: он правит всё.
+ */
+function sendScene(r: BoardRoom, msg: Record<string, unknown>, except?: WebSocket) {
+  const els = Array.isArray(msg.elements) ? (msg.elements as ExEl[]) : null;
+  for (const [sock, who] of r.sockets) {
+    if (sock === except || sock.readyState !== 1) continue;
+    const payload = els && who.role === 'student'
+      ? { ...msg, elements: lockForeign(els, r.authors, who.userId) }
+      : msg;
+    try { sock.send(JSON.stringify(payload)); } catch { /* ignore */ }
+  }
+}
+
+/** Часть 3: тот же снимок, но одному сокету — ответ опоздавшему/отвергнутому клиенту. */
+function sendSceneTo(r: BoardRoom, sock: WebSocket, who: { role: 'teacher' | 'student'; userId: string }) {
+  if (sock.readyState !== 1) return;
+  const els = Object.values(r.elements);
+  const payload = {
+    type: 'current', page: r.current, title: r.titles[r.current] ?? '',
+    elements: who.role === 'student' ? lockForeign(els, r.authors, who.userId) : els,
+  };
+  try { sock.send(JSON.stringify(payload)); } catch { /* ignore */ }
+}
+
 function queueBroadcast(db: DB, r: BoardRoom, els: ExEl[], from: WebSocket) {
   r.pending.push(...els);
   r.dirty = true;
@@ -109,7 +168,7 @@ function queueBroadcast(db: DB, r: BoardRoom, els: ExEl[], from: WebSocket) {
   r.broadcastTimer = setTimeout(() => {
     r.broadcastTimer = null;
     const batch = r.pending.splice(0);
-    broadcast(r, { type: 'edits', page: r.current, elements: batch }, from);
+    sendScene(r, { type: 'edits', page: r.current, elements: batch }, from);
   }, BROADCAST_MS);
   r.broadcastTimer.unref?.();
 }
@@ -119,12 +178,13 @@ async function switchPage(db: DB, r: BoardRoom, pageNo: number) {
   const snap = await loadPage(db, r.sessionId, pageNo);
   r.current = pageNo;
   r.elements = snap.elements;
+  r.authors = snap.authors;
   // EVERY socket gets the new scene — including the one that asked for the switch. It used to be
   // excluded (`except: from`), and the measurement of 2026-10-08 showed what that cost: the
   // teacher's own canvas was never replaced, so after «+ стр.» the previous page's ink stayed on
   // screen and the two pages were shown as one merged picture. Students were right, the teacher
   // was wrong — and anything they then drew landed on the page the server had switched to.
-  broadcast(r, {
+  sendScene(r, {
     type: 'current', page: pageNo, title: r.titles[pageNo] ?? '',
     elements: Object.values(snap.elements),
   });
@@ -163,22 +223,33 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     const snapshot = { elements: p.data.elements, appState: {} };
+    // Часть 3: авторство переживает прямую запись. То, что уже было на странице, остаётся у своего
+    // автора (в том числе у ученика), а всё новое считается учительским — этот маршрут доступен
+    // только учителю, и выдумать ученика он не может.
+    const [prev] = await db.select({ authors: whiteboards.authors }).from(whiteboards)
+      .where(and(eq(whiteboards.sessionId, id), eq(whiteboards.pageNo, p.data.pageNo))).limit(1);
+    const prevAuthors: Record<string, string> = { ...(prev?.authors ?? {}) };
+    const authors: Record<string, string> = {};
+    for (const el of p.data.elements as Array<{ id: string }>) {
+      authors[el.id] = prevAuthors[el.id] ?? req.user!.id;
+    }
+    const r = rooms.get(id);
+    if (r && r.current === p.data.pageNo) r.authors = authors;
     // A label is written only when the caller sent one — an edit to the drawing must never clear
     // the teacher's page name.
     const title = p.data.title === undefined ? undefined : sanitizeBoardTitle(p.data.title);
     await db.insert(whiteboards)
       .values({
-        sessionId: id, pageNo: p.data.pageNo, snapshot: snapshot as never,
+        sessionId: id, pageNo: p.data.pageNo, snapshot: snapshot as never, authors: authors as never,
         ...(title === undefined ? {} : { title }), updatedAt: new Date(),
       })
       .onConflictDoUpdate({
         target: [whiteboards.sessionId, whiteboards.pageNo],
         set: {
-          snapshot: snapshot as never, updatedAt: new Date(),
+          snapshot: snapshot as never, authors: authors as never, updatedAt: new Date(),
           ...(title === undefined ? {} : { title }),
         },
       });
-    const r = rooms.get(id);
     if (r && title !== undefined) r.titles[p.data.pageNo] = title;
     return { ok: true };
   });
@@ -206,6 +277,102 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     return reply.code(201).send({ postId: post.id });
   });
 
+  /**
+   * Часть 3: право рисовать — учителю этого класса, и только.
+   *
+   * `{ all: true|false }` — «разрешить всем»; `{ userId, allow }` — точечно. Состояние пишется на
+   * СЕССИЮ (миграция 0029), потому что ученик переподключается и перезагружает страницу посреди
+   * урока: разрешение, живущее в клиенте или в сокете, пережил бы только первый экран.
+   *
+   * Комната доски, если она уже стоит, синхронизируется в том же запросе и получает `perms`-кадр:
+   * отзыв должен подействовать сразу, а не после переподключения. Проверка права при этом всё
+   * равно на каждом сообщении (`gateEdits`) — кадр `perms` это подсказка интерфейсу, не защита.
+   */
+  async function setDrawPermission(db: DB, s: { id: string; classId: string }, userId: string | undefined, all: boolean | undefined, allow: boolean) {
+    const [cur] = await db.select({ all: lessonSessions.boardDrawAll, students: lessonSessions.boardDrawStudents })
+      .from(lessonSessions).where(eq(lessonSessions.id, s.id)).limit(1);
+    const students = { ...(cur?.students ?? {}) };
+    let nextAll = cur?.all ?? false;
+    if (all !== undefined) {
+      nextAll = all;
+    } else if (userId) {
+      if (allow) students[userId] = true; else delete students[userId];
+    }
+    await db.update(lessonSessions).set({ boardDrawAll: nextAll, boardDrawStudents: students })
+      .where(eq(lessonSessions.id, s.id));
+    const r = rooms.get(s.id);
+    if (r) {
+      r.drawAll = nextAll;
+      r.drawStudents = students;
+      for (const [sock, who] of r.sockets) {
+        if (who.role === 'teacher' || (userId && who.userId !== userId)) continue;
+        if (sock.readyState === 1) {
+          try { sock.send(JSON.stringify({ type: 'perms', canDraw: canDrawFor(r, who) })); } catch { /* ignore */ }
+        }
+      }
+    }
+    return { ok: true, all: nextAll, students };
+  }
+
+  app.post('/api/lessons/:id/board/draw', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const s = await getSession(db, id);
+    if (!s) return reply.code(404).send({ error: 'notFound' });
+    const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
+    if (!cls) return reply.code(404).send({ error: 'notFound' });
+    const p = z.object({
+      userId: z.string().uuid().optional(),
+      all: z.boolean().optional(),
+      allow: z.boolean().default(true),
+    }).safeParse(req.body ?? {});
+    if (!p.success || (p.data.userId === undefined && p.data.all === undefined)) {
+      return reply.code(400).send({ error: 'invalidInput' });
+    }
+    // Разрешение дают только своему ученику: чужой класс и несуществующий пользователь
+    // отвечают одинаковым 404 (общее правило прав в этом проекте).
+    if (p.data.userId && !await resolveClass(db, p.data.userId, 'student', s.classId)) {
+      return reply.code(404).send({ error: 'notFound' });
+    }
+    return await setDrawPermission(db, s, p.data.userId, p.data.all, p.data.allow);
+  });
+
+  app.get('/api/lessons/:id/board/draw', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const s = await getSession(db, id);
+    if (!s) return reply.code(404).send({ error: 'notFound' });
+    const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
+    if (!cls) return reply.code(404).send({ error: 'notFound' });
+    const r = rooms.get(id);
+    if (r) return { ok: true, all: r.drawAll, students: r.drawStudents };
+    const [row] = await db.select({ all: lessonSessions.boardDrawAll, students: lessonSessions.boardDrawStudents })
+      .from(lessonSessions).where(eq(lessonSessions.id, id)).limit(1);
+    return { ok: true, all: row?.all ?? false, students: row?.students ?? {} };
+  });
+
+  /**
+   * Часть 3: чьи рисунки лежат на доске — нужно учительской кнопке «Удалить рисунки ученика».
+   * Возвращает счётчики, а не сами элементы: имена учитель уже видит в списке участников, а
+   * лишняя пересылка сцены не нужна.
+   */
+  app.get('/api/lessons/:id/board/authors', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const s = await getSession(db, id);
+    if (!s) return reply.code(404).send({ error: 'notFound' });
+    const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
+    if (!cls) return reply.code(404).send({ error: 'notFound' });
+    const q = z.object({ page: z.coerce.number().int().min(1).optional() }).safeParse(req.query ?? {});
+    if (!q.success) return reply.code(400).send({ error: 'invalidInput' });
+    const r = rooms.get(id);
+    const page = q.data.page ?? r?.current ?? 1;
+    if (!r || r.current !== page) {
+      const pages = await listPages(db, id);
+      if (!pages.includes(page)) return reply.code(404).send({ error: 'notFound' });
+      const snap = await loadPage(db, id, page);
+      return { page, byAuthor: countByAuthor(snap.elements, snap.authors), limits: LIMITS };
+    }
+    return { page, byAuthor: countByAuthor(r.elements, r.authors), limits: LIMITS };
+  });
+
   // ── board WebSocket (one-time ticket auth, §audit) ──
   app.get('/api/ws/board/:id', { websocket: true }, (socket: WebSocket, req) => {
     void (async () => {
@@ -219,10 +386,11 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
       if (!consumed) { socket.close(4401); return; }
       const cls = await resolveClass(db, consumed.userId, consumed.role, s.classId);
       if (!cls) { socket.close(4404); return; }
-      const role = consumed.role === 'teacher' ? 'teacher' : 'student';
+      const role: 'teacher' | 'student' = consumed.role === 'teacher' ? 'teacher' : 'student';
       const r = await getBoardRoom(db, sessionId);
       if (role === 'teacher') r.teacherId = consumed.userId;
-      r.sockets.set(socket, { role });
+      const who = { role, userId: consumed.userId, msgs: 0, window: 0 };
+      r.sockets.set(socket, who);
       attachErrorLogging(socket, 'board socket'); // see lib/errorObservers.ts
       socket.on('close', () => {
         r.sockets.delete(socket);
@@ -231,7 +399,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
         if (r.broadcastTimer) {
           clearTimeout(r.broadcastTimer); r.broadcastTimer = null;
           const batch = r.pending.splice(0);
-          if (batch.length) broadcast(r, { type: 'edits', page: r.current, elements: batch });
+          if (batch.length) sendScene(r, { type: 'edits', page: r.current, elements: batch });
         }
         void persist(db, r).then(() => {
           if (r.sockets.size === 0 && rooms.get(sessionId) === r) {
@@ -241,25 +409,79 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
         }).catch(() => undefined);
       });
       socket.send(JSON.stringify({
-        type: 'init', canEdit: role === 'teacher',
-        page: r.current, pages: r.pages, titles: r.titles, elements: Object.values(r.elements),
+        type: 'init', canEdit: role === 'teacher', canDraw: canDrawFor(r, who),
+        page: r.current, pages: r.pages, titles: r.titles,
+        elements: role === 'teacher'
+          ? Object.values(r.elements)
+          : lockForeign(Object.values(r.elements), r.authors, consumed.userId),
       }));
 
       socket.on('message', (raw: Buffer) => {
         void (async () => {
-          let msg: { type?: string; page?: number; title?: unknown; elements?: ExEl[] };
+          // Частота сообщений — до всякой логики: ученик с циклом-по-ошибке не должен уметь
+          // положить сервер или залить доску мусором.
+          const now = Date.now();
+          if (now - who.window > 1000) { who.window = now; who.msgs = 0; }
+          if (++who.msgs > MAX_MSGS_PER_SEC) {
+            socket.send(JSON.stringify({ type: 'notice', code: 'boardTooFast' }));
+            return;
+          }
+          let msg: { type?: string; page?: number; title?: unknown; elements?: ExEl[]; userId?: string };
           try { msg = JSON.parse(raw.toString()); } catch { return; }
-          // SERVER-SIDE PERMISSION GATE: only the owning teacher may write (§3.7/§7). This covers
-          // every page-management verb too — a student's newpage/rename/duplicate/delpage/switch
-          // returns here, before any state is touched (task 1г).
-          const who = r.sockets.get(socket);
-          if (!who || who.role !== 'teacher' || consumed.userId !== r.teacherId) return;
           const notice = (code: string, extra: Record<string, unknown> = {}) =>
             socket.send(JSON.stringify({ type: 'notice', code, ...extra }));
 
+          /**
+           * Часть 3: право рисовать проверяется на КАЖДОМ сообщении, а не при подключении.
+           * Учитель отозвал разрешение посреди рисования — следующий кадр уже не пройдёт, и
+           * ничего из него в сцену не попадёт (проверка стоит до merge).
+           */
+          if (who.role !== 'teacher' && !canDrawFor(r, who)) {
+            notice('boardNoPermission');
+            return;
+          }
+
+          /**
+           * SERVER-SIDE PERMISSION GATE: only the owning teacher may write (§3.7/§7). This covers
+           * every page-management verb too — a student's newpage/rename/duplicate/delpage/switch
+           * returns here, before any state is touched (task 1г).
+           */
+          const isTeacherMsg = who.role === 'teacher' && who.userId === r.teacherId;
+          if (!isTeacherMsg && msg.type !== 'edits') return;
           if (msg.type === 'edits' && Array.isArray(msg.elements)) {
-            const { changed } = mergeElements(r.elements, msg.elements.filter((e) => e && typeof e.id === 'string'));
+            const els = msg.elements.filter((e) => e && typeof e.id === 'string');
+            if (!els.length) return;
+            const gate = gateEdits({
+              incoming: els, scene: r.elements, authors: r.authors,
+              userId: who.userId, teacher: isTeacherMsg,
+            });
+            if (!isTeacherMsg && gate.rejected.length) {
+              // Отказанному возвращаем авторитетный снимок ВСЕЙ страницы: версии у его локальной
+              // копии уже выше, чем у отброшенных элементов, поэтому точечная доставка ничего бы
+              // не исправила — клиент обязан переставить сцену целиком.
+              notice(gate.overLimit ? 'boardStudentLimit' : 'boardForeign',
+                gate.overLimit ? { maxElements: MAX_STUDENT_ELEMENTS, maxBytes: MAX_STUDENT_BYTES } : {});
+              sendSceneTo(r, socket, who);
+            }
+            const { changed } = mergeElements(r.elements, gate.accepted);
             if (changed.length) queueBroadcast(db, r, changed, socket);
+            return;
+          }
+          /**
+           * Часть 3: «Удалить рисунки ученика» — учительское действие, и только учительское.
+           * Снимаются мягко (isDeleted + новая версия), чтобы дельта-синхрон донёс удаление до
+           * всех, а карта авторства чистится: ученик, у которого удалили рисунок, не получает
+           * потом «свой» пустой элемент.
+           */
+          if (msg.type === 'purge' && typeof msg.userId === 'string') {
+            const wiped = wipeAuthor(r.elements, r.authors, msg.userId);
+            if (!wiped.length) { notice('boardNothingToPurge', { userId: msg.userId }); return; }
+            // тот же путь, что у любой правки: merge снимает элементы со сцены по `isDeleted`
+            mergeElements(r.elements, wiped);
+            r.dirty = true;
+            // БЕЗ `except`: учителю этот кадр тоже нужен — его полотно ещё показывает чужой рисунок
+            sendScene(r, { type: 'edits', page: r.current, elements: wiped });
+            await persist(db, r);
             return;
           }
           if (msg.type === 'switch' && typeof msg.page === 'number' && r.pages.includes(msg.page)) {
@@ -290,11 +512,11 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               delete r.titles[np];
               return;
             }
-            r.current = np; r.elements = {}; r.dirty = false;
+            r.current = np; r.elements = {}; r.authors = {}; r.dirty = false;
             // `elements` travels with the page list: the client that created the board has to
             // drop the previous board's scene from its canvas too (see switchPage) — otherwise
             // the teacher keeps seeing the old drawing on top of the new board.
-            broadcast(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles, elements: [] });
+            sendScene(r, { type: 'pages', pages: r.pages, current: np, titles: r.titles, elements: [] });
             return;
           }
           /**
@@ -331,14 +553,17 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               await db.insert(whiteboards).values({
                 sessionId: r.sessionId, pageNo: np, title,
                 snapshot: { elements: Object.values(snap.elements), appState: {} } as never,
+                // копия доски копирует и авторство: иначе «удалить рисунки ученика» на дубликате
+                // находило бы пустоту, хотя рисунок ученика на нём виден
+                authors: snap.authors as never,
               });
-              r.current = np; r.elements = snap.elements; r.dirty = false;
+              r.current = np; r.elements = snap.elements; r.authors = snap.authors; r.dirty = false;
             } catch {
               r.pages = r.pages.filter((x) => x !== np);
               delete r.titles[np];
               return;
             }
-            broadcast(r, {
+            sendScene(r, {
               type: 'pages', pages: r.pages, current: np, titles: r.titles,
               elements: Object.values(r.elements),
             });
@@ -360,7 +585,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               await switchPage(db, r, next[0]!);
               broadcast(r, { type: 'pages', pages: r.pages, current: r.current, titles: r.titles });
             } else {
-              broadcast(r, {
+              sendScene(r, {
                 type: 'pages', pages: r.pages, current: r.current, titles: r.titles,
                 elements: Object.values(r.elements),
               });

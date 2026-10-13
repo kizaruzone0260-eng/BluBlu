@@ -254,6 +254,17 @@ export const lessonSessions = pgTable('lesson_sessions', {
   lecturePreDevices: jsonb('lecture_pre_devices')
     .$type<Record<string, { mic: boolean; cam: boolean }>>().notNull().default({}),
   /**
+   * Часть 3 (2026-10-14): право рисовать на доске.
+   *
+   * Живёт на СЕССИИ, а не в сокете: ученик переподключается, обновляет страницу, приходит позже —
+   * разрешение должно остаться тем, его сделал учитель, а не тем, что запомнил чей-то клиент.
+   * `boardDrawStudents` — множество `userId → true`; `boardDrawAll` — «разрешить всем», включая
+   * тех, кто придёт после. Проверяется сервером на КАЖДОМ сообщении доски (см. routes/board.ts),
+   * а не только при подключении: отзыв действует сразу.
+   */
+  boardDrawAll: boolean('board_draw_all').notNull().default(false),
+  boardDrawStudents: jsonb('board_draw_students').$type<Record<string, true>>().notNull().default({}),
+  /**
    * Layout for everyone (task B): gallery/stage/teacher are the classic modes,
    * 'auto' lets the client pick; boardOpen promotes the whiteboard to the main
    * stage window for ALL participants (jsonb — no migration needed).
@@ -336,12 +347,17 @@ export type InviteCode = typeof inviteCodes.$inferSelect;
 
 /** §3.7 whiteboard: merged Excalidraw snapshot per (session, page).
  *  `title` is the teacher's label for the page (plain text, ≤40 chars, board-pages task 1б);
- *  empty means "no label" and the client falls back to the localized «Доска N». */
+ *  empty means "no label" and the client falls back to the localized «Доска N».
+ *  `authors` (часть 3) — карта `id элемента → userId` автора. Она хранится СЕРВЕРОМ и берётся
+ *  из идентичности сокета, а не из тела сообщения: клиент, приславший чужой `authorId`, ничего
+ *  этим не добьётся. Нужна она для двух вещей: «ученик правит только своё» и «учитель удаляет
+ *  рисунки ученика». */
 export const whiteboards = pgTable('whiteboards', {
   sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
   pageNo: integer('page_no').notNull(),
   title: text('title').notNull().default(''),
   snapshot: jsonb('snapshot').$type<{ elements: unknown[]; appState: Record<string, unknown> }>().notNull().default({ elements: [], appState: {} }),
+  authors: jsonb('authors').$type<Record<string, string>>().notNull().default({}),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.sessionId, t.pageNo] })]);
 
