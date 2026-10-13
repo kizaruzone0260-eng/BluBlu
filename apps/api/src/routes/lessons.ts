@@ -5,7 +5,7 @@ import { resolveClass } from '../services/classes.js';
 import {
   startLesson, endLesson, getActiveSessionForClass, getActiveSessionForEvent,
   getSession, buildJoinToken, getRoomService, studentPermission, floorPermission,
-  type CurrentPermission, type LessonSession,
+  lecturePreDevices, type CurrentPermission, type LessonSession,
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env, livekitPublicWsUrl } from '../env.js';
@@ -26,6 +26,23 @@ const withRoom = (s: LessonSession) => ({
   layout: s.layoutState.layout,
   boardOpen: s.layoutState.boardOpen ?? false, // task B: the board as the main window
   commentsMode: s.commentsMode, // task 2: the comments panel learns the mode with the session
+});
+
+/**
+ * Часть 1 (2026-10-13): снимок устройств наружу — по приватности по умолчанию.
+ *
+ * `lecture_pre_devices` — карта `identity → {mic, cam}`, собранная при включении лекции (сервер
+ * читает список участников ДО отзыва публикации). Ученику отдаётся ТОЛЬКО его собственная запись:
+ * чужое «был ли включён микрофон» человеку не нужно, а ученик, прочитавший карту, узнал бы, кто из
+ * класса говорил до лекции. Полная карта — только владельцу урока (учителю, который его начал), и
+ * она же стирается при выключении лекции и при завершении урока (см. `endLesson`).
+ */
+const withPreLecture = <T extends object>(
+  s: LessonSession, userId: string, isOwner: boolean, extra: T,
+) => ({
+  ...extra,
+  preLecture: s.lecturePreDevices[userId] ?? null,
+  ...(isOwner ? { preLectureRoster: s.lecturePreDevices } : {}),
 });
 
 /** RoomService failures must not 500 the API (media server may be starting). */
@@ -112,7 +129,8 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     const s = await getActiveSessionForClass(db, cls.id);
     if (!s) return { session: null };
-    return { session: { ...withRoom(s), wsUrl: livekitPublicWsUrl() } };
+    // часть 1: `preLecture` — снимок устройств СПРАШИВАЮЩЕГО ученика (см. `withPreLecture`)
+    return { session: withPreLecture(s, req.user!.id, req.user!.role === 'teacher', { ...withRoom(s), wsUrl: livekitPublicWsUrl() }) };
   });
 
   // Join: issue short-lived LiveKit JWT (§5 поток входа)
@@ -165,17 +183,30 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
   async function setLecture(id: string, on: boolean, restore?: boolean) {
     const { lessonSessions } = await import('../db/schema.js');
     await db.update(lessonSessions).set(
-      on ? { lectureMode: true, lectureRestore: !!restore } : { lectureMode: false },
+      // Часть 1: выключение лекции стирает снимок — он больше не нужен (возврат уже отдан клиенту),
+      // и держать «кто что держал до лекции» в базе после урока нельзя.
+      on
+        ? { lectureMode: true, lectureRestore: !!restore }
+        : { lectureMode: false, lecturePreDevices: {} },
     ).where(eq(lessonSessions.id, id));
+  }
+
+  /** часть 1: снимок «что горело» — отдельным обновлением, но ДО цикла отзыва публикации */
+  async function saveLecturePreDevices(id: string, pre: Record<string, { mic: boolean; cam: boolean }>) {
+    const { lessonSessions } = await import('../db/schema.js');
+    await db.update(lessonSessions).set({ lecturePreDevices: pre }).where(eq(lessonSessions.id, id));
   }
 
   /**
    * Режим лекции: ученик не публикует, пока учитель не разрешит (§3.6); новые входящие получают
    * это из токена.
    *
-   * ВКЛЮЧЕНИЕ пишет состояние и отнимает права; недоступный медиа-сервер запись не отменяет
-   * (закреплено тестом `stage4`: 200 без медиа-сервера), потому что запрет для входящих живёт в
-   * базе и не зависит от того, дошёл ли сигнал до комнаты.
+   * ВКЛЮЧЕНИЕ пишет состояние, снимает серверный снимок «что горело» (`lecture_pre_devices`,
+   * читая список участников ДО отзыва публикации) и только потом отнимает права; недоступный
+   * медиа-сервер запись состояния не отменяет (закреплено тестом `stage4`: 200 без медиа-сервера),
+   * потому что запрет для входящих живёт в базе и не зависит от того, дошёл ли сигнал до комнаты.
+   * Снимок при этом остаётся пустым: раз публикацию не отняли, никто ничего не терял и возвращать
+   * нечего — выдумывать включённые устройства маршрут не вправе.
    *
    * ВЫКЛЮЧЕНИЕ — направление, в котором и рождался симптом. Раньше здесь стояло
    * `studentPermission(false)` без вопроса серверу: `media()` глотает ошибку, маршрут отвечал 200,
@@ -184,8 +215,8 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
    * молчат до конца урока». Теперь: сначала читается ФАКТИЧЕСКОЕ разрешение каждого ученика и
    * компонуется с ним (выданные слово и показ экрана не теряются), недоступный сервер даёт 502 без
    * записи нового состояния, а обновление одного участника атомарно само по себе (SDK: «all desired
-   * permissions would need to be set»). Сервер возвращает ПРАВО, устройство включает сам ученик по
-   * кадру `lecture_off`.
+   * permissions would need to be set»). Сервер возвращает ПРАВО, а устройство включает сам ученик
+   * по кадру `lecture_off` — ровно то, что значится в снимке для его identity (см. `withPreLecture`).
    */
   app.post('/api/lessons/:id/lecture-mode', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
@@ -200,6 +231,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (on) {
       await setLecture(id, true, restore);
       const list = await media(() => rs.listParticipants(s.roomName));
+      await saveLecturePreDevices(id, list.ok ? lecturePreDevices(list.value, s.createdBy) : {});
       let live = 0;
       if (list.ok) {
         for (const part of list.value) {
@@ -333,7 +365,7 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       wsJoin(q, socket);
       socket.send(JSON.stringify({
         type: s.endedAt ? 'ended' : 'started',
-        session: { ...withRoom(s), wsUrl: livekitPublicWsUrl() },
+        session: withPreLecture(s, consumed.userId, consumed.role === 'teacher', { ...withRoom(s), wsUrl: livekitPublicWsUrl() }),
       }));
     })().catch(() => socket.close(1011));
   });

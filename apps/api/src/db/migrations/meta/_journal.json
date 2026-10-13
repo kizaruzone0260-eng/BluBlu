@@ -197,6 +197,13 @@
       "when": 1791831926151,
       "tag": "0027_lecture_restore",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791893854982,
+      "tag": "0028_lecture_pre_devices",
+      "breakpoints": true
     }
   ]
 }

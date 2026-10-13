@@ -241,6 +241,19 @@ export const lessonSessions = pgTable('lesson_sessions', {
    */
   lectureRestore: boolean('lecture_restore').notNull().default(true),
   /**
+   * Часть 1 (2026-10-13): снимок «что горело» — с НИХНЕЙ стороны, а не с клиентской.
+   *
+   * Маршрут включения лекции читает список участников ДО того, как отзывать публикацию, и пишет
+   * здесь для каждого ученика, включены ли у него микрофон и камера. Причина ровно одна: отзыв
+   * публикации доходит до браузера раньше нашего кадра (замер CI 2026-10-13), поэтому снимок,
+   * сделанный на клиенте по кадру, показывает пустоту. Сервер снимок делает в момент, который он
+   * сам же и меняет, — порядок событий ему не мешает, и снимок переживает перезагрузку страницы
+   * ученика посреди лекции. Ключ — identity участника; наружу из него отдаётся только запись
+   * спрашивающего (статус урока), чужой список не видит никто.
+   */
+  lecturePreDevices: jsonb('lecture_pre_devices')
+    .$type<Record<string, { mic: boolean; cam: boolean }>>().notNull().default({}),
+  /**
    * Layout for everyone (task B): gallery/stage/teacher are the classic modes,
    * 'auto' lets the client pick; boardOpen promotes the whiteboard to the main
    * stage window for ALL participants (jsonb — no migration needed).

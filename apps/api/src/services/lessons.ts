@@ -27,7 +27,9 @@ export async function startLesson(
 
 export async function endLesson(db: DB, sessionId: string): Promise<LessonSession | null> {
   const [s] = await db.update(lessonSessions)
-    .set({ endedAt: new Date() })
+    // Часть 1: снимок устройств живёт ровно столько, сколько урок. Завершение урока стирает его,
+    // иначе «кто что держал до лекции» остаётся в базе после занятия без всякой цели.
+    .set({ endedAt: new Date(), lecturePreDevices: {} })
     .where(and(eq(lessonSessions.id, sessionId), isNull(lessonSessions.endedAt)))
     .returning();
   return s ?? null;
@@ -129,6 +131,37 @@ export function floorPermission(
     : [...base.canPublishSources, TrackSource.MICROPHONE];
   return { ...base, canPublish: true, canPublishSources: withMic };
 }
+
+/**
+ * Часть 1 (2026-10-13): снимок «что горело» с НИХНЕЙ стороны.
+ *
+ * Берётся из `listParticipants` ДО того, как режим лекции отзовет публикацию. Причина, по которой
+ * это делает сервер, а не клиент: комната отзывает трек (`LocalTrackUnpublished`) раньше, чем
+ * доходит наш кадр `lectureMode` (замер CI: права отозваны в 11305, треки сняты в 11323, кадр
+ * `lectureMode on=true` в 19306), — клиентский снимок по кадру показывал `false/false`. Замер
+ * сделан в момент, который сервер сам же и меняет, поэтому порядок прихода событий на него не
+ * влияет, и он переживает перезагрузку страницы ученика посреди лекции.
+ *
+ * Track «горит» = опубликован и не замучен; `muted` читаем как «не true», потому что protobuf по
+ * умолчанию опускает false из JSON, а трек выключенного устройства LiveKit оставляет замученным.
+ */
+export function lecturePreDevices(
+  parts: {
+    identity: string;
+    tracks?: { source?: TrackSource; muted?: boolean }[];
+  }[],
+  teacherIdentity: string,
+): Record<string, { mic: boolean; cam: boolean }> {
+  const map: Record<string, { mic: boolean; cam: boolean }> = {};
+  for (const part of parts) {
+    if (part.identity === teacherIdentity) continue; // учитель говорит всегда
+    const tracks = part.tracks ?? [];
+    const live = (src: TrackSource) => tracks.some((tr) => tr.source === src && tr.muted !== true);
+    map[part.identity] = { mic: live(TrackSource.MICROPHONE), cam: live(TrackSource.CAMERA) };
+  }
+  return map;
+}
+
 
 let roomService: RoomServiceClient | null = null;
 export function getRoomService(): RoomServiceClient {
