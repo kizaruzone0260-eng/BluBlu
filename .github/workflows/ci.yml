@@ -126,6 +126,19 @@ jobs:
       # RTC-спеки умеют пропускать себя сами, когда медиа-сервер недоступен. Без этого гейта job с
       # мёртвым LiveKit-контейнером был бы зелёным — поэтому пропущенный тест = упавший CI.
       - run: node scripts/ci-no-skips.mjs apps/e2e/e2e-results.json
+      # RTC-тесты падают от таймингов распространения прав в комнате — по одной строке
+      # «Expected true / Received false» причину не восстановить. Трассы и скриншоты падения
+      # уезжают артефактом (retain-on-failure в playwright.config.ts), хранятся 7 дней.
+      - name: Трассы и test-results упавшего прогона
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results-${{ github.run_id }}
+          path: |
+            apps/e2e/test-results
+            apps/e2e/e2e-results.json
+          retention-days: 7
+          if-no-files-found: warn
 
   # Task 6 (2026-10-10): the runtime IMAGE, not just the runtime dependency list. `pnpm ls --prod`
   # says what SHOULD be installed; only `docker build` says what the deployed container actually

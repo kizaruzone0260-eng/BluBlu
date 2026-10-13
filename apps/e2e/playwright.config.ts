@@ -17,6 +17,13 @@ export default defineConfig({
     channel: process.env.CI ? undefined : 'msedge',
     permissions: ['camera', 'microphone'],
     video: 'off',
+    /*
+     * Упавший RTC-тест иначе нечем объяснить: тайминги распространения прав в комнате нельзя
+     * восстановить по строке «Expected true / Received false». Трасса и скриншот держатся только
+     * на падении (retention в CI — 7 дней), поэтому набор не дорожает в зелёных прогонах.
+     */
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     launchOptions: {
       args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
     },
