@@ -673,6 +673,11 @@ button.danger-text { color: var(--danger); }
 .board-tab-pop button:hover:not([disabled]) { background: var(--accent-soft); }
 .board-tab-pop button[disabled] { color: var(--text-muted); cursor: not-allowed; }
 .board-current { font-weight: 600; }
+/* часть 3: статус «вам можно рисовать» — тот же акцентный «pill», что и у плашки темы */
+.board-draw-badge {
+  margin: auto 0; padding: 4px 10px; border-radius: var(--r-full);
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
 .board-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 @media (max-width: 520px) { .board-tab-name { max-width: 110px; } }
 

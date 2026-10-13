@@ -171,6 +171,13 @@ export default function Lesson() {
   const [error, setError] = useState('');
   const [layout, setLayout] = useState<Session['layout']>('auto');
   const [lectureMode, setLectureMode] = useState(false);
+  /**
+   * Часть 3: кто имеет право рисовать на доске. Живёт на сессии (сервер), здесь только копия для
+   * панели: учитель перезагрузил страницу посреди урока — состояние вернётся запросом, а не
+   * потеряется вместе с компонентом.
+   */
+  const [drawAll, setDrawAll] = useState(false);
+  const [drawStudents, setDrawStudents] = useState<Record<string, true>>({});
   const [screenOn, setScreenOn] = useState(false);
   const [localCamOn, setLocalCamOn] = useState(false);
   const [localMicOn, setLocalMicOn] = useState(false);
@@ -734,6 +741,55 @@ export default function Lesson() {
     }
     setPeers(list);
   }
+
+  /**
+   * Часть 3: право рисовать читается с СЕРВЕРА, а не живёт от последнего клика. Учитель
+   * перезагружает страницу посреди урока, открывает панель заново — и должен увидеть то же
+   * состояние, которое видит доска ученика, иначе переключатель врёт.
+   */
+  useEffect(() => {
+    const id = session?.id;
+    if (!isTeacher || !id) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await api<{ all: boolean; students: Record<string, true> }>(`/api/lessons/${id}/board/draw`);
+        if (!alive) return;
+        setDrawAll(!!res.all);
+        setDrawStudents(res.students ?? {});
+      } catch { /* права нет на этом уроке — панель остаётся с выключенным состоянием */ }
+    })();
+    return () => { alive = false; };
+  }, [isTeacher, session?.id]);
+
+  async function setDraw(identity: string, allow: boolean) {
+    const id = session?.id;
+    if (!id) return;
+    try {
+      const res = await api<{ all: boolean; students: Record<string, true> }>(
+        `/api/lessons/${id}/board/draw`, { method: 'POST', body: JSON.stringify({ userId: identity, allow }) });
+      setDrawAll(!!res.all);
+      setDrawStudents(res.students ?? {});
+    } catch {
+      showToast(t('lesson.boardDrawError'));
+    }
+  }
+
+  async function toggleDrawAll() {
+    const id = session?.id;
+    if (!id) return;
+    try {
+      const res = await api<{ all: boolean; students: Record<string, true> }>(
+        `/api/lessons/${id}/board/draw`, { method: 'POST', body: JSON.stringify({ all: !drawAll }) });
+      setDrawAll(!!res.all);
+      setDrawStudents(res.students ?? {});
+    } catch {
+      showToast(t('lesson.boardDrawError'));
+    }
+  }
+
+  /** Имена участников по identity — доске они нужны только для подписей в «удалить рисунки ученика». */
+  const peerNames = useMemo(() => Object.fromEntries(peers.map((p) => [p.identity, p.name])), [peers]);
 
   /** local buttons reflect REAL publication state, derived from LiveKit events */
   function refreshLocal(room: Room) {
@@ -1504,7 +1560,7 @@ export default function Lesson() {
                         {stage.kind === 'board' ? (
                           <>
                             <Suspense fallback={<div className="card board-loading" style={{ height: boardFull ? 'calc(100vh - 64px)' : '62vh' }} />}>
-                              <Board sessionId={session.id} classId={session.classId} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
+                              <Board sessionId={session.id} classId={session.classId} peerNames={peerNames} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
                             </Suspense>
                             <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
                               onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
@@ -1647,7 +1703,7 @@ export default function Lesson() {
               */}
               {!(connected && boardOpen) && (
                 <Suspense fallback={<div className="card board-loading" style={{ height: layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))' }} />}>
-                  <Board sessionId={session.id} classId={session.classId}
+                  <Board sessionId={session.id} classId={session.classId} peerNames={peerNames}
                     height={layout === 'stage' ? '40vh' : 'min(60vh, calc(100dvh - 420px))'} />
                 </Suspense>
               )}
@@ -1660,12 +1716,14 @@ export default function Lesson() {
               <LessonPanelLazy
                 tab={panelTab} onTab={setPanelTab} onClose={() => setPanelOpen(false)}
                 sessionId={session.id} isTeacher={isTeacher} lectureMode={lectureMode} muteAll={muteAll}
-                peers={peers} hands={handsQ.q.data?.hands ?? []} unread={unread}
+                peers={peers.map((p) => ({ ...p, canDraw: drawAll || !!drawStudents[p.identity] }))}
+                hands={handsQ.q.data?.hands ?? []} unread={unread}
                 onMuteOne={(identity) => void muteOne(identity)}
                 onScreen={(identity, allow) => act.mutate({ path: `/api/lessons/${session.id}/grant-screen`, body: { identity, allow } })}
                 onKick={(identity) => act.mutate({ path: `/api/lessons/${session.id}/kick`, body: { identity } })}
                 onMuteAll={() => void toggleMuteAll()}
                 onLecture={setLecture}
+                drawAll={drawAll} onDraw={(identity, allow) => void setDraw(identity, allow)} onDrawAll={() => void toggleDrawAll()}
                 comments={{ isTeacher, lectureMode }}
               />
             </Suspense>

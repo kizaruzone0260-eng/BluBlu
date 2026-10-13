@@ -19,32 +19,40 @@ interface RawEl { id: string; version: number; versionNonce: number; isDeleted?:
 const MAX_BOARDS = 20;
 
 /**
- * §3.7 whiteboard: teacher draws, students are view-only. The client only ever
- * sends edits when canEdit, and the SERVER ignores non-teacher writes anyway.
- * Changes are sent as deltas (id/version/versionNonce) throttled to ~30 ms.
+ * §3.7 whiteboard: рисует учитель, и — если он разрешил — конкретные ученики (часть 3). Право
+ * проверяет СЕРВЕР на каждом сообщении, поэтому здесь `canDraw` отвечает только за то, покажется
+ * ли человеку полотно доступным для рисования и какой снимок ему приедет (чужие элементы в нём
+ * помечены `locked`, и Excalidraw не даёт их ни выделить, ни стереть).
+ *
+ * Изменения отправляются дельтами (id/version/versionNonce) с троттлингом ~30 мс.
  *
  * Board pages (task 1): the strip of tabs is our own, not Excalidraw's — a page is a
  * `whiteboards (session_id, page_no)` row on the server, the label lives in its `title` column,
  * and every page verb (create / rename / duplicate / delete / switch) goes over the board WS,
  * where the teacher gate already dropped anything that is not the owning teacher.
  */
-export default function Board({ sessionId, classId, height = '60vh' }: {
-  sessionId: string; classId?: string; height?: string;
+export default function Board({ sessionId, classId, height = '60vh', peerNames }: {
+  sessionId: string; classId?: string; height?: string; peerNames?: Record<string, string>;
 }) {
   const { t } = useTranslation();
   const { me } = useAuth();
   const [canEdit, setCanEdit] = useState(false);
+  /** часть 3: рисовать может и разрешённый ученик; `canEdit` при этом остаётся про учителя */
+  const [canDraw, setCanDraw] = useState(false);
   const [pages, setPages] = useState<number[]>([1]);
   const [titles, setTitles] = useState<Record<number, string>>({});
   const [current, setCurrentPage] = useState(1);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [menuFor, setMenuFor] = useState<number | null>(null);
-  /** where the «⋯» popover sits — see openMenu: it is clamped to the viewport */
+  /** где сидит поповер «⋯» — см. openMenu: он прижат к вьюпорту */
   const [menuAt, setMenuAt] = useState<{ top: number; left: number } | null>(null);
   const [renaming, setRenaming] = useState<{ page: number; value: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  /** часть 3: чьи рисунки лежат на доске — учительская кнопка «Удалить рисунки ученика» */
+  const [drawnBy, setDrawnBy] = useState<Record<string, number> | null>(null);
+  const [purgeOpen, setPurgeOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const apiRef = useRef<Api | null>(null);
   const sentRef = useRef<Map<string, { version: number; versionNonce: number }>>(new Map());
@@ -67,17 +75,22 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
         ws.onopen = () => { attempt = 0; };
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as {
-            type: string; canEdit?: boolean; page?: number; current?: number; pages?: number[];
+            type: string; canEdit?: boolean; canDraw?: boolean; page?: number; current?: number; pages?: number[];
             elements?: RawEl[]; title?: string; titles?: Record<number, string>;
-            code?: string; max?: number;
+            code?: string; max?: number; maxElements?: number; maxBytes?: number;
           };
           if (msg.type === 'init') {
             setCanEdit(!!msg.canEdit);
+            setCanDraw(!!msg.canDraw);
             setPages(msg.pages ?? [1]);
             setTitles(msg.titles ?? {});
             setCurrentPage(msg.page ?? 1);
             sentRef.current.clear();
             replaceScene(msg.elements ?? []);
+          } else if (msg.type === 'perms') {
+            // часть 3: учитель выдал или отозвал право рисовать, не перекладывая страницу
+            setCanDraw(!!msg.canDraw);
+            if (!msg.canDraw) setNotice(t('lesson.boardNoPermission'));
           } else if (msg.type === 'edits') {
             mergeIncoming(msg.elements ?? []);
           } else if (msg.type === 'current') {
@@ -97,9 +110,21 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
           } else if (msg.type === 'titles') {
             setTitles(msg.titles ?? {});
           } else if (msg.type === 'notice' && msg.code) {
-            setNotice(msg.code === 'boardLimit'
-              ? t('lesson.boardLimit', { max: msg.max ?? MAX_BOARDS })
-              : t('lesson.boardLastPage'));
+            // Часть 3: у каждого отказа своя причина и своя подсказка. «boardForeign» — это
+            // «ты тронул чужой рисунок, сервер его вернул», «boardStudentLimit» — потолок
+            // элементов/байтов на ученика, «boardNoPermission» — отзыв прямо во время рисования.
+            const MB = 1024 * 1024;
+            setNotice(
+              msg.code === 'boardLimit' ? t('lesson.boardLimit', { max: msg.max ?? MAX_BOARDS })
+                : msg.code === 'boardForeign' ? t('lesson.boardForeign')
+                : msg.code === 'boardStudentLimit'
+                  ? t('lesson.boardStudentLimit', {
+                    max: msg.maxElements ?? 300, mb: Math.round((msg.maxBytes ?? MB) / MB),
+                  })
+                  : msg.code === 'boardNoPermission' ? t('lesson.boardNoPermission')
+                  : msg.code === 'boardTooFast' ? t('lesson.boardTooFast')
+                  : msg.code === 'boardNothingToPurge' ? t('lesson.boardPurgeNone')
+                  : t('lesson.boardLastPage'));
           }
         };
         ws.onclose = (ev) => {
@@ -194,7 +219,7 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
   }
 
   function onChange(elements: readonly RawEl[]) {
-    if (!canEdit) return;
+    if (!canDraw) return;
     const now = Date.now();
     if (now - lastSentRef.current < 30) return; // §3.7 throttle ≈30 ms
     lastSentRef.current = now;
@@ -239,6 +264,28 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
     a.updateScene({ elements: wiped as never });
     for (const e of wiped) sentRef.current.set(e.id, { version: e.version, versionNonce: e.versionNonce });
     if (wiped.length) send({ type: 'edits', page: current, elements: wiped });
+  }
+
+  /**
+   * Часть 3: чьи рисунки лежат на этой доске. Список запрашивается в момент, когда учитель открыл
+   * меню, а не подписывается на каждую правку: счётчики нужны один раз на действие, и вешать на
+   * каждый кадр HTTP-запрос значило бы удвоить трафик урока.
+   */
+  async function loadDrawnBy() {
+    try {
+      const res = await api<{ byAuthor: Record<string, number> }>(`/api/lessons/${sessionId}/board/authors`);
+      setDrawnBy(res.byAuthor ?? {});
+    } catch {
+      setDrawnBy({});
+    }
+  }
+
+  /** Удалить рисунки одного ученика (сервер снимает их мягко и рассылает всем). */
+  function purgeStudent(userId: string) {
+    setPurgeOpen(false);
+    setNotice('');
+    send({ type: 'purge', userId });
+    void loadDrawnBy();
   }
 
   /** The localized default label of a board; a teacher's own name always wins. */
@@ -361,6 +408,33 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
             <button className="secondary" style={{ marginTop: 0 }} data-testid="board-clear" onClick={clearPage}>
               🗑 {t('lesson.boardClear')}
             </button>
+            {/* часть 3: «Удалить рисунки ученика» — учительское действие, список по нажатию */}
+            <div className="board-purge" style={{ position: 'relative' }}>
+              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="board-purge-btn"
+                aria-haspopup="menu" aria-expanded={purgeOpen}
+                title={t('lesson.boardPurgeHint')}
+                onClick={() => { setPurgeOpen((v) => !v); if (!purgeOpen) void loadDrawnBy(); }}>
+                🧹 {t('lesson.boardPurge')}
+              </button>
+              {purgeOpen && (
+                <div className="board-tab-pop" role="menu" data-testid="board-purge-pop"
+                  style={{ top: '100%', left: 0, marginTop: 4 }}>
+                  {drawnBy === null && <span className="muted">…</span>}
+                  {drawnBy !== null
+                    && !Object.entries(drawnBy).some(([id, n]) => n > 0 && id !== me?.id) && (
+                    <span className="muted" data-testid="board-purge-none">{t('lesson.boardPurgeNone')}</span>
+                  )}
+                  {drawnBy !== null && Object.entries(drawnBy)
+                    .filter(([id, n]) => n > 0 && id !== me?.id)
+                    .map(([id, n]) => (
+                      <button key={id} type="button" role="menuitem" className="danger"
+                        data-testid={`board-purge-${id.slice(0, 8)}`} onClick={() => purgeStudent(id)}>
+                        {peerNames?.[id] ?? id.slice(0, 8)} · {n}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
             {/* task 2д: PDF is the teacher's button — students never get it */}
             {classId && (
               <button className="secondary" style={{ marginTop: 0 }} data-testid="board-pdf"
@@ -380,7 +454,10 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
         ) : (
           <>
             <span className="board-current" data-testid="board-current-name">{label(current)}</span>
-            <span className="muted">👁 {t('lesson.readonly')}</span>
+            {/* часть 3: разрешённый ученик видит, что ему можно, а не догадывается по курсору */}
+            {canDraw
+              ? <span className="board-draw-badge" data-testid="board-draw-badge">✏️ {t('lesson.boardYouCanDraw')}</span>
+              : <span className="muted" data-testid="board-readonly">👁 {t('lesson.readonly')}</span>}
           </>
         )}
       </div>
@@ -401,8 +478,8 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
       {error && <p className="error">{error}</p>}
       <div style={{ height }} className="board-frame">
         <Excalidraw
-          viewModeEnabled={!canEdit}
-          zenModeEnabled={!canEdit}
+          viewModeEnabled={!canDraw}
+          zenModeEnabled={!canDraw}
           gridModeEnabled={false}
           // task 4: strip everything the lesson UI does not need — no Open/Save/
           // Export dialog, no theme switch, no library, no image tool (v1.1).
@@ -420,7 +497,7 @@ export default function Board({ sessionId, classId, height = '60vh' }: {
           }}
           excalidrawAPI={(a) => { apiRef.current = a; }}
           onChange={(elements) => onChange(elements as unknown as RawEl[])}
-          initialData={{ elements: [], appState: { viewModeEnabled: !canEdit, showWelcomeScreen: false }, scrollToContent: false }}
+          initialData={{ elements: [], appState: { viewModeEnabled: !canDraw, showWelcomeScreen: false }, scrollToContent: false }}
         />
       </div>
       {exportOpen && classId && (

@@ -17,16 +17,21 @@ import type { HandRow } from './LessonHands';
 
 export type PanelTab = 'people' | 'comments';
 
-export interface PeerRow { identity: string; name: string; micOn: boolean; camOn: boolean; screenOn: boolean }
+export interface PeerRow {
+  identity: string; name: string; micOn: boolean; camOn: boolean; screenOn: boolean;
+  /** часть 3: рисует ли этот ученик на доске прямо сейчас */
+  canDraw?: boolean;
+}
 
 export default function LessonPanel({ tab, onTab, onClose, sessionId, isTeacher, lectureMode,
   muteAll, peers, hands, unread, onMuteOne, onScreen, onKick, onMuteAll, onLecture,
-  comments }: {
+  drawAll, onDraw, onDrawAll, comments }: {
   tab: PanelTab; onTab: (t: PanelTab) => void; onClose: () => void;
   sessionId: string; isTeacher: boolean; lectureMode: boolean; muteAll: boolean;
   peers: PeerRow[]; hands: HandRow[]; unread: number;
   onMuteOne: (identity: string) => void; onScreen: (identity: string, allow: boolean) => void;
   onKick: (identity: string) => void; onMuteAll: () => void; onLecture: () => void;
+  drawAll: boolean; onDraw: (identity: string, allow: boolean) => void; onDrawAll: () => void;
   comments: { isTeacher: boolean; lectureMode: boolean };
 }) {
   const { t } = useTranslation();
@@ -80,6 +85,12 @@ export default function LessonPanel({ tab, onTab, onClose, sessionId, isTeacher,
                       onClick={() => onScreen(p.identity, !p.screenOn)}>🖥+
                     </button>
                     <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }}
+                      aria-label={t('lesson.boardDrawToggle')} title={t('lesson.boardDrawToggle')}
+                      aria-pressed={!!p.canDraw}
+                      data-testid={`peer-draw-${p.identity.slice(0, 8)}`}
+                      onClick={() => onDraw(p.identity, !p.canDraw)}>✏️
+                    </button>
+                    <button className="ghost" style={{ marginTop: 0, padding: '2px 6px' }}
                       aria-label={t('lesson.kickPeer')} title={t('lesson.kickPeer')}
                       data-testid={`peer-kick-${p.identity.slice(0, 8)}`}
                       onClick={() => onKick(p.identity)}>✕
@@ -100,6 +111,12 @@ export default function LessonPanel({ tab, onTab, onClose, sessionId, isTeacher,
               <button type="button" className={`bar-item${lectureMode ? ' bar-active' : ''}`} data-testid="panel-lecture"
                 aria-pressed={lectureMode} onClick={onLecture}>
                 🎓 {lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
+              </button>
+              {/* часть 3: «разрешить всем» — тот же охват, что у «выключить всем»: и для тех,
+                  кто придёт после нажатия (право живёт на сессии, а не у конкретных сокетов) */}
+              <button type="button" className={`bar-item${drawAll ? ' bar-active' : ''}`} data-testid="panel-draw-all"
+                aria-pressed={drawAll} onClick={onDrawAll}>
+                ✏️ {drawAll ? t('lesson.boardDrawAllOff') : t('lesson.boardDrawAll')}
               </button>
             </div>
           )}
