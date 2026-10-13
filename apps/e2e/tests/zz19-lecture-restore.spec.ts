@@ -102,15 +102,20 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
    * отправил переключение, и момент, когда кадр пришёл в браузер ученика. Числа уезжают в
    * `e2e-results.json` как аннотации; их печатает шаг CI `Замер задержек кадров`. Убрать после
    * замера.
+   *
+   * Метки РАЗДЕЛЬНЫЕ для `lectureMode on:true` и `on:false`: маршрут выключения шлёт сначала
+   * `lectureMode on:false`, потом `lecture_off`, и первая версия файла писала в одну ячейку — так
+   * «задержка кадра включения» превращалась в интервал между двумя кликами учителя (именно так в
+   * прогоне 38426209204 появились несуществующие 4,4 с).
    */
   const lrSent: { onAt: number; offAt: number; onDoneAt: number; offDoneAt: number } =
     { onAt: 0, offAt: 0, onDoneAt: 0, offDoneAt: 0 };
-  const lrArrival = new Map<Page, { onAt: number; offAt: number }>();
+  const lrArrival = new Map<Page, { onAt: number; offFrameAt: number; offAt: number }>();
 
   async function joinRoom(browser: Browser, email: string, password: string, wsDelay = 0) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
-    lrArrival.set(page, { onAt: 0, offAt: 0 });
+    lrArrival.set(page, { onAt: 0, offFrameAt: 0, offAt: 0 });
     /*
      * Интерцептор ставится ВСЕГДА: он меряет время прихода кадра. Задержка кадра (для воспроизведения
      * CI-порядка) добавляется только когда wsDelay > 0.
@@ -119,14 +124,16 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
       const server = route.connectToServer();
       server.onMessage((raw) => {
         const text = typeof raw === 'string' ? raw : raw.toString('utf8');
-        let type = '';
-        try { type = String((JSON.parse(text) as { type?: string }).type ?? ''); } catch { /* не наш кадр */ }
+        let msg: { type?: string; on?: boolean } = {};
+        try { msg = JSON.parse(text) as { type?: string; on?: boolean }; } catch { /* не наш кадр */ }
         const mark = lrArrival.get(page);
-        if (mark && (type === 'lectureMode' || type === 'lecture_off')) {
-          // ВРЕМЕННАЯ ДИАГНОСТИКА: fixed-кадр с `on` — это начало лекции, без `on` — конец.
-          if (type === 'lectureMode') mark.onAt = Date.now(); else mark.offAt = Date.now();
+        if (mark) {
+          // первая метка не перезаписывается: одинаковых кадров за лекцию бывает несколько
+          if (msg.type === 'lectureMode' && msg.on === true && !mark.onAt) mark.onAt = Date.now();
+          if (msg.type === 'lectureMode' && msg.on === false && !mark.offFrameAt) mark.offFrameAt = Date.now();
+          if (msg.type === 'lecture_off' && !mark.offAt) mark.offAt = Date.now();
         }
-        if (wsDelay > 0 && (type === 'lectureMode' || type === 'lecture_off')) {
+        if (wsDelay > 0 && (msg.type === 'lectureMode' || msg.type === 'lecture_off')) {
           setTimeout(() => route.send(text), wsDelay);
           return;
         }
@@ -233,14 +240,15 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const ann = (label: string, ms: number) =>
       test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${label} delay_ms=${ms}` });
     if (lrSent.onAt && mark.onAt) {
-      ann('lectureMode', mark.onAt - lrSent.onAt);
+      ann('lectureMode_on frame', mark.onAt - lrSent.onAt);
       if (lrSent.onDoneAt) {
-        ann('lectureMode server', lrSent.onDoneAt - lrSent.onAt);
-        ann('lectureMode frame_vs_response', mark.onAt - lrSent.onDoneAt);
+        ann('lectureMode_on server', lrSent.onDoneAt - lrSent.onAt);
+        ann('lectureMode_on frame_vs_response', mark.onAt - lrSent.onDoneAt);
       }
     }
+    if (lrSent.offAt && mark.offFrameAt) ann('lectureMode_off frame', mark.offFrameAt - lrSent.offAt);
     if (lrSent.offAt && mark.offAt) {
-      ann('lecture_off', mark.offAt - lrSent.offAt);
+      ann('lecture_off frame', mark.offAt - lrSent.offAt);
       if (lrSent.offDoneAt) {
         ann('lecture_off server', lrSent.offDoneAt - lrSent.offAt);
         ann('lecture_off frame_vs_response', mark.offAt - lrSent.offDoneAt);
