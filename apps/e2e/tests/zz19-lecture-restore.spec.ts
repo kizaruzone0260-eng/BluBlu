@@ -103,7 +103,8 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
    * `e2e-results.json` как аннотации; их печатает шаг CI `Замер задержек кадров`. Убрать после
    * замера.
    */
-  const lrSent: { onAt: number; offAt: number } = { onAt: 0, offAt: 0 };
+  const lrSent: { onAt: number; offAt: number; onSeenAt: number; offSeenAt: number } =
+    { onAt: 0, offAt: 0, onSeenAt: 0, offSeenAt: 0 };
   const lrArrival = new Map<Page, { onAt: number; offAt: number }>();
 
   async function joinRoom(browser: Browser, email: string, password: string, wsDelay = 0) {
@@ -197,7 +198,8 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
-    }, { timeout: 20_000 }).toBe(true);
+    }, { timeout: 20_000, interval: 50 }).toBe(true);
+    lrSent.onSeenAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: сервер уже переключил состояние
   }
   async function lectureOff(page: Page) {
     await openMore(page);
@@ -206,17 +208,37 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
-    }, { timeout: 20_000 }).toBe(false);
+    }, { timeout: 20_000, interval: 50 }).toBe(false);
+    lrSent.offSeenAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: права возвращены, кадр уже разослан
   }
 
-  /** ВРЕМЕННАЯ ДИАГНОСТИКА: задержка доставки кадра ученику (общие часы теста). */
+  /**
+   * ВРЕМЕННАЯ ДИАГНОСТИКА: задержка доставки кадра ученику (общие часы теста).
+   *
+   * `delay_ms` от клика включает в себя и клик Playwright, и POST, и серверную работу, поэтому
+   * рядом кладётся `delivery_ms` — от момента, когда сервер УЖЕ зафиксировал переключение (его
+   * видит опрос статуса с шагом 50 мс), до прихода кадра в браузер. Это и есть чистая задержка
+   * сокета; погрешность сверху — те же 50 мс.
+   */
   function lrAnnotate(who: string, page: Page) {
     const mark = lrArrival.get(page);
     if (!mark) return;
-    const ann = (type: string, ms: number) =>
-      test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${type} delay_ms=${ms}` });
-    if (lrSent.onAt && mark.onAt) ann('lectureMode', mark.onAt - lrSent.onAt);
-    if (lrSent.offAt && mark.offAt) ann('lecture_off', mark.offAt - lrSent.offAt);
+    const ann = (label: string, ms: number) =>
+      test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${label} delay_ms=${ms}` });
+    if (lrSent.onAt && mark.onAt) {
+      ann('lectureMode', mark.onAt - lrSent.onAt);
+      if (lrSent.onSeenAt) {
+        ann('lectureMode server+click', lrSent.onSeenAt - lrSent.onAt);
+        ann('lectureMode delivery', mark.onAt - lrSent.onSeenAt);
+      }
+    }
+    if (lrSent.offAt && mark.offAt) {
+      ann('lecture_off', mark.offAt - lrSent.offAt);
+      if (lrSent.offSeenAt) {
+        ann('lecture_off server+click', lrSent.offSeenAt - lrSent.offAt);
+        ann('lecture_off delivery', mark.offAt - lrSent.offSeenAt);
+      }
+    }
   }
 
   /**
