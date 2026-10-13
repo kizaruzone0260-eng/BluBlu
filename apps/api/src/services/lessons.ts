@@ -162,6 +162,23 @@ export function lecturePreDevices(
   return map;
 }
 
+/**
+ * Участник ушёл посреди запроса — это НЕ поломка медиа-сервера.
+ *
+ * Выключение лекции идёт по списку участников, полученному секундой раньше, и за эту секунду
+ * ученик успевает выйти (обрыв связи, закрытая вкладка, переподключение после `DUPLICATE_IDENTITY`).
+ * LiveKit отвечает 404 `not_found`, и до правки это попадало в `failed` → 502 → `lectureMode`
+ * оставался `true`: один выпавший ученик блокировал конец лекции для всего класса, хотя возвращать
+ * ему было нечего. Настоящий отказ сервера (таймаут, 5xx, соединение) так и остаётся 502 без
+ * записи состояния — этот контракт проверяет интеграционный тест.
+ *
+ * Форма ошибки — `ServerError` из livekit-server-sdk: `{ status, code }` (проверяется на живом
+ * логе CI-прогона 2026-10-13: `"status": "404", "code": "not_found"`).
+ */
+export function isParticipantGone(error: unknown): boolean {
+  const e = error as { status?: number; code?: string } | undefined;
+  return e?.status === 404 || e?.code === 'not_found';
+}
 
 let roomService: RoomServiceClient | null = null;
 export function getRoomService(): RoomServiceClient {

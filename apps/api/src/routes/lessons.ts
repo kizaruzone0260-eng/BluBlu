@@ -5,7 +5,7 @@ import { resolveClass } from '../services/classes.js';
 import {
   startLesson, endLesson, getActiveSessionForClass, getActiveSessionForEvent,
   getSession, buildJoinToken, getRoomService, studentPermission, floorPermission,
-  lecturePreDevices, type CurrentPermission, type LessonSession,
+  lecturePreDevices, isParticipantGone, type CurrentPermission, type LessonSession,
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
 import { env, livekitPublicWsUrl } from '../env.js';
@@ -252,11 +252,13 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     const failed: string[] = [];
     for (const part of students) {
       const cur = await media(() => rs.getParticipant(s.roomName, part.identity));
+      // вышел между списком и вызовом: возвращать некому, и это не поломка медиа-сервера
+      if (!cur.ok && isParticipantGone(cur.error)) continue;
       const permission = floorPermission(
         cur.ok ? (cur.value as { permission?: CurrentPermission }).permission : undefined, false, false,
       );
       const up = await media(() => rs.updateParticipant(s.roomName, part.identity, { permission: permission as never }));
-      if (!up.ok) failed.push(part.identity);
+      if (!up.ok && !isParticipantGone(up.error)) failed.push(part.identity);
     }
     // Половинчатого состояния не сообщаем успехом: при 502 учитель нажимает кнопку ещё раз,
     // а повтор восстановления идемпотентен — разрешение вычисляется, а не прибавляется.
