@@ -96,50 +96,29 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
    * Вход в комнату по-настоящему: фейковые устройства, «Проверить устройства», «Войти».
    * Один и тот же путь и для учителя, и для ученика — различие только в пароле.
    */
-  /**
-   * ВРЕМЕННАЯ ДИАГНОСТИКА zz19 (2026-10-13): замер задержки кадров общими часами теста, БЕЗ правок
-   * рабочего кода. Часы — `Date.now()` одного процесса Node: и момент, когда тест (клиент API)
-   * отправил переключение, и момент, когда кадр пришёл в браузер ученика. Числа уезжают в
-   * `e2e-results.json` как аннотации; их печатает шаг CI `Замер задержек кадров`. Убрать после
-   * замера.
-   *
-   * Метки РАЗДЕЛЬНЫЕ для `lectureMode on:true` и `on:false`: маршрут выключения шлёт сначала
-   * `lectureMode on:false`, потом `lecture_off`, и первая версия файла писала в одну ячейку — так
-   * «задержка кадра включения» превращалась в интервал между двумя кликами учителя (именно так в
-   * прогоне 38426209204 появились несуществующие 4,4 с).
-   */
-  const lrSent: { onAt: number; offAt: number; onDoneAt: number; offDoneAt: number } =
-    { onAt: 0, offAt: 0, onDoneAt: 0, offDoneAt: 0 };
-  const lrArrival = new Map<Page, { onAt: number; offFrameAt: number; offAt: number }>();
-
   async function joinRoom(browser: Browser, email: string, password: string, wsDelay = 0) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
-    lrArrival.set(page, { onAt: 0, offFrameAt: 0, offAt: 0 });
     /*
-     * Интерцептор ставится ВСЕГДА: он меряет время прихода кадра. Задержка кадра (для воспроизведения
-     * CI-порядка) добавляется только когда wsDelay > 0.
+     * Ретранслятор ставится только там, где кадр ученика держат запаздывающим: маршрут
+     * `/lecture-mode` отзывает публикацию в комнате ДО того, как шлёт наш кадр, и без задержки
+     * живой прогон не доказал бы, что возврат не зависит от того, что пришло раньше.
      */
-    await page.routeWebSocket('**/api/ws/lesson/**', (route) => {
-      const server = route.connectToServer();
-      server.onMessage((raw) => {
-        const text = typeof raw === 'string' ? raw : raw.toString('utf8');
-        let msg: { type?: string; on?: boolean } = {};
-        try { msg = JSON.parse(text) as { type?: string; on?: boolean }; } catch { /* не наш кадр */ }
-        const mark = lrArrival.get(page);
-        if (mark) {
-          // первая метка не перезаписывается: одинаковых кадров за лекцию бывает несколько
-          if (msg.type === 'lectureMode' && msg.on === true && !mark.onAt) mark.onAt = Date.now();
-          if (msg.type === 'lectureMode' && msg.on === false && !mark.offFrameAt) mark.offFrameAt = Date.now();
-          if (msg.type === 'lecture_off' && !mark.offAt) mark.offAt = Date.now();
-        }
-        if (wsDelay > 0 && (msg.type === 'lectureMode' || msg.type === 'lecture_off')) {
-          setTimeout(() => route.send(text), wsDelay);
-          return;
-        }
-        route.send(text);
+    if (wsDelay > 0) {
+      await page.routeWebSocket('**/api/ws/lesson/**', (route) => {
+        const server = route.connectToServer();
+        server.onMessage((raw) => {
+          const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+          let type = '';
+          try { type = String((JSON.parse(text) as { type?: string }).type ?? ''); } catch { /* не наш кадр */ }
+          if (type === 'lectureMode' || type === 'lecture_off') {
+            setTimeout(() => route.send(text), wsDelay);
+            return;
+          }
+          route.send(text);
+        });
       });
-    });
+    }
     await loginUi(page, email, password);
     await page.goto(`/lesson?classId=${classId}`);
     const join = await api.post(`/api/lessons/${sessionId}/join`, { headers: { authorization: `Bearer ${token}` } });
@@ -197,76 +176,22 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const box = page.getByTestId('lecture-restore');
     expect(await box.isChecked(), 'переключатель возврата по умолчанию включён').toBe(true);
     if (!restore) await box.uncheck();
-    // ВРЕМЕННАЯ ДИАГНОСТИКА: POST `/lecture-mode` отвечает ПОСЛЕ рассылки кадра, значит момент
-    // ответа — это «сервер всё сделал и разослал». Задержка клика до ответа и ответа до кадра —
-    // две разные половины: первая принадлежит API, вторая — сокету и браузеру.
-    const posted = page.waitForResponse((r) => r.url().includes('/lecture-mode') && r.request().method() === 'POST');
-    lrSent.onAt = Date.now();
     await page.getByTestId('lecture-confirm-ok').click();
     await expect(dialog).toHaveCount(0);
-    if (await posted.then(() => true, () => false)) lrSent.onDoneAt = Date.now();
     // состояние проверяем сервером и баннером ученика: сама кнопка живёт в меню «Ещё»,
     // а подтверждение вне этого меню его закрывает (aria-checked кнопки проверяют zz2 и zz18)
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
-    }, { timeout: 20_000, interval: 50 }).toBe(true);
+    }, { timeout: 20_000 }).toBe(true);
   }
   async function lectureOff(page: Page) {
     await openMore(page);
-    const posted = page.waitForResponse((r) => r.url().includes('/lecture-mode') && r.request().method() === 'POST');
-    lrSent.offAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: момент отправки выключения лекции
     await page.getByTestId('lecture-mode').click();
-    if (await posted.then(() => true, () => false)) lrSent.offDoneAt = Date.now();
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
-    }, { timeout: 20_000, interval: 50 }).toBe(false);
-  }
-
-  /**
-   * ВРЕМЕННАЯ ДИАГНОСТИКА: задержка доставки кадра ученику (общие часы теста).
-   *
-   * `delay_ms` от клика включает в себя и клик Playwright, и POST, и серверную работу, поэтому
-   * рядом кладётся `frame_vs_response` — от момента, когда браузер получил ОТВЕТ на POST (кадр
-   * рассылается внутри того же обработчика, до ответа), до прихода кадра ученику. Отрицательное
-   * значение здесь честно означает «кадр обогнал ответ», то есть доставка сокета меньше времени
-   * «рассылка → ответ» этого обработчика; большое положительное — что кадр шёл до браузера дольше,
-   * и это уже не сервер.
-   */
-  function lrAnnotate(who: string, page: Page) {
-    const mark = lrArrival.get(page);
-    if (!mark) return;
-    const ann = (label: string, ms: number) =>
-      test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${label} delay_ms=${ms}` });
-    if (lrSent.onAt && mark.onAt) {
-      ann('lectureMode_on frame', mark.onAt - lrSent.onAt);
-      if (lrSent.onDoneAt) {
-        ann('lectureMode_on server', lrSent.onDoneAt - lrSent.onAt);
-        ann('lectureMode_on frame_vs_response', mark.onAt - lrSent.onDoneAt);
-      }
-    }
-    if (lrSent.offAt && mark.offFrameAt) ann('lectureMode_off frame', mark.offFrameAt - lrSent.offAt);
-    if (lrSent.offAt && mark.offAt) {
-      ann('lecture_off frame', mark.offAt - lrSent.offAt);
-      if (lrSent.offDoneAt) {
-        ann('lecture_off server', lrSent.offDoneAt - lrSent.offAt);
-        ann('lecture_off frame_vs_response', mark.offAt - lrSent.offDoneAt);
-      }
-    }
-  }
-
-  /**
-   * ВРЕМЕННАЯ ДИАГНОСТИКА: задержка от выключения лекции до фактического возвращения микрофона.
-   * Вызывается СРАЗУ после того, как обычный `isMic(...,'true')` уже подтвердил возврат: права
-   * комнаты + включение устройства — это и есть конец пути. Проверку не заменяет и не ослабляет.
-   */
-  function lrMicBack(who: string) {
-    if (!lrSent.offAt) return;
-    test.info().annotations.push({
-      type: 'lrm-measure',
-      description: `${who} lecture_off→mic_back delay_ms=${Date.now() - lrSent.offAt}`,
-    });
+    }, { timeout: 20_000 }).toBe(false);
   }
 
   test('what burned at the moment of the lecture is what comes back', async ({ browser }) => {
@@ -295,7 +220,6 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await lectureOff(t.page);
 
     await isMic(a.page, 'true', 'микрофон, горевший в момент включения лекции, обязан включиться сам');
-    lrMicBack('anna'); // ВРЕМЕННАЯ ДИАГНОСТИКА
     await isCam(a.page, 'true', 'камера тоже возвращается');
     await publishesVideo(a.page, 'камера вернулась по-настоящему, с кадром');
     await isMic(b.page, 'false', 'выключивший себя ДО лекции остаётся выключенным');
@@ -324,9 +248,6 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     expect(res.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
     await t.page.getByTestId('lecture-confirm-cancel').click();
     await expect(dialog).toHaveCount(0);
-
-    lrAnnotate('anna', a.page); // ВРЕМЕННАЯ ДИАГНОСТИКА: задержка кадров до Анны
-    lrAnnotate('boris', b.page);
 
     for (const v of [t, a, b, c]) await v.ctx.close();
   });
@@ -363,14 +284,19 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   });
 
   /**
-   * Порядок прихода событий НЕ должен влиять на результат (причина CI-падения 2026-10-13).
+   * Порядок прихода событий НЕ должен влиять на результат.
    *
    * Маршрут `/lecture-mode` сначала отзывает публикацию в комнате (RoomService), и только потом
    * шлёт наш кадр `lectureMode`. Когда и комната, и API живут на 127.0.0.1 (CI), отзыв успевает
-   * дойти до браузера РАНЬШЕ кадра. Раньше клиент снимал «что горело» по кадру — и на этом порядке
-   * падал. Теперь снимок делает сервер, а ученик включает устройство по событию возврата права,
-   * поэтому здесь проверяется, что обе задержки (отзыв и возврат) не ломают результат: кадры
-   * ученика запаздывают на 8 с, а события комнаты идут своим чередом.
+   * дойти до браузера РАНЬШЕ кадра. Спек держит кадры ученика запаздывающими на 8 с — то есть
+   * лекция успевает и начаться, и кончиться, пока до ученика доходит сначала кадр включения, а
+   * потом выключения. На этом порядке этот спек и ловил два дефекта подряд (2026-10-13):
+   *  1) выключение лекции падало в 502, если у одного из участников комната отвалилась ровно
+   *     посреди обхода списка (`isParticipantGone`);
+   *  2) возврат молча не работал, если ученик шёл за снимком по нашему кадру: к моменту опоздавшего
+   *     кадра сервер карту уже стёр (снимок теперь берётся по событию комнаты).
+   * Клиент включает устройство по событию возврата права, поэтому здесь проверяется, что обе
+   * задержки (отзыв и возврат) не ломают результат, а события комнаты идут своим чередом.
    */
   test('the restore does not depend on whether the room or our socket speaks first', async ({ browser }) => {
     const t = await teacher(browser);
@@ -385,7 +311,6 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await lectureOff(t.page);
     await isMic(a.page, 'true', 'возврат не зависит от того, что пришло раньше — кадр или отзыв');
     await isCam(a.page, 'true', 'камера возвращается так же');
-    lrAnnotate('anna+8s', a.page); // ВРЕМЕННАЯ ДИАГНОСТИКА
 
     for (const v of [t, a]) await v.ctx.close();
   });
