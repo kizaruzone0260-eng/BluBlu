@@ -103,8 +103,8 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
    * `e2e-results.json` как аннотации; их печатает шаг CI `Замер задержек кадров`. Убрать после
    * замера.
    */
-  const lrSent: { onAt: number; offAt: number; onSeenAt: number; offSeenAt: number } =
-    { onAt: 0, offAt: 0, onSeenAt: 0, offSeenAt: 0 };
+  const lrSent: { onAt: number; offAt: number; onDoneAt: number; offDoneAt: number } =
+    { onAt: 0, offAt: 0, onDoneAt: 0, offDoneAt: 0 };
   const lrArrival = new Map<Page, { onAt: number; offAt: number }>();
 
   async function joinRoom(browser: Browser, email: string, password: string, wsDelay = 0) {
@@ -190,35 +190,42 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const box = page.getByTestId('lecture-restore');
     expect(await box.isChecked(), 'переключатель возврата по умолчанию включён').toBe(true);
     if (!restore) await box.uncheck();
-    lrSent.onAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: сервер отвечает и вещает после этого клика
+    // ВРЕМЕННАЯ ДИАГНОСТИКА: POST `/lecture-mode` отвечает ПОСЛЕ рассылки кадра, значит момент
+    // ответа — это «сервер всё сделал и разослал». Задержка клика до ответа и ответа до кадра —
+    // две разные половины: первая принадлежит API, вторая — сокету и браузеру.
+    const posted = page.waitForResponse((r) => r.url().includes('/lecture-mode') && r.request().method() === 'POST');
+    lrSent.onAt = Date.now();
     await page.getByTestId('lecture-confirm-ok').click();
     await expect(dialog).toHaveCount(0);
+    if (await posted.then(() => true, () => false)) lrSent.onDoneAt = Date.now();
     // состояние проверяем сервером и баннером ученика: сама кнопка живёт в меню «Ещё»,
     // а подтверждение вне этого меню его закрывает (aria-checked кнопки проверяют zz2 и zz18)
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
     }, { timeout: 20_000, interval: 50 }).toBe(true);
-    lrSent.onSeenAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: сервер уже переключил состояние
   }
   async function lectureOff(page: Page) {
     await openMore(page);
+    const posted = page.waitForResponse((r) => r.url().includes('/lecture-mode') && r.request().method() === 'POST');
     lrSent.offAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: момент отправки выключения лекции
     await page.getByTestId('lecture-mode').click();
+    if (await posted.then(() => true, () => false)) lrSent.offDoneAt = Date.now();
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
     }, { timeout: 20_000, interval: 50 }).toBe(false);
-    lrSent.offSeenAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: права возвращены, кадр уже разослан
   }
 
   /**
    * ВРЕМЕННАЯ ДИАГНОСТИКА: задержка доставки кадра ученику (общие часы теста).
    *
    * `delay_ms` от клика включает в себя и клик Playwright, и POST, и серверную работу, поэтому
-   * рядом кладётся `delivery_ms` — от момента, когда сервер УЖЕ зафиксировал переключение (его
-   * видит опрос статуса с шагом 50 мс), до прихода кадра в браузер. Это и есть чистая задержка
-   * сокета; погрешность сверху — те же 50 мс.
+   * рядом кладётся `frame_vs_response` — от момента, когда браузер получил ОТВЕТ на POST (кадр
+   * рассылается внутри того же обработчика, до ответа), до прихода кадра ученику. Отрицательное
+   * значение здесь честно означает «кадр обогнал ответ», то есть доставка сокета меньше времени
+   * «рассылка → ответ» этого обработчика; большое положительное — что кадр шёл до браузера дольше,
+   * и это уже не сервер.
    */
   function lrAnnotate(who: string, page: Page) {
     const mark = lrArrival.get(page);
@@ -227,16 +234,16 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
       test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${label} delay_ms=${ms}` });
     if (lrSent.onAt && mark.onAt) {
       ann('lectureMode', mark.onAt - lrSent.onAt);
-      if (lrSent.onSeenAt) {
-        ann('lectureMode server+click', lrSent.onSeenAt - lrSent.onAt);
-        ann('lectureMode delivery', mark.onAt - lrSent.onSeenAt);
+      if (lrSent.onDoneAt) {
+        ann('lectureMode server', lrSent.onDoneAt - lrSent.onAt);
+        ann('lectureMode frame_vs_response', mark.onAt - lrSent.onDoneAt);
       }
     }
     if (lrSent.offAt && mark.offAt) {
       ann('lecture_off', mark.offAt - lrSent.offAt);
-      if (lrSent.offSeenAt) {
-        ann('lecture_off server+click', lrSent.offSeenAt - lrSent.offAt);
-        ann('lecture_off delivery', mark.offAt - lrSent.offSeenAt);
+      if (lrSent.offDoneAt) {
+        ann('lecture_off server', lrSent.offDoneAt - lrSent.offAt);
+        ann('lecture_off frame_vs_response', mark.offAt - lrSent.offDoneAt);
       }
     }
   }
