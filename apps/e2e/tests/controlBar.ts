@@ -44,9 +44,16 @@ export async function openTab(page: Page, tab: 'people' | 'comments') {
   await expect(panel).toBeVisible({ timeout: 10_000 });
 }
 
-/** открыть меню «Ещё» */
+/**
+ * Открыть меню «Ещё». Идемпотентно, как `openTab`: кнопка ПЕРЕКЛЮЧАЕТ меню, а пункт-переключатель
+ * (режим лекции, «выключить всех», доска) меню не закрывает — человек оставляет его открытым,
+ * чтобы видеть новое состояние. Без этой проверки второй вызов закрывал открытое меню, и следующий
+ * клик падал на исчезнувшем элементе (замер локального прогона zz19, 2026-10-13).
+ */
 export async function openMore(page: Page) {
-  await barClick(page, 'more-btn');
+  await wakeBar(page);
+  if (await page.getByTestId('more-menu').isVisible().catch(() => false)) return;
+  await page.getByTestId('more-btn').click();
   await expect(page.getByTestId('more-menu')).toBeVisible({ timeout: 10_000 });
 }
 

@@ -9,10 +9,12 @@
  * ДО — нет; что пришедшему во время лекции не включается ничего; и что кнопка «Выключить» в тосте
  * работает.
  *
- * Почему именно так: LiveKit не останавливает уже опубликованный трек при `canPublish: false`
- * (замерено в zz17: «a lecture-mode student cannot publish» — про вход, а не про тех, кто уже
- * публикуется). Значит «не включается сам» видно не на том, кто молчал до лекции, а на том, кто
- * замолчал во время неё.
+ * Почему именно так: при включении режима лекции LiveKit снимает уже опубликованные треки ученика
+ * (`LocalTrackUnpublished`, замер 2026-10-13 — раньше в этом шапке было записано обратное). Право
+ * возвращается сервером, устройство включает сам клиент, а «что горело до лекции» приходит с
+ * сервера (`session.preLecture`): третий тест ниже держит кадры ученика запаздывающими именно
+ * поэтому — раньше клиент снимал состояние по кадру и терял возврат, когда сигнал комнаты опережал
+ * кадр.
  *
  * Как и в zz17: стороны одного урока говорят на разных языках (задача 1 работает как задумано),
  * поэтому подписи сопоставляются со всеми тремя наборами; без доступного медиа-сервера спек
@@ -79,15 +81,57 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     }
   });
 
-  test.afterAll(async () => { await api?.dispose(); });
+  test.afterAll(async () => {
+    /*
+     * Закрытие комнаты: завершаем урок, чтобы LiveKit-комната освободилась. Локально это облачный
+     * проект (участники считаются к лимиту), а `ctx.close()` браузера сам по себе не гарантирует
+     * мгновенного выхода из комнаты — серверный kick выталкивает участников явно. Best-effort:
+     * `/end` не требует медиа-сервера и не должен ронять afterAll, если урок уже закрыт.
+     */
+    try { await api?.post(`/api/lessons/${sessionId}/end`, { headers: { authorization: `Bearer ${token}` } }); } catch { /* уже закрыт */ }
+    await api?.dispose();
+  });
 
   /**
    * Вход в комнату по-настоящему: фейковые устройства, «Проверить устройства», «Войти».
    * Один и тот же путь и для учителя, и для ученика — различие только в пароле.
    */
-  async function joinRoom(browser: Browser, email: string, password: string) {
+  /**
+   * ВРЕМЕННАЯ ДИАГНОСТИКА zz19 (2026-10-13): замер задержки кадров общими часами теста, БЕЗ правок
+   * рабочего кода. Часы — `Date.now()` одного процесса Node: и момент, когда тест (клиент API)
+   * отправил переключение, и момент, когда кадр пришёл в браузер ученика. Числа уезжают в
+   * `e2e-results.json` как аннотации; их печатает шаг CI `Замер задержек кадров`. Убрать после
+   * замера.
+   */
+  const lrSent: { onAt: number; offAt: number } = { onAt: 0, offAt: 0 };
+  const lrArrival = new Map<Page, { onAt: number; offAt: number }>();
+
+  async function joinRoom(browser: Browser, email: string, password: string, wsDelay = 0) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    lrArrival.set(page, { onAt: 0, offAt: 0 });
+    /*
+     * Интерцептор ставится ВСЕГДА: он меряет время прихода кадра. Задержка кадра (для воспроизведения
+     * CI-порядка) добавляется только когда wsDelay > 0.
+     */
+    await page.routeWebSocket('**/api/ws/lesson/**', (route) => {
+      const server = route.connectToServer();
+      server.onMessage((raw) => {
+        const text = typeof raw === 'string' ? raw : raw.toString('utf8');
+        let type = '';
+        try { type = String((JSON.parse(text) as { type?: string }).type ?? ''); } catch { /* не наш кадр */ }
+        const mark = lrArrival.get(page);
+        if (mark && (type === 'lectureMode' || type === 'lecture_off')) {
+          // ВРЕМЕННАЯ ДИАГНОСТИКА: fixed-кадр с `on` — это начало лекции, без `on` — конец.
+          if (type === 'lectureMode') mark.onAt = Date.now(); else mark.offAt = Date.now();
+        }
+        if (wsDelay > 0 && (type === 'lectureMode' || type === 'lecture_off')) {
+          setTimeout(() => route.send(text), wsDelay);
+          return;
+        }
+        route.send(text);
+      });
+    });
     await loginUi(page, email, password);
     await page.goto(`/lesson?classId=${classId}`);
     const join = await api.post(`/api/lessons/${sessionId}/join`, { headers: { authorization: `Bearer ${token}` } });
@@ -105,7 +149,7 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   }
 
   const teacher = (browser: Browser) => joinRoom(browser, stack.teacherEmail, stack.teacherPassword);
-  const student = (browser: Browser, email: string) => joinRoom(browser, email, STUDENT_PW);
+  const student = (browser: Browser, email: string, wsDelay = 0) => joinRoom(browser, email, STUDENT_PW, wsDelay);
 
   const micOn = (page: Page) => page.getByTestId('mic-toggle').getAttribute('aria-pressed');
   // кнопка камеры в панели называется camera-toggle (mic — mic-toggle); первая версия файла
@@ -122,6 +166,13 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   /** свой тайл с кадром: трек опубликован, а не «кнопка нажата» */
   const selfPublishesVideo = (page: Page) => page.evaluate(() => [...document.querySelectorAll('.videos video')]
     .some((v) => v.closest('[data-local="1"]') && v.videoWidth > 0));
+  /*
+   * Только опросом: `aria-pressed` становится true в момент публикации, а `videoWidth` у локального
+   * тайла появляется следующим кадром. Однокритичная проверка (`expect(await …)`) ловила этот
+   * промежуток и падала «Expected true / Received false» на 1 прогоне из ~8 (замер 2026-10-13).
+   */
+  const publishesVideo = (page: Page, why: string) =>
+    expect.poll(() => selfPublishesVideo(page), { timeout: 30_000, message: why }).toBe(true);
 
   /**
    * Переключатель возврата — по умолчанию включён; выключить его можно только здесь.
@@ -138,6 +189,7 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const box = page.getByTestId('lecture-restore');
     expect(await box.isChecked(), 'переключатель возврата по умолчанию включён').toBe(true);
     if (!restore) await box.uncheck();
+    lrSent.onAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: сервер отвечает и вещает после этого клика
     await page.getByTestId('lecture-confirm-ok').click();
     await expect(dialog).toHaveCount(0);
     // состояние проверяем сервером и баннером ученика: сама кнопка живёт в меню «Ещё»,
@@ -149,11 +201,35 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
   }
   async function lectureOff(page: Page) {
     await openMore(page);
+    lrSent.offAt = Date.now(); // ВРЕМЕННАЯ ДИАГНОСТИКА: момент отправки выключения лекции
     await page.getByTestId('lecture-mode').click();
     await expect.poll(async () => {
       const r = await api.get(`/api/lessons/active?classId=${classId}`, { headers: { authorization: `Bearer ${token}` } });
       return (await r.json()).session.lectureMode;
     }, { timeout: 20_000 }).toBe(false);
+  }
+
+  /** ВРЕМЕННАЯ ДИАГНОСТИКА: задержка доставки кадра ученику (общие часы теста). */
+  function lrAnnotate(who: string, page: Page) {
+    const mark = lrArrival.get(page);
+    if (!mark) return;
+    const ann = (type: string, ms: number) =>
+      test.info().annotations.push({ type: 'lrm-measure', description: `${who} ${type} delay_ms=${ms}` });
+    if (lrSent.onAt && mark.onAt) ann('lectureMode', mark.onAt - lrSent.onAt);
+    if (lrSent.offAt && mark.offAt) ann('lecture_off', mark.offAt - lrSent.offAt);
+  }
+
+  /**
+   * ВРЕМЕННАЯ ДИАГНОСТИКА: задержка от выключения лекции до фактического возвращения микрофона.
+   * Вызывается СРАЗУ после того, как обычный `isMic(...,'true')` уже подтвердил возврат: права
+   * комнаты + включение устройства — это и есть конец пути. Проверку не заменяет и не ослабляет.
+   */
+  function lrMicBack(who: string) {
+    if (!lrSent.offAt) return;
+    test.info().annotations.push({
+      type: 'lrm-measure',
+      description: `${who} lecture_off→mic_back delay_ms=${Date.now() - lrSent.offAt}`,
+    });
   }
 
   test('what burned at the moment of the lecture is what comes back', async ({ browser }) => {
@@ -167,7 +243,7 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     if (await camOn(a.page) !== 'true') await a.page.getByTestId('camera-toggle').click();
     await isMic(a.page, 'true', 'у Анны микрофон включён до лекции');
     await isCam(a.page, 'true', 'у Анны камера включена до лекции');
-    expect(await selfPublishesVideo(a.page), 'камера Анны публикуется').toBe(true);
+    await publishesVideo(a.page, 'камера Анны публикуется');
     await b.page.getByTestId('mic-toggle').click();
     await isMic(b.page, 'false', 'Борис выключил себя сам ДО лекции');
 
@@ -182,8 +258,9 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await lectureOff(t.page);
 
     await isMic(a.page, 'true', 'микрофон, горевший в момент включения лекции, обязан включиться сам');
+    lrMicBack('anna'); // ВРЕМЕННАЯ ДИАГНОСТИКА
     await isCam(a.page, 'true', 'камера тоже возвращается');
-    expect(await selfPublishesVideo(a.page), 'камера вернулась по-настоящему, с кадром').toBe(true);
+    await publishesVideo(a.page, 'камера вернулась по-настоящему, с кадром');
     await isMic(b.page, 'false', 'выключивший себя ДО лекции остаётся выключенным');
     await isMic(c.page, 'false', 'пришедшему во время лекции ничего не включается');
 
@@ -210,6 +287,9 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     expect(res.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
     await t.page.getByTestId('lecture-confirm-cancel').click();
     await expect(dialog).toHaveCount(0);
+
+    lrAnnotate('anna', a.page); // ВРЕМЕННАЯ ДИАГНОСТИКА: задержка кадров до Анны
+    lrAnnotate('boris', b.page);
 
     for (const v of [t, a, b, c]) await v.ctx.close();
   });
@@ -241,6 +321,34 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     await isMic(a.page, 'false', 'переключатель выключен — никто сам не включается');
     await expect(a.page.getByTestId('lesson-toast')).toHaveCount(0);
     await expect(a.page.getByTestId('lesson-toast-action')).toHaveCount(0);
+
+    for (const v of [t, a]) await v.ctx.close();
+  });
+
+  /**
+   * Порядок прихода событий НЕ должен влиять на результат (причина CI-падения 2026-10-13).
+   *
+   * Маршрут `/lecture-mode` сначала отзывает публикацию в комнате (RoomService), и только потом
+   * шлёт наш кадр `lectureMode`. Когда и комната, и API живут на 127.0.0.1 (CI), отзыв успевает
+   * дойти до браузера РАНЬШЕ кадра. Раньше клиент снимал «что горело» по кадру — и на этом порядке
+   * падал. Теперь снимок делает сервер, а ученик включает устройство по событию возврата права,
+   * поэтому здесь проверяется, что обе задержки (отзыв и возврат) не ломают результат: кадры
+   * ученика запаздывают на 8 с, а события комнаты идут своим чередом.
+   */
+  test('the restore does not depend on whether the room or our socket speaks first', async ({ browser }) => {
+    const t = await teacher(browser);
+    const a = await student(browser, aEmail, 8_000);
+    if (await micOn(a.page) !== 'true') await a.page.getByTestId('mic-toggle').click();
+    if (await camOn(a.page) !== 'true') await a.page.getByTestId('camera-toggle').click();
+    await isMic(a.page, 'true', 'микрофон Анны включён до лекции');
+    await isCam(a.page, 'true', 'камера Анны включена до лекции');
+
+    await lectureOn(t.page, true);
+    // кадры ученика запаздывают на 8 с: за это время комната уже успевает отозвать публикацию
+    await lectureOff(t.page);
+    await isMic(a.page, 'true', 'возврат не зависит от того, что пришло раньше — кадр или отзыв');
+    await isCam(a.page, 'true', 'камера возвращается так же');
+    lrAnnotate('anna+8s', a.page); // ВРЕМЕННАЯ ДИАГНОСТИКА
 
     for (const v of [t, a]) await v.ctx.close();
   });

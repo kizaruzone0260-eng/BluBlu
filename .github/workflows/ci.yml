@@ -123,6 +123,12 @@ jobs:
       - run: pnpm -r build
       - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @klass/e2e test
+      # ВРЕМЕННАЯ ДИАГНОСТИКА zz19 (2026-10-13): печать замеров задержки кадров из JSON-отчёта.
+      # Числа пишутся аннотациями `lrm-measure` в самом спеке; шаг печатает их на ЗЕЛЁНОМ прогоне
+      # тоже (иначе измерить вне локальной машины невозможно). Убрать вместе с замером в zz19.
+      - name: Замер задержек кадров (zz19)
+        if: always()
+        run: node -e "const j=require('./apps/e2e/e2e-results.json');const out=[];const walk=(s)=>{(s.suites||[]).forEach(walk);(s.specs||[]).forEach(sp=>(sp.tests||[]).forEach(t=>(t.annotations||[]).forEach(a=>{if(a.type==='lrm-measure')out.push(a.description)})))};(j.suites||[]).forEach(walk);console.log('LRM',out.join('\n')||'(нет замеров: RTC-спеки не выполнялись)')"
       # RTC-спеки умеют пропускать себя сами, когда медиа-сервер недоступен. Без этого гейта job с
       # мёртвым LiveKit-контейнером был бы зелёным — поэтому пропущенный тест = упавший CI.
       - run: node scripts/ci-no-skips.mjs apps/e2e/e2e-results.json
