@@ -37,7 +37,7 @@ async function q(url: string, fn: (sql: postgres.Sql) => Promise<void>) {
 }
 
 describe('migrations from an empty database (fresh install / CI replay)', () => {
-  test('the whole journal applies, and the language + lesson-comment posture lands', async () => {
+  test('the whole journal applies, and the language + lesson-comment + lecture-snapshot posture lands', async () => {
     expect(TEST_DATABASE_URL, 'DATABASE_URL_TEST is required').toBeTruthy();
     // the name is built two lines up from a timestamp, so it can never carry a quote
     expect(/^[a-z0-9_]+$/.test(scratchDb)).toBe(true);
@@ -96,6 +96,38 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
            where a.attrelid = 'lesson_sessions'::regclass and a.attname = 'comments_mode'`;
         expect(mode[0]?.typname).toBe('comments_mode');
         expect(String(mode[0]?.def ?? '')).toContain("'on'");
+
+        // 5. migration 0028 adds a COLUMN to an existing table, so the posture has to be proven
+        //    for that column, not assumed: the snapshot of "what was on before the lecture" says
+        //    who spoke, and the Data API roles must not be able to read it.
+        const snapshot = await sql`
+          select c.relrowsecurity as rls, c.relacl as acl, a.attnotnull as not_null,
+                 pg_get_expr(d.adbin, d.adrelid) as def
+            from pg_attribute a
+            join pg_class c on c.oid = a.attrelid
+            left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+           where a.attrelid = 'lesson_sessions'::regclass and a.attname = 'lecture_pre_devices'`;
+        expect(snapshot.length, 'the column exists after a replay from 0000').toBe(1);
+        expect(snapshot[0]?.not_null).toBe(true);
+        expect(String(snapshot[0]?.def ?? '')).toContain("'{}'::jsonb");
+        expect(snapshot[0]?.rls, 'lesson_sessions keeps ROW LEVEL SECURITY').toBe(true);
+        // NULL acl ⇒ owner only; a non-null one must not name a Data API role or carry PUBLIC
+        const acl = snapshot[0]?.relacl == null ? ''
+          : (Array.isArray(snapshot[0].relacl) ? snapshot[0].relacl.join(',') : String(snapshot[0].relacl));
+        expect(acl).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+
+        // has_column_privilege ERRORS on a missing role, and only Supabase creates these two
+        const roles = await sql`select rolname from pg_roles where rolname in ('anon', 'authenticated')`;
+        const have = new Set(roles.map((r) => String((r as { rolname: string }).rolname)));
+        for (const role of ['anon', 'authenticated'] as const) {
+          if (!have.has(role)) continue;
+          const p = await sql`
+            select pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'select') as s,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'lecture_pre_devices', 'update') as u`;
+          const q = (p[0] ?? {}) as Record<string, boolean>;
+          expect(q.s, `${role} cannot read the snapshot`).toBe(false);
+          expect(q.u, `${role} cannot rewrite the snapshot`).toBe(false);
+        }
       });
     } finally {
       await q(urlWithDb(TEST_DATABASE_URL, 'postgres'), async (sql) => {

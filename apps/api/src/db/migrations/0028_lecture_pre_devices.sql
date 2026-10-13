@@ -9,5 +9,6 @@
 --    чужой список устройств не видит никто, в том числе другой ученик.
 --  * Таблица существующая, posture RLS на ней выставлен раньше (0019/0021: приложение работает
 --    владельцем, anon и authenticated лишены прав). Новой таблицы нет, поэтому политика здесь не
---    добавляется; это проверяет тест миграций с нуля через pg_class и has_table_privilege.
+--    добавляется; это проверяет тест миграций с нуля: `pg_class` (relrowsecurity, relacl) и
+--    `has_column_privilege` на саму колонку снимка.
 ALTER TABLE "lesson_sessions" ADD COLUMN "lecture_pre_devices" jsonb DEFAULT '{}'::jsonb NOT NULL;
