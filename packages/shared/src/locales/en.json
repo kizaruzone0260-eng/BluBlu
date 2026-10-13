@@ -254,6 +254,7 @@
     "lectureRestoredCam": "Lecture mode is off: your camera is on",
     "lectureRestoredBoth": "Lecture mode is off: microphone and camera are on",
     "lectureRestoreBlocked": "Lecture mode is off, but the device did not turn on: allow microphone and camera access in the browser",
+    "lectureRestoreNoRights": "The room has not returned your right to speak yet: turn on the microphone and camera with the buttons on the bar",
     "lectureStartFailed": "Media server unavailable: lecture mode was not turned on",
     "lectureStopFailed": "Media server unavailable: students' permissions were not restored, please try again",
     "waitingPeers": "Waiting for students…",

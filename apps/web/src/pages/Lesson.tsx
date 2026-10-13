@@ -32,6 +32,12 @@ interface Session {
   startedAt: string; endedAt: string | null; lectureMode: boolean; muteAll: boolean;
   /** часть 1: решение учителя возвращать устройства учеников после лекции (живёт на сессии) */
   lectureRestore: boolean;
+  /**
+   * часть 1: СЕРВЕРНЫЙ снимок «что горело до лекции» — только для спрашивающего. Сервер пишет его
+   * при включении лекции, читая список участников до отзыва публикации; наружу отдаётся запись
+   * этого identity, поэтому перезагрузка страницы посреди лекции снимок не теряет.
+   */
+  preLecture: { mic: boolean; cam: boolean } | null;
   layout: 'auto' | 'gallery' | 'stage' | 'teacher'; boardOpen: boolean; wsUrl: string;
   /** task 2: who may write comments in this lesson */
   commentsMode: 'on' | 'off' | 'slow';
@@ -58,6 +64,27 @@ const LS_PIP = 'blublu.pip'; // task B: remembered floating-camera position + fl
  */
 const LS_WANTED_CAM = 'blublu.camWanted';
 const LS_WANTED_MIC = 'blublu.micWanted';
+/**
+ * Часть 1: отказ комнаты опубликовать трек (`livekit-client` проверяет право локально, по своей
+ * копии `permissions`, и поднимает `PublishTrackError` со statusCode 403). Отличает «ещё не
+ * пустила» от «браузер не даёт устройство» — второму повторяют подсказка другого рода.
+ */
+const blockedByRights = (e: unknown) => {
+  const err = e as { message?: string; statusCode?: number };
+  return /insufficient permissions/i.test(err.message ?? '') || err.statusCode === 403;
+};
+/** часть 1: служебный errKey «комната ещё не пустила» — не ошибка устройства, текста человеку нет */
+const NO_RIGHTS = 'lectureNoRights';
+/**
+ * Часть 1: сколько ждём возврата права публиковать после лекции.
+ *
+ * Это потолок для случая, когда событие `ParticipantPermissionsChanged` потеряно, а не описание
+ * нормальной задержки комнаты: задержка измеряется в CI-прогоне zz19 (комната и API там стоят на
+ * 127.0.0.1, без сетевых пауз), и если она оказывается единицами секунд, запас здесь — просто
+ * страховка. Если по истечении права так и не пришли, ученик получает внятное сообщение, а не
+ * молчание.
+ */
+const RIGHTS_WAIT_MS = 5_000;
 
 const readFlag = (key: string, dflt: boolean): boolean => {
   try {
@@ -170,12 +197,35 @@ export default function Lesson() {
   const toastTimer = useRef<number | undefined>(undefined);
   /** Часть 1: у тоста возврата после лекции есть кнопка «Выключить». */
   const [toastAction, setToastAction] = useState<{ label: string; run: () => void } | null>(null);
-  /**
-   * Часть 1: какие именно устройства были включены у ученика в МОМЕНТ включения лекции. Только
-   * этот снимок решает, что возвращать: текущее состояние после лекции — всегда «выключено», а
-   * пришедший во время лекции ничего не включал и включать ему нечего.
+  /*
+   * Часть 1: идёт ли лекция с точки зрения этого клиента (кадр, опрос статуса или отнятое право).
+   * Нужен один флаг: он и открывает эпизод, и гарантирует, что возврат случится ровно один раз.
+   */
+  const lectureEpisodeRef = useRef(false);
+  /*
+   * Часть 1: СВОЯ запись серверного снимка «что горело до лекции», кэшированная на время лекции.
+   *
+   * Значение пришЛО с сервера (`session.preLecture` при включении лекции: маршрут читает список
+   * участников ДО отзыва публикации), поэтому порядок «сигнал комнаты или наш кадр» на него не
+   * влияет — клиент просто помнит то, что ему сказали. Кэш нужен затем, что сервер СТИРАЕТ снимок
+   * при выключении лекции: запрос статуса уже после `lecture_off` ничего не вернёт. Переживаем
+   * перезагрузку так же: при входе статус (и кадр `started`) приносит тот же снимок, пока лекция
+   * идёт.
    */
   const preLectureRef = useRef<{ mic: boolean; cam: boolean } | null>(null);
+  /*
+   * Часть 1: решение учителя о возврате, актуальное для ТЕКУЩЕго эпизода. Кадр `lectureMode`
+   * несёт `restore` сам, и опрос статуса приносит `lectureRestore`; без этой памяти эффект,
+   * закрывающий эпизод, читал `lectureRestore` из устаревшего `session` и снимал возврат
+   * (замер 2026-10-13: при задержанных кадрах ученик получил `restore=false` от предыдущего
+   * урока, а честный `restore=true` из кадра до эффекта уже не дошёл).
+   */
+  const lectureRestoreChoiceRef = useRef(true);
+  /** часть 1: страховка на случай потерянного кадра `lecture_off` */
+  const lectureOffSafetyRef = useRef<number | undefined>(undefined);
+  /** часть 1: «выключить всех» на момент возврата (замыкание сокета устарело бы) */
+  const muteAllRef = useRef(false);
+  useEffect(() => { muteAllRef.current = muteAll; }, [muteAll]);
   const [lectureAsk, setLectureAsk] = useState<{ restore: boolean } | null>(null);
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
@@ -268,11 +318,90 @@ export default function Lesson() {
     }
   }
 
-  /** Часть 1: снимок «что было включено» в момент, когда лекция включается. */
-  function capturePreLecture() {
-    const lp = roomRef.current?.localParticipant;
-    if (!lp) { preLectureRef.current = null; return; }
-    preLectureRef.current = { mic: lp.isMicrophoneEnabled, cam: lp.isCameraEnabled };
+  /**
+   * Часть 1: право публиковать ещё не вернулось — ждём СОБЫТИЯ комнаты, а не повторяем попытку
+   * по таймеру.
+   *
+   * `setMicrophoneEnabled(true)` без права не публикует трек (`hasPermissionsToPublish` →
+   * «insufficient permissions», statusCode 403), и повтор по таймеру эту гонку не решает: ожидание
+   * должно заканчиваться тем же сигналом, который его начал. Порог (`RIGHTS_WAIT_MS`) — страховка
+   * от потерянного события, а не «сколько живёт этот браузер»: он численно проверяется в CI, где
+   * комната и API стоят на 127.0.0.1 без сетевых задержек.
+   */
+  function waitCanPublish(room: Room, kind: 'microphone' | 'camera', timeoutMs = RIGHTS_WAIT_MS): Promise<boolean> {
+    const allowed = () => {
+      const p = room.localParticipant.permissions as { canPublish?: boolean; canPublishSources?: unknown[] } | undefined;
+      // права ещё не пришли в информации о себе — это не запрет: ждать нечего
+      if (!p) return true;
+      if (p.canPublish === false) return false;
+      const src = p.canPublishSources ?? [];
+      if (src.length === 0) return true; // пустой список = «любые источники»
+      // livekit-client отдаёт `canPublishSources` то числами протокола (CAMERA=1, MICROPHONE=2),
+      // то строками своего перечисления ('camera', 'microphone') — зависим от версии пакета,
+      // поэтому принимаем обе формы вместо одной угаданной
+      const want = kind === 'microphone' ? [2, 'microphone'] : [1, 'camera'];
+      return src.some((s) => want.includes(typeof s === 'number' ? s : String(s).toLowerCase()));
+    };
+    if (allowed()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const finish = (v: boolean) => {
+        window.clearTimeout(deadline);
+        room.off(RoomEvent.ParticipantPermissionsChanged, onChange);
+        resolve(v);
+      };
+      const onChange = () => { if (allowed()) finish(true); };
+      const deadline = window.setTimeout(() => finish(false), timeoutMs);
+      room.on(RoomEvent.ParticipantPermissionsChanged, onChange);
+    });
+  }
+
+  /** часть 1: конец эпизода лекции; возвращает ровно один раз — кто бы о конце ни сообщил */
+  function endLectureEpisode(restore: boolean) {
+    if (!lectureEpisodeRef.current) return;
+    lectureEpisodeRef.current = false;
+    window.clearTimeout(lectureOffSafetyRef.current);
+    void restoreAfterLecture(restore);
+  }
+
+  /**
+   * Часть 1: запомнить СВОЮ запись серверного снимка, пока лекция идёт.
+   *
+   * Сервер пишет `lecture_pre_devices` при включении лекции и СТИРАЕТ его при выключении, поэтому
+   * снимать «что горело» надо в момент лекции, а не по `lecture_off` (тогда в базе уже пусто).
+   * Отдельный запрос нужен, чтобы не ждать опроса (в комнате он раз в 30 с — короткая лекция
+   * уложится между двумя опросами, и снимок не успеет запомниться). Кадр `lectureMode on` — как раз
+   * тот сигнал, что лекция началась; после него снимок на сервере точно записан.
+   */
+  async function rememberMySnapshot() {
+    const query = eventId ? `eventId=${eventId}` : `classId=${classIdParam}`;
+    try {
+      const res = await api<{ session?: Session | null }>(`/api/lessons/active?${query}`);
+      // только своя запись; сервер не отдал её (не-участник, конец лекции) — кэш остаётся пустым
+      preLectureRef.current = res.session?.preLecture ?? null;
+    } catch {
+      /* отказ статуса — то же, что «сервер ничего не записал»: включать будет нечего */
+    }
+  }
+
+  /** включает микрофон цепочкой «запомненное устройство → любое»; 'rights' — отказ из-за права */
+  async function tryMic(room: Room): Promise<'on' | 'rights' | 'device'> {
+    try {
+      await room.localParticipant.setMicrophoneEnabled(
+        true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
+      setMicErr('');
+      return 'on';
+    } catch (e: unknown) {
+      if (blockedByRights(e)) return 'rights';
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        setMicErr('');
+        return 'on';
+      } catch (e2: unknown) {
+        if (blockedByRights(e2)) return 'rights';
+        setMicErr(mediaErrorText(mediaErrorKey(e2, 'microphone'), e2 ?? e));
+        return 'device';
+      }
+    }
   }
 
   /**
@@ -280,53 +409,38 @@ export default function Lesson() {
    * LiveKit отвечает 412 на удалённое включение), устройство включает ученик — и ровно то, что
    * у него горело до лекции. Пришедшему во время лекции снимать нечего, значит и включаться
    * не будет; отказ браузера (разрешение отозвано) — отдельная понятная подсказка, а не тишина.
+   *
+   * Порядок «сначала попытка, ждать только если не пустила комната» — из того, как устроен ответ
+   * `lecture_off`: сервер возвращает права каждого ученика отдельным вызовом, а кадр шлёт после,
+   * поэтому к моменту кадра право уже может быть и может опаздывать. Ожидание по событию — только
+   * для второго случая; ждать его всегда — значит задерживать возврат тому, кому право уже пришло.
    */
   async function restoreAfterLecture(restore: boolean) {
     const want = preLectureRef.current;
-    preLectureRef.current = null;
+    preLectureRef.current = null; // снимок одноразовый: сервер уже стёр свою копию при выключении
     const room = roomRef.current;
     if (!room || !want || !restore || isTeacher) return;
     const turnedOn: { mic: boolean; cam: boolean } = { mic: false, cam: false };
+    let micNoRights = false;
+    let camNoRights = false;
     /*
-     * Возврат прав и кадр `lecture_off` расходятся во времени: сервер обновляет разрешение
-     * участника, а до клиента это доходит следующим сообщением. Первая же проверка в браузере
-     * (CI, 2026-10-12) это и поймала: один вызов `setMicrophoneEnabled(true)` попадал в момент,
-     * когда комната ещё считала себя публикацию не имеющей права, и молча оставил ученика без
-     * голоса. Поэтому здесь несколько попыток с короткой паузой — это ожидание распространения
-     * разрешения, а не «перетирание» ошибки устройства: отказ разрешения (NotAllowedError)
-     * возвращается сразу и повторами не лечится.
+     * «Выключить всех» — решение учителя, которое действует и после лекции: ученик не может снять
+     * себя с мьюта кнопкой (см. `toggleMicInRoom`), поэтому и возврат не включает ему микрофон.
+     * Флаг про аудио — камера под ним не попадает.
      */
-    const enableWithRetry = async (kind: 'microphone' | 'camera') => {
-      const lp = room.localParticipant;
-      let lastErr: unknown;
-      for (let attempt = 0; attempt < 4; attempt++) {
-        try {
-          if (kind === 'microphone') {
-            await lp.setMicrophoneEnabled(true, savedMic ? ({ deviceId: { exact: savedMic } } as MicOpts) : undefined);
-          } else {
-            const cam = await enableCameraIn(room);
-            if (!cam.errKey) return { ok: true as const };
-            lastErr = cam.err;
-          }
-          if (kind === 'microphone') return { ok: true as const };
-        } catch (e: unknown) {
-          lastErr = e;
-          if ((e as { name?: string })?.name === 'NotAllowedError' || (e as { name?: string })?.name === 'PermissionDeniedError') break;
-        }
-        await new Promise((r) => setTimeout(r, 1_500));
-      }
-      return { ok: false as const, err: lastErr };
-    };
-
-    if (want.mic) {
-      const r = await enableWithRetry('microphone');
-      if (r.ok) { setMicErr(''); turnedOn.mic = true; }
-      else setMicErr(mediaErrorText(mediaErrorKey(r.err, 'microphone'), r.err));
+    if (want.mic && !muteAllRef.current) {
+      let r = await tryMic(room);
+      if (r === 'rights') r = (await waitCanPublish(room, 'microphone')) ? await tryMic(room) : 'rights';
+      if (r === 'on') turnedOn.mic = true; else micNoRights = r === 'rights';
     }
     if (want.cam) {
-      const r = await enableWithRetry('camera');
-      if (r.ok) turnedOn.cam = true;
-      else setCamErr(mediaErrorText(mediaErrorKey(r.err, 'camera'), r.err));
+      let cam = await enableCameraIn(room);
+      if (cam.errKey && blockedByRights(cam.err)) {
+        cam = (await waitCanPublish(room, 'camera')) ? await enableCameraIn(room) : { errKey: NO_RIGHTS, err: cam.err };
+      }
+      if (cam.errKey === NO_RIGHTS) camNoRights = true;
+      else if (cam.errKey) setCamErr(mediaErrorText(cam.errKey, cam.err));
+      else turnedOn.cam = true;
     }
     refreshLocal(room);
     const off = () => {
@@ -342,6 +456,9 @@ export default function Lesson() {
     if (turnedOn.mic && turnedOn.cam) showToast(t('lesson.lectureRestoredBoth'), stop);
     else if (turnedOn.mic) showToast(t('lesson.lectureRestoredMic'), stop);
     else if (turnedOn.cam) showToast(t('lesson.lectureRestoredCam'), stop);
+    // право так и не вернулось: это не отказ браузера и не «нечего возвращать» — у случая есть
+    // объяснение (медиа-сервер или связь с комнатой) и отдельная подсказка
+    else if (micNoRights || camNoRights) showToast(t('lesson.lectureRestoreNoRights'));
     else if (want.mic || want.cam) showToast(t('lesson.lectureRestoreBlocked'));
   }
 
@@ -427,8 +544,31 @@ export default function Lesson() {
       setMuteAll(status.data.session.muteAll); // restored on reload/reconnect
       setBoardOpen(status.data.session.boardOpen); // task B: the board survives a reload
       setLectureMode(status.data.session.lectureMode); // the comments banner shows before any RTC join
+      // часть 1: опрос — второй источник того же решения учителя; он свеж по построению, раз
+      // именно он сообщил про конец лекции
+      lectureRestoreChoiceRef.current = status.data.session.lectureRestore;
+      // часть 1: снимок живёт на сервере только во время лекции, поэтому запоминаем его из КАЖДОГО
+      // статуса, где он есть (это и перезагрузка посреди лекции: входной запрос приносит снимок).
+      // null не затираем ранее запомненное — сервер стирает снимок при выключении, а ученик ещё не
+      // знал про конец.
+      if (status.data.session.preLecture) preLectureRef.current = status.data.session.preLecture;
     }
   }, [status.data]);
+
+  /*
+   * Часть 1: эпизод лекции открывается и закрывается по ЛЮБОМУ источнику состояния — кадром сокета
+   * или опросом статуса (страховка на случай потерянного кадра). Закрывая, эффект даёт 2.5 с кадру
+   * `lecture_off`: он один знает точный флаг этого перехода и идёт первым, когда сокет жив.
+   */
+  useEffect(() => {
+    if (isTeacher) return;
+    if (lectureMode) { lectureEpisodeRef.current = true; return; }
+    window.clearTimeout(lectureOffSafetyRef.current);
+    lectureOffSafetyRef.current = window.setTimeout(
+      () => endLectureEpisode(lectureRestoreChoiceRef.current), 2_500);
+    return () => window.clearTimeout(lectureOffSafetyRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lectureMode, isTeacher]);
 
   useEffect(() => {
     const s = session;
@@ -455,11 +595,15 @@ export default function Lesson() {
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
           if (msg.type === 'board') setBoardOpen(!!msg.on); // task B: teacher opened/closed the board for all
           if (msg.type === 'lectureMode') {
+            // часть 1: кадр несёт и решение о возврате: эпизод открывает эффект на `lectureMode`,
+            // и у него должен быть тот же флаг, что у кадра, а не у старого `session`
+            if (msg.restore !== undefined) lectureRestoreChoiceRef.current = msg.restore;
             setLectureMode(!!msg.on);
-            // часть 1: снимать «что было включено» нужно в момент включения, пока ученик ещё говорит
-            if (msg.on && !isTeacher) capturePreLecture();
+            // часть 1: начало лекции — единственный момент, когда снимок ещё живёт на сервере
+            // (его сотрут при выключении), поэтому remembered сразу, не дожидаясь опроса раз в 30 с.
+            if (msg.on && !isTeacher) void rememberMySnapshot();
           }
-          if (msg.type === 'lecture_off') void restoreAfterLecture(msg.restore !== false);
+          if (msg.type === 'lecture_off') endLectureEpisode(msg.restore !== false);
           if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
           // task 2: comments arrive on this same socket — the panel's query is the single source
           // for the mode, so the frame only has to invalidate it (see useCommentFrames)
@@ -470,7 +614,11 @@ export default function Lesson() {
           onHandFrame(msg.type);
           if (msg.type === 'handGranted' && msg.userId === meIdRef.current) void acceptFloor();
           if (msg.type === 'handRevoked' && msg.userId === meIdRef.current) setFloorTakenNotice(true);
-          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); setLectureMode(msg.session.lectureMode); }
+          if (msg.type === 'started' && msg.session) { setSession(msg.session); setMuteAll(msg.session.muteAll); setBoardOpen(msg.session.boardOpen); setLectureMode(msg.session.lectureMode);
+            // часть 1: переподключение посреди лекции — кадр `started` несёт и снимок этого ученика,
+            // поэтому возврат работает и после перезагрузки его страницы (см. `preLectureRef`).
+            if (msg.session.preLecture) preLectureRef.current = msg.session.preLecture;
+          }
         };
         ws.onclose = (ev) => {
           if (disposed) return;
@@ -587,6 +735,20 @@ export default function Lesson() {
     setLocalCamOn(pubs.some((p) => p.kind === Track.Kind.Video && p.source === Track.Source.Camera && p.track && !p.isMuted));
     setLocalMicOn(pubs.some((p) => p.kind === Track.Kind.Audio && p.source === Track.Source.Microphone && p.track && !p.isMuted));
     setScreenOn(pubs.some((p) => p.source === Track.Source.ScreenShare && p.track));
+  }
+
+  /**
+   * Часть 1: право отозвано — значит лекция идёт, даже если наш кадр `lectureMode` ещё в дороге.
+   *
+   * Это единственное, что клиент выводит из событий комнаты: снимок устройств делает сервер (см.
+   * `fetchMyPreLecture`), поэтому порядок «что дошло раньше — сигнал комнаты или кадр» на возврат
+   * больше не влияет. Эпизод нужен, чтобы вернуть ровно один раз и только тому, кто лекцию
+   * застал: пришедшему во время неё нечего возвращать (серверная карта его не знает).
+   */
+  function noteLectureStartedByRoom(room: Room) {
+    if (isTeacher) return;
+    const perm = room.localParticipant.permissions as { canPublish?: boolean } | undefined;
+    if (perm?.canPublish === false) lectureEpisodeRef.current = true;
   }
 
   /**
@@ -715,6 +877,12 @@ export default function Lesson() {
       room.on(RoomEvent.TrackUnsubscribed, (_t, pub, participant) => removeTile(`${participant.sid}:${pub.trackSid}`));
       room.on(RoomEvent.TrackMuted, () => { refreshPeerList(room); refreshLocal(room); });
       room.on(RoomEvent.TrackUnmuted, () => { refreshPeerList(room); refreshLocal(room); });
+      /*
+       * Часть 1: отзыв публикации — это СИГНАЛ КОМНАТЫ, и он опережает наш кадр. Здесь он нужен
+       * только затем, чтобы эпизод лекции открылся независимо от порядка событий (см.
+       * `noteLectureStartedByRoom`).
+       */
+      room.on(RoomEvent.ParticipantPermissionsChanged, () => noteLectureStartedByRoom(room));
       room.on(RoomEvent.LocalTrackPublished, (pub) => {
         const track = pub.track;
         refreshLocal(room);

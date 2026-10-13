@@ -254,6 +254,7 @@
     "lectureRestoredCam": "Maʻruza rejimi oʻchirildi: kamera yoqildi",
     "lectureRestoredBoth": "Maʻruza rejimi oʻchirildi: mikrofon va kamera yoqildi",
     "lectureRestoreBlocked": "Rejim oʻchirildi, ammo uskunalar yoqilmadi: brauzerda mikrofon va kameraga ruxsat bering",
+    "lectureRestoreNoRights": "Xona hali gapirish huquuqini qaytarmadi: panelidagi tugmalar bilan mikrofon va kamerani yoqing",
     "lectureStartFailed": "Media server mavjud emas: maʻruza rejimi yoqilmadi",
     "lectureStopFailed": "Media server mavjud emas: oʻquvchilar huquqi qaytarilmadi, qayta urinib koʻring",
     "waitingPeers": "O'quvchilar kutilmoqda…",
