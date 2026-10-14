@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import {
   users, refreshTokens, wsTickets, chatWsTickets, chatMessages, chatReads, chatMutes,
-  lessonComments, lessonCommentReads, lessonCommentMutes, lessonHands,
+  lessonComments, lessonCommentReads, lessonCommentMutes, lessonHands, lessonAttendance,
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
   notifications, policyAcceptances, classMembers, loginAttempts,
 } from '../db/schema.js';
@@ -50,6 +50,11 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     // raise-hand queue (task 2Б): a row is «this person wanted to speak in that lesson» — personal
     // enough to go with the account, and it would otherwise outlive every lesson they were in.
     await tx.delete(lessonHands).where(eq(lessonHands.userId, userId));
+    // Часть 4 (2026-10-14): «кто когда был на уроке» — те же персональные данные, что и слова в
+    // чате: строки присутствия удаляются физически. Каскад по FK тут НЕ спасает: строка `users`
+    // не стирается (её держат NOT-NULL ссылки), а значит `on delete cascade` никогда не срабатывает,
+    // и без этой строки время прихода и ухода умершего аккаунта жило бы вечно.
+    await tx.delete(lessonAttendance).where(eq(lessonAttendance.userId, userId));
     // notes / sheets (private by design)
     await tx.delete(studentNotes).where(eq(studentNotes.userId, userId));
     await tx.delete(teacherNotes).where(eq(teacherNotes.teacherId, userId));
