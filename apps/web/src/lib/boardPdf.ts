@@ -121,8 +121,11 @@ export async function buildBoardPdf(opts: {
  * Task 2г: `BluBlu-<class>-<date>.pdf`. Everything Windows/macOS/Android forbid in a name is
  * dropped, but Cyrillic and the Uzbek `ʻ`/`gʻ` letters survive (only characters illegal in a
  * filename are removed, and the result stays a safe ASCII-free-agnostic UTF-8 name).
+ *
+ * Часть 5: та же основа имени нужна и Word-экспорту, поэтому очистка вынесена в
+ * `boardExportBaseName` — две кнопки не должны разъезжаться по правилам именования.
  */
-export function boardPdfFileName(className: string, at: Date = new Date()): string {
+export function boardExportBaseName(className: string, at: Date = new Date()): string {
   const clean = (s: string) => s
     .replace(/[\u0000-\u001f\u007f]/g, '')            // control characters
     .replace(/[\\/:*?"'<>|]/g, '')                     // illegal on some platforms
@@ -132,6 +135,9 @@ export function boardPdfFileName(className: string, at: Date = new Date()): stri
     .trim();
   const pad = (n: number) => String(n).padStart(2, '0');
   const date = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
-  const name = clean(className) || 'board';
-  return `BluBlu-${name}-${date}.pdf`;
+  return `BluBlu-${clean(className) || 'board'}-${date}`;
+}
+
+export function boardPdfFileName(className: string, at: Date = new Date()): string {
+  return `${boardExportBaseName(className, at)}.pdf`;
 }

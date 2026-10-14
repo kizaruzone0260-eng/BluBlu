@@ -319,7 +319,7 @@
     "publishSvg": "→ Feed (SVG)",
     "publishPngHint": "Publish the current board as an image in the class feed",
     "publishSvgHint": "Publish the current board as a vector in the class feed",
-    "pdfTitle": "Download boards as PDF",
+    "pdfTitle": "Download boards",
     "pdfSelectAll": "Select all",
     "pdfSelectNone": "Clear selection",
     "pdfSelected": "{{n}} of {{total}} selected",
@@ -328,8 +328,8 @@
     "pdfSizeA4": "A4",
     "pdfSizeContent": "content size",
     "pdfWorking": "Building the PDF… {{done}}/{{total}}",
-    "pdfDownload": "Download ({{n}})",
-    "pdfHint": "The file is built in your browser and is never uploaded.",
+    "pdfDownload": "Download PDF ({{n}})",
+    "pdfHint": "The file is built in your browser and is never uploaded. Word pages are A4 landscape with margins.",
     "pdfCancelled": "Download cancelled.",
     "pdfFailed": "Could not build the PDF: {{message}}",
     "commentsTitle": "Comments",
@@ -393,7 +393,10 @@
     "stopVideoHint": "Saves bandwidth: video stops arriving, audio continues",
     "hotkeys": "Keyboard shortcuts",
     "hotkeysList": "M — microphone, V — camera, H — hand, C — comments, P — participants",
-    "menuClose": "Close menu"
+    "menuClose": "Close menu",
+    "wordDownload": "Download Word ({{n}})",
+    "wordWorking": "Building the Word file… {{done}}/{{total}}",
+    "wordFailed": "Could not build the Word file: {{message}}"
   },
   "tg": {
     "title": "Telegram notifications",

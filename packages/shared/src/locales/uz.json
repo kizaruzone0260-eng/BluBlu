@@ -319,7 +319,7 @@
     "publishSvg": "→ Tasmaga (SVG)",
     "publishPngHint": "Joriy doskani rasm sifatida sinf tasmasida joylash",
     "publishSvgHint": "Joriy doskani vektor sifatida sinf tasmasida joylash",
-    "pdfTitle": "Doskalarni PDF ga yuklab olish",
+    "pdfTitle": "Doskalarni yuklab olish",
     "pdfSelectAll": "Barchasini tanlash",
     "pdfSelectNone": "Tanlovni bekor qilish",
     "pdfSelected": "{{total}} tadan {{n}} ta tanlandi",
@@ -328,8 +328,8 @@
     "pdfSizeA4": "A4",
     "pdfSizeContent": "kontent hajmi bo’yicha",
     "pdfWorking": "PDF tayyorlanmoqda… {{done}}/{{total}}",
-    "pdfDownload": "Yuklab olish ({{n}})",
-    "pdfHint": "Fayl brauzerda yig’iladi va hech qayerga yuborilmaydi.",
+    "pdfDownload": "PDF yuklab olish ({{n}})",
+    "pdfHint": "Fayl brauzerda yig’iladi va hech qayerga yuborilmaydi. Word — yonma-yon A4, maydonchalar bilan.",
     "pdfCancelled": "Yuklab olish bekor qilindi.",
     "pdfFailed": "PDF yaratilmadi: {{message}}",
     "commentsTitle": "Izohlar",
@@ -393,7 +393,10 @@
     "stopVideoHint": "Trafik tejaldi: video kelmaydi, audio ishlaydi",
     "hotkeys": "Klaviatura yorliqlari",
     "hotkeysList": "M — mikrofon, V — kamera, H — qoʻl, C — izohlar, P — ishtirokchilar",
-    "menuClose": "Menyuni yopish"
+    "menuClose": "Menyuni yopish",
+    "wordDownload": "Word yuklab olish ({{n}})",
+    "wordWorking": "Word tayyorlanmoqda… {{done}}/{{total}}",
+    "wordFailed": "Word yaratilmadi: {{message}}"
   },
   "tg": {
     "title": "Telegram bildirishnomalari",

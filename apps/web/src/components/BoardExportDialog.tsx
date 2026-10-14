@@ -6,6 +6,9 @@ import {
   BoardExportCancelled, boardPdfFileName, buildBoardPdf, fitDimensions,
   type BoardImage, type BoardPageSize,
 } from '../lib/boardPdf';
+import { DocxCancelled, boardWordFileName, buildBoardDocx } from '../lib/boardDocx';
+
+type ExportKind = 'pdf' | 'word';
 
 type RawEl = { id: string; isDeleted?: boolean; [k: string]: unknown };
 
@@ -53,6 +56,8 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
   const [pageSize, setPageSize] = useState<BoardPageSize>('a4');
   const [busy, setBusy] = useState(false);
+  /** какой формат сейчас собирается — по нему полоса прогресса называет файл правильно */
+  const [busyKind, setBusyKind] = useState<ExportKind>('pdf');
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -140,9 +145,15 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
     });
   }
 
-  async function download() {
+  /**
+   * Одна и та же сборка картинок для обоих форматов: доска растеризуется ровно один раз и
+   * одинаково, поэтому PDF и Word показывают один и тот же рисунок (часть 5). Разница только в
+   * упаковке — и `docx`, и `pdf-lib` подгружаются внутри своих сборщиков.
+   */
+  async function download(kind: ExportKind) {
     if (!chosen.length || busy) return;
     setBusy(true);
+    setBusyKind(kind);
     setError('');
     cancelled.current = false;
     setProgress({ done: 0, total: chosen.length });
@@ -157,23 +168,30 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
         images.push({ png, width, height });
         setProgress({ done: i + 1, total: chosen.length });
       }
-      const pdf = await buildBoardPdf({
-        images, pageSize,
-        cancelled: () => cancelled.current,
-        onProgress: (done, total) => setProgress({ done, total }),
-      });
-      const url = URL.createObjectURL(pdf);
+      const file = kind === 'pdf'
+        ? await buildBoardPdf({
+          images, pageSize,
+          cancelled: () => cancelled.current,
+          onProgress: (done, total) => setProgress({ done, total }),
+        })
+        // Word всегда альбомный A4 с полями — это формат документа, а не выбора учителя
+        : await buildBoardDocx({
+          images,
+          cancelled: () => cancelled.current,
+          onProgress: (done, total) => setProgress({ done, total }),
+        });
+      const url = URL.createObjectURL(file);
       objectUrls.current.push(url);
       const a = document.createElement('a');
       a.href = url;
-      a.download = boardPdfFileName(className);
+      a.download = kind === 'pdf' ? boardPdfFileName(className) : boardWordFileName(className);
       document.body.appendChild(a);
       a.click();
       a.remove();
       onClose();
     } catch (e) {
-      if (e instanceof BoardExportCancelled) setError(t('lesson.pdfCancelled'));
-      else setError(t('lesson.pdfFailed', { message: String((e as Error)?.message ?? e) }));
+      if (e instanceof BoardExportCancelled || e instanceof DocxCancelled) setError(t('lesson.pdfCancelled'));
+      else setError(t(kind === 'pdf' ? 'lesson.pdfFailed' : 'lesson.wordFailed', { message: String((e as Error)?.message ?? e) }));
     } finally {
       setBusy(false);
     }
@@ -235,7 +253,8 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
             {busy && (
               <div className="pdf-progress" data-testid="pdf-progress" role="status">
                 <div className="pdf-bar" style={{ width: `${progress && progress.total ? Math.round(100 * progress.done / progress.total) : 0}%` }} />
-                <span>{t('lesson.pdfWorking', { done: progress?.done ?? 0, total: progress?.total ?? chosen.length })}</span>
+                <span>{t(busyKind === 'pdf' ? 'lesson.pdfWorking' : 'lesson.wordWorking',
+                  { done: progress?.done ?? 0, total: progress?.total ?? chosen.length })}</span>
                 <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="pdf-cancel"
                   onClick={() => { cancelled.current = true; }}>
                   {t('common.cancel')}
@@ -255,8 +274,14 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
               )}
               <div className="spacer" />
               <button type="button" style={{ marginTop: 0 }} data-testid="pdf-download"
-                disabled={busy || chosen.length === 0} onClick={() => void download()}>
+                disabled={busy || chosen.length === 0} onClick={() => void download('pdf')}>
                 {t('lesson.pdfDownload', { n: chosen.length })}
+              </button>
+              {/* часть 5: тот же набор досок, другой контейнер. Word не имеет выбора размера
+                  страницы — у документа он фиксированный (альбомный A4 с полями). */}
+              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="word-download"
+                disabled={busy || chosen.length === 0} onClick={() => void download('word')}>
+                {t('lesson.wordDownload', { n: chosen.length })}
               </button>
             </div>
             <p className="muted" style={{ fontSize: '.85rem' }} data-testid="pdf-hint">{t('lesson.pdfHint')}</p>

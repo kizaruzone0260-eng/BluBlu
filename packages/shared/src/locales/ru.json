@@ -319,7 +319,7 @@
     "publishSvg": "→ В ленту (SVG)",
     "publishPngHint": "Опубликовать текущую доску картинкой в ленте класса",
     "publishSvgHint": "Опубликовать текущую доску вектором в ленте класса",
-    "pdfTitle": "Скачать доски в PDF",
+    "pdfTitle": "Скачать доски",
     "pdfSelectAll": "Выбрать все",
     "pdfSelectNone": "Снять выбор",
     "pdfSelected": "Выбрано {{n}} из {{total}}",
@@ -328,8 +328,8 @@
     "pdfSizeA4": "A4",
     "pdfSizeContent": "по размеру содержимого",
     "pdfWorking": "Готовим PDF… {{done}}/{{total}}",
-    "pdfDownload": "Скачать ({{n}})",
-    "pdfHint": "Файл собирается в браузере и никуда не отправляется.",
+    "pdfDownload": "Скачать PDF ({{n}})",
+    "pdfHint": "Файл собирается в браузере и никуда не загружается. Word — альбомный A4 с полями.",
     "pdfCancelled": "Скачивание отменено.",
     "pdfFailed": "Не получилось создать PDF: {{message}}",
     "commentsTitle": "Комментарии",
@@ -393,7 +393,10 @@
     "stopVideoHint": "Экономия трафика: видео перестаёт приходить, звук остаётся",
     "hotkeys": "Горячие клавиши",
     "hotkeysList": "M — микрофон, V — камера, H — рука, C — комментарии, P — участники",
-    "menuClose": "Закрыть меню"
+    "menuClose": "Закрыть меню",
+    "wordDownload": "Скачать Word ({{n}})",
+    "wordWorking": "Собираю Word… {{done}}/{{total}}",
+    "wordFailed": "Не удалось собрать Word: {{message}}"
   },
   "tg": {
     "title": "Telegram-уведомления",
