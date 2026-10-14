@@ -9,6 +9,7 @@
  * suite logs in far more than 10 times a minute, so 3123 stays non-production for the rest.
  */
 import EmbeddedPostgres from 'embedded-postgres';
+import { readPolicyVersion } from './policyVersion.mjs';
 import { initUtf8Cluster } from '../../api/scripts/pg-init-utf8.mjs';
 import postgres from 'postgres';
 import { spawn } from 'node:child_process';
