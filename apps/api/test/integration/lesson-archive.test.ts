@@ -138,8 +138,10 @@ suite('lesson archive (part 4)', () => {
     expect(closed.body).toBe(madeUp.body);
     const target = sessionIds[0]!;
     expect((await get(studentTok, `/api/lessons/${target}/archive`)).statusCode).toBe(404);
-    expect((await get(studentTok, `/api/lessons/${target}/board`)).statusCode,
-      'и обычные доски завершённого урока закрыты тем же переключателем').toBe(404);
+    // ВАЖНО: саму доску завершённого урока ученик читает как читал всегда (§3.7 — «открыть урок
+    // после него»). Переключатель класса относится к разделу «Архив уроков», а не к этому доступу:
+    // отнимать его молча права не дают (это и был красный CI: существующий права-тест ждал 200).
+    expect((await get(studentTok, `/api/lessons/${target}/board`)).statusCode).toBe(200);
   });
 
   it('with the switch on a student gets boards only — no comments, no participants', async () => {
@@ -159,7 +161,7 @@ suite('lesson archive (part 4)', () => {
     expect(d).not.toHaveProperty('attendance');
     expect(d.canManage).toBe(false);
     expect((await get(studentTok, `/api/lessons/${target}/board`)).statusCode,
-      'доски завершённого урока ученик теперь читает').toBe(200);
+      'доска того же урока доступна и с включённым переключателем').toBe(200);
     expect((await del(studentTok, `/api/lessons/${target}/archive`)).statusCode,
       'но не удаляет').toBe(403);
   });

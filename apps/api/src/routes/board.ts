@@ -201,12 +201,14 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     const cls = await resolveClass(db, req.user!.id, req.user!.role, s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     /*
-     * Часть 4: завершённый урок ученик читает только если учитель включил в классе «показывать
-     * архив досок ученикам». Выключенный архив неотличим от чужого класса — тот же 404.
+     * Часть 4 СПОРНА ЭТОЙ ДВЕРЬЮ И ОТКАТИЛА ЕЁ. Первая версия навешивала на этот GET условие
+     * «завершённый урок ученик читает только при включённом архиве» — и это молча отнимало
+     * возможность, которая была всегда (см. подпись маршрута: reopening after the lesson, §3.7):
+     * после выключенного по умолчанию переключателя ученики переставали открывать доски урока,
+     * который только что прошли. Переключатель класса решает про РАЗДЕЛ «Архив уроков»
+     * (`routes/lessonArchive.ts`), а не про доступ к доске того урока, на котором ребёнок был.
+     * Права при этом проверяются так же: чужой класс и чужой урок — 404.
      */
-    if (s.endedAt && req.user!.role !== 'teacher' && !cls.boardArchivePublic) {
-      return reply.code(404).send({ error: 'notFound' });
-    }
     const rows = await listPagesWithTitles(db, id);
     const out: { pageNo: number; title: string; elements: unknown[] }[] = [];
     for (const row of rows) {
