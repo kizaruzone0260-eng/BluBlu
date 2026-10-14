@@ -141,6 +141,38 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
           expect(String(r.def ?? ''), `${r.col}: a default the routes rely on`).toMatch(/(false|'\{\}'::jsonb)/);
         }
 
+        // 5в. migration 0030 adds a TABLE (кто когда был на уроке) and a COLUMN (переключатель
+        //     класса «показывать архив досок ученикам»). Присутствие — это персональные данные:
+        //     время прихода и ухода конкретного человека. Поза доказывается здесь, на чистой базе,
+        //     а не «по аналогии с 0025».
+        const attendance = await sql`
+          select c.relrowsecurity as rls, c.relacl as acl,
+                 (select count(*) from pg_policies p where p.tablename = c.relname) as policies
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+           where n.nspname = 'public' and c.relname = 'lesson_attendance'`;
+        expect(attendance.length, 'lesson_attendance создана проигрыванием журнала с 0000').toBe(1);
+        expect(attendance[0]?.rls, 'lesson_attendance: ROW LEVEL SECURITY включён').toBe(true);
+        expect(Number(attendance[0]?.policies), 'lesson_attendance: политик нет ⇒ чужой роли не видно ни строки').toBe(0);
+        const attAcl = attendance[0]?.relacl == null ? ''
+          : (Array.isArray(attendance[0].relacl) ? attendance[0].relacl.join(',') : String(attendance[0].relacl));
+        expect(attAcl, 'lesson_attendance: ни одной выдачи не-владельцу').not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+
+        const archiveSwitch = await sql`
+          select c.relrowsecurity as rls, c.relacl as acl, a.attnotnull as not_null,
+                 pg_get_expr(d.adbin, d.adrelid) as def
+            from pg_attribute a
+            join pg_class c on c.oid = a.attrelid
+            left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+           where a.attrelid = 'classes'::regclass and a.attname = 'board_archive_public'`;
+        expect(archiveSwitch.length, 'classes.board_archive_public существует').toBe(1);
+        expect(archiveSwitch[0]?.not_null).toBe(true);
+        expect(String(archiveSwitch[0]?.def ?? ''), 'по умолчанию — выключено').toContain('false');
+        expect(archiveSwitch[0]?.rls, 'classes keeps ROW LEVEL SECURITY').toBe(true);
+        const swAcl = archiveSwitch[0]?.relacl == null ? ''
+          : (Array.isArray(archiveSwitch[0].relacl) ? archiveSwitch[0].relacl.join(',') : String(archiveSwitch[0].relacl));
+        expect(swAcl).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+
         // has_column_privilege ERRORS on a missing role, and only Supabase creates these two
         const roles = await sql`select rolname from pg_roles where rolname in ('anon', 'authenticated')`;
         const have = new Set(roles.map((r) => String((r as { rolname: string }).rolname)));
@@ -152,12 +184,18 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
                    pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'board_draw_all', 'select') as all_s,
                    pg_catalog.has_column_privilege(${role}, 'lesson_sessions', 'board_draw_students', 'update') as stu_u,
                    pg_catalog.has_column_privilege(${role}, 'whiteboards', 'authors', 'select') as auth_s,
-                   pg_catalog.has_column_privilege(${role}, 'whiteboards', 'authors', 'update') as auth_u`;
+                   pg_catalog.has_column_privilege(${role}, 'whiteboards', 'authors', 'update') as auth_u,
+                   pg_catalog.has_column_privilege(${role}, 'classes', 'board_archive_public', 'select') as arch_s,
+                   pg_catalog.has_column_privilege(${role}, 'classes', 'board_archive_public', 'update') as arch_u,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_attendance', 'joined_at', 'select') as att_s,
+                   pg_catalog.has_column_privilege(${role}, 'lesson_attendance', 'user_id', 'insert') as att_i`;
           const q = (p[0] ?? {}) as Record<string, boolean>;
           for (const [key, label] of Object.entries({
             snap_s: 'the device snapshot, select', snap_u: 'the device snapshot, update',
             all_s: '«разрешить всем», select', stu_u: 'the student list, update',
             auth_s: 'the author map, select', auth_u: 'the author map, update',
+            arch_s: 'переключатель архива, select', arch_u: 'переключатель архива, update',
+            att_s: 'присутствие, select', att_i: 'присутствие, insert',
           }) as [string, string][]) {
             expect(q[key], `${role} cannot touch ${label}`).toBe(false);
           }

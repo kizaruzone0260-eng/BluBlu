@@ -8,6 +8,7 @@ import {
   lecturePreDevices, isParticipantGone, type CurrentPermission, type LessonSession,
 } from '../services/lessons.js';
 import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
+import { closeAttendance, recordJoin, recordLeave } from '../services/lessonArchive.js';
 import { env, livekitPublicWsUrl } from '../env.js';
 import { eq, sql } from 'drizzle-orm';
 import { users, events } from '../db/schema.js';
@@ -98,6 +99,9 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s) return;
     const ended = await endLesson(db, id);
     if (!ended) return reply.code(404).send({ error: 'notFound' });
+    // часть 4: у того, кто не нажал «выйти», уход ставится фактом завершения урока — иначе в
+    // архиве висели бы «незакрытые» приходы до конца времён.
+    await closeAttendance(db, id);
     // A hand is live-lesson state: the queue goes with the lesson, and every floor that was given
     // with it (task 2Б). Removing the participants below already ends their media; the rows must
     // not survive to be re-read if this session is ever looked at again.
@@ -142,6 +146,9 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!cls) return reply.code(404).send({ error: 'notFound' });
     const [me] = await db.select({ name: sql<string>`concat_ws(' ', ${users.name}, nullif(${users.lastName}, ''))` }).from(users).where(eq(users.id, req.user!.id)).limit(1);
     const isTeacher = req.user!.role === 'teacher';
+    // часть 4: «кто на уроке был». Первая строка на (урок, человек); переподключения её не
+    // перетирают, поэтому время прихода остаётся настоящим приходом, а не последним reconnect.
+    await recordJoin(db, id, req.user!.id);
     const token = await buildJoinToken({
       room: s.roomName, identity: req.user!.id, name: me?.name ?? 'user',
       isTeacher, lectureMode: s.lectureMode,
@@ -365,6 +372,8 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       const cls = await resolveClass(db, consumed.userId, consumed.role, s.classId);
       if (!cls) { socket.close(4404); return; }
       wsJoin(q, socket);
+      // часть 4: сокет урока закрывается — это и есть «участник вышел»
+      socket.on('close', () => { void recordLeave(db, q, consumed.userId).catch(() => undefined); });
       socket.send(JSON.stringify({
         type: s.endedAt ? 'ended' : 'started',
         session: withPreLecture(s, consumed.userId, consumed.role === 'teacher', { ...withRoom(s), wsUrl: livekitPublicWsUrl() }),

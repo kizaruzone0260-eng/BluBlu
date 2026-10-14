@@ -57,6 +57,11 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!p.success) return reply.code(404).send({ error: 'notFound' });
     const parsed = classUpdateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
+    // Пустое обновление — это ошибка запроса, а не «UPDATE без SET»: drizzle на пустом объекте
+    // падает с «No values to set», и клиент получил бы 500 вместо внятного 400.
+    if (!Object.values(parsed.data).some((v) => v !== undefined)) {
+      return reply.code(400).send({ error: 'invalidInput' });
+    }
     const cls = await needClass(db, req, reply, p.data.id);
     if (!cls) return;
     return updateClass(db, cls.id, parsed.data);

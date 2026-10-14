@@ -94,6 +94,11 @@ export function mergeElements(target: Record<string, ExEl>, incoming: ExEl[]): {
  */
 export const MAX_STUDENT_ELEMENTS = 300;
 export const MAX_STUDENT_BYTES = 1_048_576;
+/**
+ * Часть 4 (2026-10-14): потолок ВСЕЙ сцены — 2 МБ разобранного JSON. Он касается и учителя:
+ * архив уроков живёт в той же базе, и одна бесконечная доска не должна съедать её.
+ */
+export const MAX_SCENE_BYTES = 2_000_000;
 
 /** Размер элемента в байтах (UTF-8), для лимита «1 МБ на ученика на доску». */
 function sizeOf(el: ExEl): number {
@@ -104,8 +109,10 @@ export interface GateReport {
   accepted: ExEl[];
   /** элементы, которые отправителю трогать нельзя (чужие или сверх лимита) */
   rejected: string[];
-  /** среди отказов есть хотя бы один по лимиту — клиенту нужна другая подсказка */
+  /** среди отказов есть хотя бы один по лимиту ученика — клиенту нужна другая подсказка */
   overLimit: boolean;
+  /** хотя бы один отказ — по потолку всей сцены (2 МБ); он бывает и у учителя */
+  overScene: boolean;
 }
 
 /**
@@ -134,22 +141,25 @@ export function gateEdits(params: {
   teacher: boolean;
   maxElements?: number;
   maxBytes?: number;
+  maxSceneBytes?: number;
 }): GateReport {
   const { incoming, scene, authors, userId, teacher } = params;
   const maxElements = params.maxElements ?? MAX_STUDENT_ELEMENTS;
   const maxBytes = params.maxBytes ?? MAX_STUDENT_BYTES;
+  const maxScene = params.maxSceneBytes ?? MAX_SCENE_BYTES;
   const accepted: ExEl[] = [];
   const rejected: string[] = [];
   let overLimit = false;
+  let overScene = false;
 
   let mine = 0;
   let mineBytes = 0;
-  if (!teacher) {
-    for (const [id, el] of Object.entries(scene)) {
-      if (authors[id] !== userId || el.isDeleted) continue;
-      mine += 1;
-      mineBytes += sizeOf(el);
-    }
+  let total = 0;
+  for (const [id, el] of Object.entries(scene)) {
+    if (el.isDeleted) continue;
+    const size = sizeOf(el);
+    total += size;
+    if (!teacher && authors[id] === userId) { mine += 1; mineBytes += size; }
   }
 
   for (const el of incoming) {
@@ -157,22 +167,27 @@ export function gateEdits(params: {
     delete (el as { locked?: unknown }).locked;
     const cur = scene[el.id];
     const author = authors[el.id];
+    const curSize = cur && !cur.isDeleted ? sizeOf(cur) : 0;
+    // Удаление сцену только уменьшает (merge по `isDeleted` убирает элемент), поэтому под потолок
+    // оно не попадает никогда — иначе запретили бы именно то, что место и освобождает.
+    const nextTotal = el.isDeleted ? total - curSize : total - curSize + sizeOf(el);
+
+    if (!teacher && cur && author !== userId) { rejected.push(el.id); continue; }
+    if (!cur && el.isDeleted) continue; // удалять нечего — это не право на чужое, а пустой кадр
+    if (nextTotal > maxScene) { rejected.push(el.id); overScene = true; continue; }
 
     if (teacher) {
       if (!cur) authors[el.id] = userId;
       if (el.isDeleted) delete authors[el.id];
+      total = nextTotal;
       accepted.push(el);
       continue;
     }
 
-    if (cur && author !== userId) { rejected.push(el.id); continue; }
-    if (!cur && el.isDeleted) continue; // удалять нечего — это не право на чужое, а пустой кадр
-
-    const curSize = cur ? sizeOf(cur) : 0;
-    const nextCount = el.isDeleted ? mine - 1 : cur ? mine : mine + 1;
+    const nextCount = el.isDeleted ? mine - 1 : cur && author === userId ? mine : mine + 1;
     const nextBytes = el.isDeleted
       ? mineBytes - curSize
-      : cur ? mineBytes - curSize + sizeOf(el) : mineBytes + sizeOf(el);
+      : cur && author === userId ? mineBytes - curSize + sizeOf(el) : mineBytes + sizeOf(el);
     if (nextCount > maxElements || nextBytes > maxBytes) {
       rejected.push(el.id);
       overLimit = true;
@@ -180,11 +195,12 @@ export function gateEdits(params: {
     }
     mine = nextCount;
     mineBytes = nextBytes;
+    total = nextTotal;
     if (!cur) authors[el.id] = userId;
     if (el.isDeleted) delete authors[el.id];
     accepted.push(el);
   }
-  return { accepted, rejected, overLimit };
+  return { accepted, rejected, overLimit, overScene };
 }
 
 /**

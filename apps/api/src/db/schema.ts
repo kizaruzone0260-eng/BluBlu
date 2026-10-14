@@ -67,6 +67,13 @@ export const classes = pgTable('classes', {
   chatMode: chatModeEnum('chat_mode').notNull().default('on'), // item 8
   /** bot task §3: unauthenticated /schedule by class name works ONLY when this is on */
   botPublicSchedule: boolean('bot_public_schedule').notNull().default(false),
+  /**
+   * Часть 4 (2026-10-14): «показывать архив досок ученикам». По умолчанию ВЫКЛЮЧЕНО: архив —
+   * это записи про завершённый урок, и решение о том, видит ли класс свои доски прошлых занятий,
+   * принимает учитель. Ученику при включённом переключателе отдаются ТОЛЬКО доски: ни комментариев,
+   * ни списка участников (см. routes/lessonArchive.ts).
+   */
+  boardArchivePublic: boolean('board_archive_public').notNull().default(false),
 }, (t) => [index('classes_teacher_idx').on(t.teacherId)]);
 
 export const classMembers = pgTable('class_members', {
@@ -344,6 +351,27 @@ export const lessonHands = pgTable('lesson_hands', {
 export type User = typeof users.$inferSelect;
 export type Class = typeof classes.$inferSelect;
 export type InviteCode = typeof inviteCodes.$inferSelect;
+
+/**
+ * Часть 4 (2026-10-14): кто на уроке был. Минимальная запись «приход и уход» — одна строка на
+ * (сессия, человек): `joined_at` ставится при первом входе, `left_at` — при выходе из сокета урока
+ * и при завершении урока. Хранится ровно факт присутствия, без времени у микрофона и без каких-либо
+ * данных о том, ЧТО говорил участник.
+ *
+ * Зачем это архиву: «сколько человек было на уроке» — единственный вопрос об участниках, на который
+ * можно ответить честно после того, как комната закрылась (список LiveKit живёт только во время
+ * урока). Таблица новая ⇒ RLS включён, политик нет, привилегий не выдано (posture 0019/0021/0025).
+ */
+export const lessonAttendance = pgTable('lesson_attendance', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('lesson_session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+  leftAt: timestamp('left_at', { withTimezone: true }),
+}, (t) => [
+  unique('lesson_attendance_session_user_key').on(t.sessionId, t.userId),
+  index('lesson_attendance_session_idx').on(t.sessionId),
+]);
 
 /** §3.7 whiteboard: merged Excalidraw snapshot per (session, page).
  *  `title` is the teacher's label for the page (plain text, ≤40 chars, board-pages task 1б);

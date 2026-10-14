@@ -134,6 +134,29 @@ describe('gateEdits — кто что имеет право менять на д
     expect(r.rejected).toEqual([]);
   });
 
+  it('the whole scene is capped — and the cap holds the teacher too', () => {
+    const big = el('t1', 1, { data: 'x'.repeat(600_000) });
+    const { scene, authors } = fresh([T, big], [T, el('t2')]);
+    const r = gateEdits({
+      incoming: [el('t3', 1, { data: 'y'.repeat(600_000) })], scene, authors, userId: T, teacher: true,
+      maxSceneBytes: 900_000,
+    });
+    expect(r.accepted).toEqual([]);
+    expect(r.overScene).toBe(true);
+    expect(r.overLimit, 'это не лимит ученика — подсказка другая').toBe(false);
+  });
+
+  it('deleting never hits the scene cap: it is what frees the space', () => {
+    const big = el('t1', 1, { data: 'x'.repeat(600_000) });
+    const { scene, authors } = fresh([T, big]);
+    const r = gateEdits({
+      incoming: [el('t1', 2, { data: 'x'.repeat(600_000), isDeleted: true })], scene, authors,
+      userId: T, teacher: true, maxSceneBytes: 100,
+    });
+    expect(r.accepted.length).toBe(1);
+    expect(r.overScene).toBe(false);
+  });
+
   it('`locked` never comes from the client: the server strips it before the scene sees it', () => {
     const { scene, authors } = fresh();
     const r = gateEdits({ incoming: [el('x1', 1, { locked: false })], scene, authors, userId: A, teacher: false });

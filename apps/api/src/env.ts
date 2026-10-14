@@ -67,6 +67,9 @@ const envSchema = z
   // Auth rate caps. Production keeps the strict defaults (login 10/min, code
   // attempts 8/min); the e2e suite logs in far more than a real user, so the
   // stack overrides these to keep the run from tripping its own safety net.
+  // Часть 4: срок хранения архива уроков в днях. 0 (по умолчанию) — НЕ удалять никогда:
+  // архив — учебная история, и терять её по умолчанию нельзя.
+  BOARD_ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
   RATE_LOGIN_MAX: z.coerce.number().default(10),
   RATE_CODE_MAX: z.coerce.number().default(8),
 })

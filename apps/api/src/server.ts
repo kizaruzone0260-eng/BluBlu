@@ -39,6 +39,14 @@ async function main() {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
     import('./services/chat.js').then((m) => m.sweepChatTickets(db)).catch(() => undefined);
     import('./services/bot.js').then((m) => m.sweepBotState(db)).catch(() => undefined);
+    // часть 4: срок хранения архива. 0 (по умолчанию) — функция выключена, и sweepArchive
+    // возвращает 0, не трогая базу.
+    if (env.BOARD_ARCHIVE_RETENTION_DAYS > 0) {
+      import('./services/lessonArchive.js')
+        .then((m) => m.sweepArchive(db, env.BOARD_ARCHIVE_RETENTION_DAYS))
+        .then((n) => { if (n) console.log(`archive: удалено записей старше ${env.BOARD_ARCHIVE_RETENTION_DAYS} дн. — ${n}`); })
+        .catch(() => undefined);
+    }
   }, 10 * 60_000).unref?.();
   // Telegram webhook registration (best-effort; server admin does it too).
   // Item 5: PUBLIC_URL (Render/cloudflared address) is used when DOMAIN is not set.

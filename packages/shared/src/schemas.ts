@@ -70,6 +70,8 @@ export const classCreateSchema = z.object({
     .default('#4f46e5'),
   // bot task §3: publish this class schedule to the Telegram bot by name
   botPublicSchedule: z.boolean().optional().default(false),
+  // часть 4: показывать ученикам архив досок этого класса (по умолчанию — нет)
+  boardArchivePublic: z.boolean().optional().default(false),
 });
 
 export const classUpdateSchema = classCreateSchema.partial();

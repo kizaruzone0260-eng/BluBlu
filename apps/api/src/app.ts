@@ -24,6 +24,7 @@ import { noteRoutes } from './routes/notes.js';
 import { eventRoutes } from './routes/events.js';
 import { lessonRoutes } from './routes/lessons.js';
 import { boardRoutes } from './routes/board.js';
+import { lessonArchiveRoutes } from './routes/lessonArchive.js';
 import { studentNoteRoutes } from './routes/studentNotes.js';
 import { telegramRoutes } from './routes/telegram.js';
 import { chatRoutes } from './routes/chat.js';
@@ -304,6 +305,7 @@ export async function buildApp(
   await app.register(eventRoutes, { db });
   await app.register(lessonRoutes, { db });
   await app.register(boardRoutes, { db });
+  await app.register(lessonArchiveRoutes, { db }); // часть 4: архив уроков
   await app.register(studentNoteRoutes, { db });
   await app.register(telegramRoutes, { db });
   await app.register(chatRoutes, { db }); // item 8

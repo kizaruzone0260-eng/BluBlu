@@ -11,7 +11,7 @@ import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
 import {
   loadPage, listPages, listPagesWithTitles, mergeElements, gateEdits, lockForeign,
-  countByAuthor, wipeAuthor, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES, type ExEl,
+  countByAuthor, wipeAuthor, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES, MAX_SCENE_BYTES, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
 
@@ -200,6 +200,13 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s) return reply.code(404).send({ error: 'notFound' });
     const cls = await resolveClass(db, req.user!.id, req.user!.role, s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
+    /*
+     * Часть 4: завершённый урок ученик читает только если учитель включил в классе «показывать
+     * архив досок ученикам». Выключенный архив неотличим от чужого класса — тот же 404.
+     */
+    if (s.endedAt && req.user!.role !== 'teacher' && !cls.boardArchivePublic) {
+      return reply.code(404).send({ error: 'notFound' });
+    }
     const rows = await listPagesWithTitles(db, id);
     const out: { pageNo: number; title: string; elements: unknown[] }[] = [];
     for (const row of rows) {
@@ -210,7 +217,9 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
   });
 
   // Teacher saves a page snapshot directly (offline editing after the lesson)
-  app.put('/api/lessons/:id/board/page', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+  app.put('/api/lessons/:id/board/page', {
+    preHandler: app.authenticateTeacher,
+  }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const s = await getSession(db, id);
     if (!s) return reply.code(404).send({ error: 'notFound' });
@@ -455,12 +464,14 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               incoming: els, scene: r.elements, authors: r.authors,
               userId: who.userId, teacher: isTeacherMsg,
             });
-            if (!isTeacherMsg && gate.rejected.length) {
+            if (gate.rejected.length && (isTeacherMsg ? gate.overScene : true)) {
               // Отказанному возвращаем авторитетный снимок ВСЕЙ страницы: версии у его локальной
               // копии уже выше, чем у отброшенных элементов, поэтому точечная доставка ничего бы
               // не исправила — клиент обязан переставить сцену целиком.
-              notice(gate.overLimit ? 'boardStudentLimit' : 'boardForeign',
-                gate.overLimit ? { maxElements: MAX_STUDENT_ELEMENTS, maxBytes: MAX_STUDENT_BYTES } : {});
+              notice(gate.overScene ? 'boardSceneLimit'
+                : gate.overLimit ? 'boardStudentLimit' : 'boardForeign',
+              gate.overScene ? { maxBytes: MAX_SCENE_BYTES }
+                : gate.overLimit ? { maxElements: MAX_STUDENT_ELEMENTS, maxBytes: MAX_STUDENT_BYTES } : {});
               sendSceneTo(r, socket, who);
             }
             const { changed } = mergeElements(r.elements, gate.accepted);
