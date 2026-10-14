@@ -12,7 +12,7 @@ interface InviteRow {
   expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
 }
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
-interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean }
+interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean; boardArchivePublic?: boolean }
 
 export default function ClassDetail() {
   const { id = '' } = useParams();
@@ -57,6 +57,12 @@ export default function ClassDetail() {
   // bot task §3 — public schedule switch
   const botSchedule = useMutation({
     mutationFn: (on: boolean) => api(`/api/classes/${id}`, { method: 'PATCH', body: JSON.stringify({ botPublicSchedule: on }) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); },
+  });
+  // часть 4 — «показывать архив досок ученикам»: по умолчанию выключено, решает сервер на каждом
+  // запросе архива, здесь только переключатель.
+  const archivePublic = useMutation({
+    mutationFn: (on: boolean) => api(`/api/classes/${id}`, { method: 'PATCH', body: JSON.stringify({ boardArchivePublic: on }) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); },
   });
 
@@ -105,6 +111,15 @@ export default function ClassDetail() {
       {cls?.description && <p className="muted">{cls.description}</p>}
       {me?.role === 'teacher' && (
         <p><Link to={`/lesson?classId=${id}`}><button style={{ marginTop: 0 }} className="secondary">{t('lesson.title')}</button></Link></p>
+      )}
+      {/* часть 4: ученику архив виден ровно тогда, когда учитель включил переключатель класса;
+          доступ всё равно проверяет сервер (выключенный архив и чужой класс отвечают 404) */}
+      {me?.role === 'student' && Boolean(cls?.boardArchivePublic) && (
+        <p>
+          <Link to={`/classes/${id}/archive`} data-testid="student-archive-link">
+            <button style={{ marginTop: 0 }} className="secondary">{t('archive.title')}</button>
+          </Link>
+        </p>
       )}
       <Feed classId={id} />
       {me?.role === 'teacher' && (
@@ -207,6 +222,25 @@ export default function ClassDetail() {
               <span>{cls?.botPublicSchedule ? t('classes.botScheduleOn') : t('classes.botScheduleOff')}</span>
             </label>
             <p className="muted" style={{ fontSize: '.85rem' }}>{t('classes.botScheduleHint')}</p>
+          </div>
+          {/* часть 4 — архив уроков класса: переключатель доступа учеников и вход в сам архив */}
+          <div className="card" data-testid="class-archive">
+            <h2>{t('archive.title')}</h2>
+            <label className="row" style={{ alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" data-testid="archive-public-on"
+                checked={Boolean(cls?.boardArchivePublic)}
+                onChange={(e) => archivePublic.mutate(e.target.checked)}
+                disabled={archivePublic.isPending} />
+              <span>{t('classes.archiveSwitch')}</span>
+            </label>
+            <p className="muted" style={{ fontSize: '.85rem' }}>
+              {cls?.boardArchivePublic ? t('classes.archiveSwitchOn') : t('classes.archiveSwitchOff')}
+            </p>
+            <p style={{ marginBottom: 0 }}>
+              <Link to={`/classes/${id}/archive`} data-testid="class-archive-open">
+                <button type="button" className="secondary" style={{ marginTop: 0 }}>{t('archive.open')}</button>
+              </Link>
+            </p>
           </div>
           {/* C.2 — class settings: rename / description / color / archive */}
           {cls && edit && (

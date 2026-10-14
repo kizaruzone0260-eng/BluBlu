@@ -252,6 +252,13 @@ export default function Calendar() {
             {actions.kind === 'lesson' && (
               <Link to={`/lesson?eventId=${actions.eventId}`} data-testid="act-join"><button style={{ marginTop: 0 }}>{t('cal.joinLesson')}</button></Link>
             )}
+            {/* часть 4: прошедший урок живёт в архиве — ссылка по id события, сервер сам найдёт
+                сессию этого события и решит, показывать ли её этому человеку */}
+            {actions.kind === 'lesson' && Date.now() >= +new Date(actions.endsAt) && (
+              <Link to={`/classes/${actions.classId}/archive?event=${actions.eventId}`} data-testid="act-archive">
+                <button className="secondary" style={{ marginTop: 0 }}>🗂 {t('archive.openFromEvent')}</button>
+              </Link>
+            )}
             <a href={googleTemplate(actions)} target="_blank" rel="noreferrer">
               <button className="secondary" style={{ marginTop: 0 }} data-testid="act-google">📅 {t('cal.evGoogle')}</button>
             </a>
@@ -332,6 +339,13 @@ export default function Calendar() {
             )}
             {form.kind === 'lesson' && form.id && (
               <Link to={`/lesson?eventId=${form.id}`}><button type="button" className="secondary">{t('cal.joinLesson')}</button></Link>
+            )}
+            {/* часть 4: у учителя прошедший урок открывается в архиве той же ссылкой, что и у
+                ученика в карточке действий */}
+            {form.kind === 'lesson' && form.id && formOcc && Date.now() >= +new Date(formOcc.endsAt) && (
+              <Link to={`/classes/${formOcc.classId}/archive?event=${form.id}`} data-testid="form-archive">
+                <button type="button" className="secondary">🗂 {t('archive.openFromEvent')}</button>
+              </Link>
             )}
             {/* calendar task §5: per-event export buttons for the teacher too */}
             {form.id && formOcc && (

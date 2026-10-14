@@ -33,13 +33,17 @@ function pngSize(bytes: Uint8Array): { width: number; height: number } {
  * counter), choose the page size, get ONE PDF with the chosen boards in tab order. Everything
  * happens in this tab: pdf-lib is imported only when the teacher presses Скачать, boards are
  * rasterized one at a time, and the file leaves as a `blob:` download.
+ *
+ * Часть 4: окно стало общим для урока и архива. В архиве нет «живой» сцены — показывать нечего,
+ * поэтому `current`/`liveElements` необязательны, и без них окно работает по сохранённым доскам.
  */
 export default function BoardExportDialog({ sessionId, classId, current, liveElements, onClose }: {
   sessionId: string;
   classId: string;
-  current: number;
+  /** the board open on the teacher's screen right now — absent in the archive */
+  current?: number;
   /** the scene on the teacher's screen right now — it may hold ink not persisted yet */
-  liveElements: () => RawEl[] | null;
+  liveElements?: () => RawEl[] | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -66,8 +70,9 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
         if (!alive) return;
         const rows = [...(data.pages ?? [])].sort((a, b) => a.pageNo - b.pageNo);
         // the board on screen now: export its live scene, not the copy persisted ≤10 s ago
-        for (const r of rows) if (r.pageNo === current) {
-          const live = liveElements();
+        // (в архиве живого холста нет — `current` не передан, и цикл просто ничего не меняет)
+        for (const r of rows) if (current !== undefined && r.pageNo === current) {
+          const live = liveElements?.();
           if (live) r.elements = live as RawEl[];
         }
         setBoards(rows);

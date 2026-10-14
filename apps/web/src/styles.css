@@ -862,3 +862,33 @@ button.danger-text { color: var(--danger); }
 @media (max-width: 1023px) { .devices-sheet { left: 8px; right: 8px; width: auto; } }
 /* тост не должен ложиться на панель управления */
 .lesson-shell .toast { bottom: calc(var(--bar-h) + var(--sp-4)); }
+
+/* ══ архив завершённых уроков (часть 4, 2026-10-14) ══════════════════════════
+   Список уроков — обычная таблица, карточки досок — сетка, которая на 390 px
+   схлопывается в одну колонку. Миниатюра всегда белая: это картинка материала,
+   а не интерфейс, и в тёмной теме она не должна становиться нечитаемой. */
+.archive-table { width: 100%; }
+.archive-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.archive-confirm { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.archive-entry { margin-top: var(--sp-3); }
+.archive-entry .panel-tablist { margin: var(--sp-2) 0; }
+.archive-boards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-2); margin-top: var(--sp-2);
+}
+.archive-board { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.archive-board-open { margin-top: 0; padding: 0; border: none; background: none; cursor: zoom-in; text-align: left; }
+.archive-thumb {
+  display: block; width: 100%; max-width: 320px; aspect-ratio: 4 / 3; object-fit: contain;
+  background: #fff; border: 1px solid var(--border); border-radius: var(--r-md);
+}
+.archive-thumb-full { max-width: 100%; aspect-ratio: auto; max-height: 78vh; cursor: zoom-out; }
+.archive-thumb-empty { display: block; background: var(--surface-2); }
+.archive-board-meta { display: flex; gap: 6px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+.archive-comments { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.archive-comments li { border-left: 2px solid var(--border-strong); padding-left: var(--sp-2); }
+.archive-comment-text { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .archive-boards { grid-template-columns: 1fr; }
+  .archive-thumb { max-width: 100%; }
+}

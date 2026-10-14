@@ -96,7 +96,10 @@
     "removeMember": "Remove from class",
     "removeMemberConfirm": "Remove this student from the class? Their sheets will be kept.",
     "moveMember": "Move to another class",
-    "resetPw": "Reset password"
+    "resetPw": "Reset password",
+    "archiveSwitch": "Show the board archive to students",
+    "archiveSwitchOn": "Students see the finished lesson boards of this class — view only, without comments and without the attendance list.",
+    "archiveSwitchOff": "The archive is open to you alone. Students see neither the boards, nor the comments, nor who attended."
   },
   "feed": {
     "title": "Materials and announcements",
@@ -308,6 +311,7 @@
     "boardNoPermission": "The teacher has stopped you drawing on this board",
     "boardForeign": "That is somebody else's drawing — only they or the teacher can change it",
     "boardStudentLimit": "Limit per student: {{max}} elements or {{mb}} MB on one board",
+    "boardSceneLimit": "This board reached its limit: {{mb}} MB per board",
     "boardTooFast": "Too many messages at once — wait a second",
     "boardsAria": "Lesson boards",
     "boardPdf": "Download PDF",
@@ -461,7 +465,7 @@
   },
   "privacy": {
     "title": "Privacy Policy",
-    "version": "Document version: 2026-10-06",
+    "version": "Document version: 2026-10-14",
     "intro": "BluBlu is a learning platform installed and administered by its owner (a school or a teacher). This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {
@@ -476,7 +480,8 @@
           "Account data: email address, first and last name, interface language and time zone.",
           "Learning content users create: classes, materials and files, notes, chat messages, calendar events, boards and student sheets.",
           "Optionally — your Telegram chat identifier (chat_id) for notifications.",
-          "The build number and technical identifiers (uuid) are not personal data by themselves."
+          "The build number and technical identifiers (uuid) are not personal data by themselves.",
+          "Lesson attendance: for every finished lesson the server keeps who joined and when they left (a user id and two timestamps). Students never see this list — it is open to the teacher of that class in the lesson archive."
         ]
       },
       {
@@ -513,7 +518,8 @@
         "b": [
           "Account data and learning content are kept while the account or class is active.",
           "The action log (audit_log) and chat messages are kept until the corresponding account or class is deleted.",
-          "On full account deletion personal data is anonymized (the email is reset), and student notes, sheets, class memberships, the Telegram link and session tokens are removed by cascade. Materials and announcements created by a teacher stay available to the class they were created for."
+          "On full account deletion personal data is anonymized (the email is reset), and student notes, sheets, class memberships, the Telegram link and session tokens are removed by cascade. Materials and announcements created by a teacher stay available to the class they were created for.",
+          "The lesson archive (its boards, comments and attendance record) is kept until the teacher deletes the entry, or until BOARD_ARCHIVE_RETENTION_DAYS have passed if the owner switches that retention on. The default is 0: nothing is ever deleted by itself."
         ]
       },
       {
@@ -652,7 +658,7 @@
   },
   "terms": {
     "title": "Terms of Service",
-    "version": "Document version: 2026-10-06",
+    "version": "Document version: 2026-10-14",
     "intro": "Terms for using the BluBlu platform. This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {
@@ -749,5 +755,34 @@
     "offlineBody": "The connection to the server seems lost. Check your internet and try again.",
     "home": "Go home",
     "retry": "Retry"
+  },
+  "archive": {
+    "title": "Lesson archive",
+    "teacherView": "Teacher: comments and participants are visible",
+    "when": "Date and time",
+    "duration": "Duration",
+    "boards": "Boards",
+    "comments": "Comments",
+    "participants": "Participants",
+    "min": "{{n}} min",
+    "open": "Open",
+    "openFromEvent": "Open in archive",
+    "delete": "Delete",
+    "deleteConfirm": "Delete archive entry",
+    "deleteAsk": "Delete the lesson of {{date}} together with its boards and comments?",
+    "more": "Show older lessons",
+    "empty": "No finished lessons yet",
+    "noBoards": "Nothing was drawn in this lesson",
+    "noComments": "No comments were left",
+    "noPeople": "There is no attendance record",
+    "tabsAria": "Lesson archive sections",
+    "who": "Who",
+    "joined": "Joined",
+    "left": "Left",
+    "kb": "{{n}} KB",
+    "blank": "empty board",
+    "noThumb": "the thumbnail could not be drawn",
+    "pinned": "pinned",
+    "answered": "answered"
   }
 }

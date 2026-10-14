@@ -29,6 +29,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 // Performance (Phase 4): the heavy, editor/media surfaces are lazy-loaded so
 // Excalidraw, FullCalendar, LiveKit and Tiptap stay OUT of the initial chunk.
 const ClassDetail = lazy(() => import('./pages/ClassDetail'));
+// часть 4: архив урока — своя ленивая страница, чтобы Excalidraw-миниатюры не ехали в начальный чанк
+const ClassArchive = lazy(() => import('./pages/ClassArchive'));
 const MaterialNew = lazy(() => import('./pages/MaterialNew'));
 const Calendar = lazy(() => import('./pages/Calendar'));
 const Lesson = lazy(() => import('./pages/Lesson'));
@@ -159,6 +161,9 @@ export default function App() {
             <Route path="/notes" element={me.role === 'teacher' ? <Notes /> : <ErrorScreen kind="403" />} />
             <Route path="/classes" element={<Classes />} />
             <Route path="/classes/:id" element={<ClassDetail />} />
+            {/* часть 4: архив класса. Роль здесь не проверяется — права решает сервер, и ученику
+                с выключенным переключателем положен тот же 404, что и чужому классу */}
+            <Route path="/classes/:id/archive" element={<ClassArchive />} />
             {/* material task A — the create form is a separate page, teacher only */}
             <Route path="/classes/:id/material/new" element={me.role === 'teacher' ? <MaterialNew /> : <ErrorScreen kind="403" />} />
             <Route path="/calendar" element={<Calendar />} />

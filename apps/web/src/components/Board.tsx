@@ -121,6 +121,8 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
                   ? t('lesson.boardStudentLimit', {
                     max: msg.maxElements ?? 300, mb: Math.round((msg.maxBytes ?? MB) / MB),
                   })
+                  : msg.code === 'boardSceneLimit'
+                    ? t('lesson.boardSceneLimit', { mb: Math.round((msg.maxBytes ?? 2_000_000) / MB) })
                   : msg.code === 'boardNoPermission' ? t('lesson.boardNoPermission')
                   : msg.code === 'boardTooFast' ? t('lesson.boardTooFast')
                   : msg.code === 'boardNothingToPurge' ? t('lesson.boardPurgeNone')
