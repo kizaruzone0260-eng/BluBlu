@@ -25,5 +25,13 @@ ALTER TABLE "lesson_attendance" ADD CONSTRAINT "lesson_attendance_user_id_users_
 CREATE INDEX "lesson_attendance_session_idx" ON "lesson_attendance" USING btree ("lesson_session_id");--> statement-breakpoint
 ALTER TABLE "lesson_attendance" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 REVOKE ALL ON TABLE "lesson_attendance" FROM PUBLIC;--> statement-breakpoint
-REVOKE ALL ON TABLE "lesson_attendance" FROM anon;--> statement-breakpoint
-REVOKE ALL ON TABLE "lesson_attendance" FROM authenticated;
+/*
+ * Роли `anon` и `authenticated` создаёт Supabase — на обычном Postgres (CI, локальный
+ * embedded-postgres) их нет, а REVOKE на несуществующую роль это ошибка 42704, которая роняет
+ * всю миграцию. Поза 0025: отзыв выполняется только тогда, когда роли есть.
+ */
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'REVOKE ALL ON TABLE "lesson_attendance" FROM anon, authenticated';
+  END IF;
+END $$;
