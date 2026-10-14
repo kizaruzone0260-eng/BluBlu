@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   gateEdits, lockForeign, countByAuthor, wipeAuthor, mergeElements,
+  simplifyElement, simplifyScene, MAX_POINTS_PER_ELEMENT,
   MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES, type ExEl,
 } from '../../src/services/board.js';
 
@@ -197,5 +198,58 @@ describe('lockForeign / countByAuthor / wipeAuthor — что сервер де�
     mergeElements(scene, wiped);
     expect(scene.a1, 'merge по isDeleted убирает элемент со сцены').toBeUndefined();
     expect(scene.b1).toBeDefined();
+  });
+});
+
+describe('плотный штрих от руки: замер и упрощение (часть 8, 2026-10-14)', () => {
+  /**
+   * Штрих ровно в том виде, в каком Excalidraw кладёт его в snapshot: массив пар координат.
+   * 2000 точек — не выдумка: перо/палец дают ~60 снимков в секунду, долгий росчерк их набирает
+   * столько сам.
+   */
+  const stroke = (id: string, n: number): ExEl => ({
+    id, version: 1, versionNonce: 1, type: 'draw', x: 12, y: 34, width: 400, height: 220,
+    points: Array.from({ length: n }, (_, i) => [
+      Math.round(400 * (i / (n - 1)) * 100) / 100,
+      Math.round(220 * Math.sin((i / (n - 1)) * 6.2) * 100) / 100,
+    ]),
+    pressures: Array.from({ length: n }, (_, i) => i % 3),
+    lastCommittedPoint: null, simulatePressureParsing: false,
+  });
+  const bytes = (o: unknown) => Buffer.byteLength(JSON.stringify(o), 'utf8');
+
+  it('измеряет плотную доску: до упрощения за 500 КБ, после — внутри', () => {
+    const raw = Array.from({ length: 20 }, (_, i) => stroke(`d${i}`, 2000));
+    const rawBytes = bytes({ elements: raw });
+    const gate = gateEdits({
+      incoming: raw, scene: {}, authors: {}, userId: T, teacher: true,
+    });
+    const afterBytes = bytes({ elements: gate.accepted });
+    console.log(`MEASURE freehand 20x2000: до ${rawBytes} Б, после ${afterBytes} Б, отказов ${gate.rejected.length}`);
+    expect(gate.accepted).toHaveLength(20);
+    expect(gate.rejected, 'после нормализации сцена не упирается в потолок').toEqual([]);
+    expect(rawBytes, 'замер: такая доска больше порога в 500 КБ').toBeGreaterThan(500_000);
+    expect(afterBytes, 'упрощённая та же доска — меньше порога').toBeLessThan(500_000);
+    for (const e of gate.accepted) {
+      expect((e.points as unknown[]).length, 'потолок точек на штрих').toBe(MAX_POINTS_PER_ELEMENT);
+      expect(e.pressures, 'давления по прежнему массиву снимаются').toBeUndefined();
+    }
+  });
+
+  it('упрощение держит первую и последнюю точки, а короткий штрих не трогает вовсе', () => {
+    const long = stroke('d1', 2000);
+    const simple = simplifyElement(long);
+    const pts = simple.points as number[][];
+    expect(pts.length).toBe(MAX_POINTS_PER_ELEMENT);
+    expect(pts[0], 'начало линии остаётся на месте').toEqual((long.points as number[][])[0]);
+    expect(pts[pts.length - 1], 'конец линии остаётся на месте').toEqual((long.points as number[][]).at(-1));
+    const short = el('short');
+    expect(simplifyElement(short), 'то, что короче потолка, возвращается тем же объектом').toBe(short);
+  });
+
+  it('прямое сохранение страницы нормализует так же', () => {
+    const out = simplifyScene([stroke('a', 1200), el('b')]);
+    expect((out[0].points as unknown[]).length).toBe(MAX_POINTS_PER_ELEMENT);
+    expect((out[1].points as unknown[]).length, 'короткий элемент не тронут').toBe(2);
   });
 });

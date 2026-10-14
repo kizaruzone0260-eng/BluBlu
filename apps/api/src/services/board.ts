@@ -100,6 +100,41 @@ export const MAX_STUDENT_BYTES = 1_048_576;
  */
 export const MAX_SCENE_BYTES = 2_000_000;
 
+/**
+ * Часть 8 (замер 2026-10-14): потолок точек на один штрих.
+ *
+ * Измерено на сцене, какой Excalidraw хранит рисованное от руки (20 штрихов по 2000 точек):
+ * **639 809 Б** JSON — больше 500 КБ на одну доску, и это один урок. Долгие нажатия пера/пальца
+ * дают ~60 точек в секунду, так что 2000 точек — не аномалия, а нормальный плотный штрих. Ровные
+ * 500 точек дают 168 475 Б (в 3,8 раза меньше) и не меняют форму: на холсте в 400 px шаг
+ * децимации — доли пикселя.
+ */
+export const MAX_POINTS_PER_ELEMENT = 500;
+
+/**
+ * Упрощение штриха: равномерная децимация, где первая и последняя точка сохраняются всегда
+ * (иначе оборвётся начало и конец линии). `pressures`/`thinPoints` считаются по прежнему массиву
+ * и после децимации были бы парами разной длины — Excalidraw дорисует по устаревшим данным,
+ * поэтому они снимаются.
+ */
+export function simplifyElement(el: ExEl): ExEl {
+  const pts = (el as { points?: unknown }).points;
+  if (!Array.isArray(pts) || pts.length <= MAX_POINTS_PER_ELEMENT) return el;
+  const step = (pts.length - 1) / (MAX_POINTS_PER_ELEMENT - 1);
+  const keep: unknown[] = [];
+  for (let i = 0; i < MAX_POINTS_PER_ELEMENT - 1; i++) keep.push(pts[Math.round(i * step)]);
+  keep.push(pts[pts.length - 1]);
+  const next = { ...el, points: keep } as ExEl;
+  delete (next as { pressures?: unknown }).pressures;
+  delete (next as { thinPoints?: unknown }).thinPoints;
+  return next;
+}
+
+/** Для маршрута прямого сохранения: та же норма, что и для живого кадра. */
+export function simplifyScene(elements: ExEl[]): ExEl[] {
+  return elements.map(simplifyElement);
+}
+
 /** Размер элемента в байтах (UTF-8), для лимита «1 МБ на ученика на доску». */
 function sizeOf(el: ExEl): number {
   return Buffer.byteLength(JSON.stringify(el) ?? '', 'utf8');
@@ -162,9 +197,12 @@ export function gateEdits(params: {
     if (!teacher && authors[id] === userId) { mine += 1; mineBytes += size; }
   }
 
-  for (const el of incoming) {
-    if (!el || typeof el.id !== 'string' || typeof el.version !== 'number') continue;
-    delete (el as { locked?: unknown }).locked;
+  for (const raw of incoming) {
+    if (!raw || typeof raw.id !== 'string' || typeof raw.version !== 'number') continue;
+    delete (raw as { locked?: unknown }).locked;
+    // Нормализация ДО подсчёта байт: лимиты должны считаться по тому, что реально ляжет в базу,
+    // а не по тому, что прислал клиент.
+    const el = simplifyElement(raw);
     const cur = scene[el.id];
     const author = authors[el.id];
     const curSize = cur && !cur.isDeleted ? sizeOf(cur) : 0;

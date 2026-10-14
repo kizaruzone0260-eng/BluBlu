@@ -11,7 +11,8 @@ import { getSession } from '../services/lessons.js';
 import { whiteboards, lessonSessions } from '../db/schema.js';
 import {
   loadPage, listPages, listPagesWithTitles, mergeElements, gateEdits, lockForeign,
-  countByAuthor, wipeAuthor, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES, MAX_SCENE_BYTES, type ExEl,
+  countByAuthor, wipeAuthor, simplifyScene, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES,
+  MAX_SCENE_BYTES, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
 
@@ -233,7 +234,9 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
       elements: z.array(z.object({ id: z.string() }).passthrough()),
     }).safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
-    const snapshot = { elements: p.data.elements, appState: {} };
+    // Часть 8: прямой путь сохранения хранит то же, что и живой кадр, — штрих не может быть
+    // длистрее потолка точек только потому, что пришёл не по сокету.
+    const snapshot = { elements: simplifyScene(p.data.elements as ExEl[]), appState: {} };
     // Часть 3: авторство переживает прямую запись. То, что уже было на странице, остаётся у своего
     // автора (в том числе у ученика), а всё новое считается учительским — этот маршрут доступен
     // только учителю, и выдумать ученика он не может.
