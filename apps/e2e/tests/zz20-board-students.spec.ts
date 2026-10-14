@@ -52,7 +52,9 @@ test.describe('students drawing on the board (part 3)', () => {
     const lesson = await makeLesson(api, token, 'Доска для учеников');
     classId = lesson.classId; sessionId = lesson.sessionId;
     const stamp = Date.now();
-    aEmail = `bdA${stamp}@x.io`; bEmail = `bdB${stamp}@x.io`;
+    // только строчные буквы: сервер нормализует почту в lower case, а поиск id идёт по
+    // точному значению — с заглавной «А» ученик не находился (бордка makeTeacher об этом же)
+    aEmail = `bda${stamp}@x.io`; bEmail = `bdb${stamp}@x.io`;
     // код приглашения одноразовый: на каждого ученика — свой
     const codes = [lesson.inviteCode];
     const extra = await api.post(`/api/classes/${classId}/invites`,

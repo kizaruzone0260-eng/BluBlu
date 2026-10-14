@@ -14,7 +14,7 @@ import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import {
-  dbBoard, m, makeLesson, paint, pinTeacherRussian,
+  BASE, dbBoard, m, makeLesson, paint, pinTeacherRussian,
   teacherLessonPage, teacherToken, type Ctx,
 } from './boardFixtures';
 

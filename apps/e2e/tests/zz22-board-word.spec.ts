@@ -114,10 +114,10 @@ test.describe('board → Word (part 5)', () => {
     expect(core.includes(stack.teacherEmail.toLowerCase()), 'нет почты').toBe(false);
     expect(core.includes('dcterms'), 'core.xml на месте').toBe(true);
 
-    // «Отмена» закрывает окно и не оставляет скачанного файла: вторая загрузка не появляется
-    // (документ собирается в памяти и уходит на диск только в момент клика по кнопке формата)
-    await p.getByTestId('pdf-cancel-close').click();
-    await expect(p.getByTestId('pdf-dialog')).toHaveCount(0);
+    // после скачанного файла окно закрывается само (скачка = успех). Раньше здесь жали
+    // «Отмена», которой в этом состоянии уже нет, — спека висела до таймаута (5m), хотя все
+    // проверки содержимого .docx к тому моменту прошли. Проверяем реальное состояние: окно закрыто
+    await expect(p.getByTestId('pdf-dialog')).toHaveCount(0, { timeout: 20_000 });
     await p.context().close();
   });
 
