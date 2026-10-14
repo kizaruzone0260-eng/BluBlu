@@ -88,7 +88,8 @@ test.describe('board → Word (part 5)', () => {
     expect(names).toContain('[Content_Types].xml');
     m('docx entries', names);
 
-    const media = entries.filter((e) => e.name.startsWith('word/media/'));
+    // каталог `word/media/` тоже приходит списком — считается только файл-картинка
+    const media = entries.filter((e) => /^word\/media\/.+\.png$/i.test(e.name));
     expect(media.length, 'одна картинка на доску').toBe(2);
     for (const png of media) {
       const s = pngSize(png.data);
@@ -132,7 +133,7 @@ test.describe('board → Word (part 5)', () => {
     const dl = p.waitForEvent('download');
     await p.getByTestId('word-download').click();
     const entries = unzip(readFileSync((await (await dl).path())!));
-    const png = entries.find((e) => e.name.startsWith('word/media/'))!;
+    const png = entries.find((e) => /^word\/media\/.+\.png$/i.test(e.name))!;
     const s = pngSize(png.data);
     const doc = find(entries, 'word/document.xml').toString('utf8');
     /*

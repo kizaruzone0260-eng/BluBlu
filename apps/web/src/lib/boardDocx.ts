@@ -10,8 +10,11 @@
  */
 import { boardExportBaseName } from './boardPdf';
 
-/** A4 ландшафт в миллиметрах и поле 10 мм со всех сторон. */
-const A4_LANDSCAPE_MM = { width: 297, height: 210 };
+/**
+ * A4 в портретных миллиметрах (210×297) — их и надо передавать в docx вместе с
+ * `orientation: LANDSCAPE`, см. пояснение в `buildBoardDocx`. Поле 10 мм со всех сторон.
+ */
+const A4_PORTRAIT_MM = { width: 210, height: 297 };
 const MARGIN_MM = 10;
 /** 1 мм в тви́пах (единицаMeasure у docx для полей и размеров страницы). */
 const MM_TO_TWIPS = 56.6929;
@@ -26,8 +29,9 @@ export type DocxBoardImage = { png: Uint8Array; width: number; height: number };
  * у неё и так не больше потолка `fitDimensions` (6 000 px на сторону), который стоит в растре.
  */
 export function docxImageSize(width: number, height: number): { width: number; height: number } {
-  const boxW = (A4_LANDSCAPE_MM.width - 2 * MARGIN_MM) * MM_TO_PX;
-  const boxH = (A4_LANDSCAPE_MM.height - 2 * MARGIN_MM) * MM_TO_PX;
+  // альбомная страница: 297 мм широкая, 210 мм высокая
+  const boxW = (A4_PORTRAIT_MM.height - 2 * MARGIN_MM) * MM_TO_PX;
+  const boxH = (A4_PORTRAIT_MM.width - 2 * MARGIN_MM) * MM_TO_PX;
   const s = Math.min(boxW / Math.max(1, width), boxH / Math.max(1, height));
   return { width: Math.max(1, Math.round(width * s)), height: Math.max(1, Math.round(height * s)) };
 }
@@ -59,8 +63,17 @@ export async function buildBoardDocx(opts: {
         page: {
           size: {
             orientation: PageOrientation.LANDSCAPE,
-            width: Math.round(A4_LANDSCAPE_MM.width * MM_TO_TWIPS),
-            height: Math.round(A4_LANDSCAPE_MM.height * MM_TO_TWIPS),
+            /*
+             * docx 9.11.0 разворачивает страницу сам: он кладёт в `w:pgSz/@w` то, что получил в
+             * `width`, а в `@h` — то, что в `height`, и при ориентации LANDSCAPE меняет их местами.
+             * Word трактует `@w` как фактическую ширину, а `orient` — как метаданные, поэтому сюда
+             * намеренно идут портретные числа: на выходе `<w:pgSz w:w="16838" w:h="11906"
+             * w:orient="landscape"/>` — настоящая альбомная A4. Если передать 297×210, получится
+             * перевёрнутая пара (проверено на установленном пакете), и страница в Word была бы
+             * книжной, а не альбомной.
+             */
+            width: Math.round(A4_PORTRAIT_MM.width * MM_TO_TWIPS),
+            height: Math.round(A4_PORTRAIT_MM.height * MM_TO_TWIPS),
           },
           margin: {
             top: Math.round(MARGIN_MM * MM_TO_TWIPS), right: Math.round(MARGIN_MM * MM_TO_TWIPS),
