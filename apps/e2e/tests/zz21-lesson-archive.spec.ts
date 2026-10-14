@@ -41,8 +41,8 @@ test.describe('lesson archive (part 4)', () => {
     await p.getByTestId('board-new').click();
     await expect(p.getByTestId('board-tab-2')).toBeVisible({ timeout: 15_000 });
     await paint(p, 'B');
-    // доска уходит на сервер автосейвом раз в 10 с — архив читает то, что успело записаться
-    await p.waitForTimeout(11_000);
+    // ждём состояния, а не времени: архив читает то, что уже легло на сервер
+    await waitInkPages(api, token, sessionId, 2);
     const beforeEnd = await dbBoard(sessionId);
     m('boards on disk before the lesson ends', beforeEnd);
     expect(beforeEnd.length, 'оба листа доски на диске').toBeGreaterThanOrEqual(2);

@@ -234,3 +234,23 @@ export async function paint(page: Page, slot: keyof typeof SLOTS): Promise<void>
 export function inkOf(page: Page, slot: keyof typeof SLOTS | 'text'): Promise<number> {
   return inkIn(page, slot === 'text' ? TEXT.window : SLOTS[slot].window);
 }
+
+/**
+ * Часть 4/5 (2026-10-14): ждать состояния, а не времени.
+ *
+ * Доска сохраняется на сервер автосейвом раз в 10 с. В zz12 это закрыто слепо «подождать
+ * 11 секунд», и приём работал, пока набор не стал длиннее таймера джобы (прогон
+ * 38506706395 был снят таймаутом на 25m21s). Здесь опрашивается обычный REST доски: сколько
+ * страниц с чернилами уже реально лежат в базе. Возвращает число, чтобы спека могла сверить его.
+ */
+export async function waitInkPages(api: Ctx, token: string, sessionId: string, want: number): Promise<number> {
+  let seen = 0;
+  await expect.poll(async () => {
+    const r = await api.get(`/api/lessons/${sessionId}/board`, { headers: { authorization: `Bearer ${token}` } });
+    if (r.status() !== 200) return 0;
+    const pages = ((await r.json()).pages ?? []) as { elements?: { isDeleted?: boolean }[] }[];
+    seen = pages.filter((p) => (p.elements ?? []).some((e) => !e.isDeleted)).length;
+    return seen;
+  }, { timeout: 45_000, intervals: [1_000], message: `pages with ink: want ${want}` }).toBeGreaterThanOrEqual(want);
+  return seen;
+}

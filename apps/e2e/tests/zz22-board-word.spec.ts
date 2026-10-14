@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { find, pngSize, unzip } from './zipReader';
 import {
   BASE, drawText, inkOf, m, makeLesson, paint, pinTeacherRussian, stack, teacherLessonPage, teacherToken,
+  waitInkPages,
   TEXT, type Ctx,
 } from './boardFixtures';
 
@@ -43,7 +44,7 @@ test.describe('board → Word (part 5)', () => {
 
   test('two boards → one .docx with two pictures, two landscape pages, clean metadata', async ({ browser }) => {
     test.setTimeout(300_000);
-    const { classId, className } = await makeLesson(api, token, 'E2E Word');
+    const { classId, className, sessionId } = await makeLesson(api, token, 'E2E Word');
     const p = await teacherLessonPage(browser, classId);
 
     await paint(p, 'A');
@@ -56,7 +57,8 @@ test.describe('board → Word (part 5)', () => {
     await p.getByTestId('board-new').click();
     await expect(p.getByTestId('board-tab-2')).toBeVisible({ timeout: 15_000 });
     await paint(p, 'B');
-    await p.waitForTimeout(11_000);  // автосейв доски: окно экспорта читает сохранённые сцены
+    // автосейв раз в 10 с: окно экспорта читает сохранённые сцены, поэтому ждём состояние
+    await waitInkPages(api, token, sessionId, 2);
 
     await p.getByTestId('board-pdf').click();
     const dialog = p.getByTestId('pdf-dialog');
@@ -120,10 +122,10 @@ test.describe('board → Word (part 5)', () => {
 
   test('a board wider than the page is scaled down instead of being cut off', async ({ browser }) => {
     test.setTimeout(240_000);
-    const { classId } = await makeLesson(api, token, 'E2E Word большая');
+    const { classId, sessionId } = await makeLesson(api, token, 'E2E Word большая');
     const p = await teacherLessonPage(browser, classId);
     await paint(p, 'A');
-    await p.waitForTimeout(11_000);
+    await waitInkPages(api, token, sessionId, 1);
 
     await p.getByTestId('board-pdf').click();
     await expect(p.getByTestId('pdf-pick-1')).toBeVisible({ timeout: 30_000 });

@@ -87,7 +87,10 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # 25 минут стало мало после zz20–zz22: прогон 38506706395 был снят таймаутом ровно на 25m21s
+    # (все остальные джобы — зелёные). Набор растёт вместе с фичами, а «упало 4 теста из-за
+    # таймера» — это не про код. Заодно tracet-snapshot шаг остаётся доступным.
+    timeout-minutes: 40
     needs: build-test
     services:
       # The media server the RTC specs need, so they stop self-skipping. Eight of the 81 tests
