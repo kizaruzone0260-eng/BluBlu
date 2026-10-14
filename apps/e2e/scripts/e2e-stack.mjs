@@ -151,10 +151,11 @@ await admin.unsafe(`
 // the current policy version, so specs that log in reach the app (and the name
 // gate for the intentionally-incomplete accounts) instead of the policy gate.
 // Accounts REGISTERED during a run accept via the register-step-2 checkbox.
-await admin.unsafe(`
+const POLICY_VERSION = readPolicyVersion();
+await admin`
   insert into policy_acceptances (user_id, version, accepted_at)
-  select id, '2026-10-06', now() from users
-  on conflict (user_id) do update set version = '2026-10-06', accepted_at = now()`);
+  select id, ${POLICY_VERSION}, now() from users
+  on conflict (user_id) do update set version = ${POLICY_VERSION}, accepted_at = now()`;
 // The DEPLOYED-shape API (NODE_ENV=production) is NOT started here: it belongs to the single spec
 // that needs it (tests/zz9-prod-shape.spec.ts → scripts/prod-shape-api.mjs). Two API processes with
 // their own pg-boss workers for the whole suite cost enough CPU on a small dev box to push the

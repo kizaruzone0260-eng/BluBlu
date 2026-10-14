@@ -12,6 +12,7 @@
  * a test artefact: production runs one process. The empty database is also the proof that
  * NODE_ENV=production really reads dist/db/migrations (lib/prodConfig.effectiveMigrationsFolder).
  */
+import { readPolicyVersion } from './policyVersion.mjs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,10 +34,11 @@ async function seed(url, teacherHash) {
       values ('00000000-0000-4000-8000-00000000e2e1', 'teacher', 'E2E Teacher', 'E2E', 'owner@e2e.io',
               '${teacherHash}', 'ru', true, 'Asia/Tashkent', now(), now())
       on conflict (email) do update set last_name = 'E2E', profile_completed_at = now()`);
-    await admin.unsafe(`
+    const POLICY_VERSION = readPolicyVersion();
+    await admin`
       insert into policy_acceptances (user_id, version, accepted_at)
-      select id, '2026-10-06', now() from users
-      on conflict (user_id) do update set version = '2026-10-06', accepted_at = now()`);
+      select id, ${POLICY_VERSION}, now() from users
+      on conflict (user_id) do update set version = ${POLICY_VERSION}, accepted_at = now()`;
   } finally { await admin.end({ timeout: 5 }); }
 }
 
