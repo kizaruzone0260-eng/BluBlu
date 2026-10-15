@@ -145,6 +145,27 @@ export async function openLesson(page: Page, classId: string): Promise<void> {
   await page.waitForTimeout(1_500); // the board WS init: canEdit, pages, titles, elements
 }
 
+/**
+ * Доска готова — БЕЗ перехода на страницу урока.
+ *
+ * `goto` рвёт комнату: LiveKit SDK сам вешает «Page leave detected, disconnecting» на выгрузку
+ * страницы, а после перезагрузки в урок никто не входит автоматически (нужен предпросмотр
+ * устройств). zz20 вызывал `openLesson` уже ПОСЛЕ входа в комнату и затем искал строку ученика в
+ * панели, где участников 0, — трасса прогона 38541787520 это показала дословно. Здесь ожидаются
+ * те же состояния, что в `openLesson`, но без перехода и без слепого ожидания: инициализация
+ * доски видна по следующим же проверкам (значок права приходит по WS).
+ *
+ * Полотно ещё и ставится в область видимости: под сеткой участников карточка доски бывает ниже
+ * окна, а `page.mouse` работает в координатах вьюпорта и страницу не прокручивает — штрих ушёл бы
+ * в пустоту, и проверка «штрих доехал до учителя» покраснела бы без всякой связи с доской.
+ */
+export async function waitBoard(page: Page): Promise<void> {
+  await expect(page.getByTestId('board')).toBeVisible({ timeout: 25_000 });
+  const canvas = page.locator('[data-testid=board] canvas.excalidraw__canvas').first();
+  await expect(canvas).toBeVisible({ timeout: 25_000 });
+  await canvas.scrollIntoViewIfNeeded();
+}
+
 const canvas = (page: Page) => page.locator('[data-testid=board] canvas.excalidraw__canvas').first();
 
 export async function drawRect(page: Page, from: [number, number], to: [number, number]): Promise<void> {

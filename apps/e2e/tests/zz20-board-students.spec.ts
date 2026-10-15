@@ -13,7 +13,8 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, inkOf, loginUi, makeLesson, openLesson, paint, registerStudent, stack, teacherToken, type Ctx,
+  BASE, inkOf, loginUi, makeLesson, openLesson, paint, registerStudent, stack, teacherToken,
+  waitBoard, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
 
@@ -106,9 +107,16 @@ test.describe('students drawing on the board (part 3)', () => {
     const t = await join(browser, stack.teacherEmail, stack.teacherPassword);
     const a = await join(browser, aEmail, STUDENT_PW);
     const b = await join(browser, bEmail, STUDENT_PW);
-    await openLesson(t.page, classId);
-    await openLesson(a.page, classId);
-    await openLesson(b.page, classId);
+    /*
+     * Никакого `openLesson` после входа в комнату: это `page.goto`, то есть выгрузка страницы, а
+     * LiveKit SDK на выгрузке отключается сам («Page leave detected, disconnecting» в консоли
+     * трассы прогона 38541787520 — все трое отвалились за секунды до проверки). В панели остаются
+     * «Участники · 0», потому что список участников читается из комнаты (`refreshPeerList` по
+     * `room.remoteParticipants`) — продукт прав, спека сама уничтожала своё условие.
+     */
+    await waitBoard(t.page);
+    await waitBoard(a.page);
+    await waitBoard(b.page);
 
     // 1. по умолчанию не рисует никто: и значка нет, и полотно в режиме просмотра
     await expect(badge(a.page)).toHaveCount(0);
@@ -117,6 +125,8 @@ test.describe('students drawing on the board (part 3)', () => {
 
     // 2. учитель даёт разрешение Анне — доходит до её экрана без перезагрузки
     await openTab(t.page, 'people');
+    // сначала комната: два ряда участников, и только потом чей именно это ряд
+    await expect(t.page.locator('.peer-row')).toHaveCount(2, { timeout: 30_000 });
     await expect(drawBtn(t.page, aId)).toBeVisible({ timeout: 30_000 });
     await expect(drawBtn(t.page, aId)).toHaveAttribute('aria-pressed', 'false');
     await drawBtn(t.page, aId).click();
