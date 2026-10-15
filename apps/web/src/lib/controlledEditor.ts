@@ -49,6 +49,8 @@ export function useControlledEditor(p: {
   // это эхо нашей же печати, а не внешний сигнал.
   const lastEmit = useRef<string | null>(null);
   const docRef = useRef(p.docId);
+  // сам экземпляр редактора: только его смена даёт право догонять документ накопленным значением
+  const instanceRef = useRef<Editor | null>(null);
 
   const flush = useCallback((): string => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
@@ -100,10 +102,15 @@ export function useControlledEditor(p: {
       if (valueDiffers(p.value, html)) editor.commands.setContent(p.value || '<p></p>', { emitUpdate: false });
       return;
     }
-    // Документ отстаёт от того, что редактор уже набрал: смена экземпляра после уничтожения
-    // (окно, ради которого написан zz10) собирается из `value`, а дебаунс ещё не успел его
-    // отдать. Догоняем СВОИМ значением — оно свежее, и это не внешняя правка.
-    if (pending.current !== null && pending.current !== html) {
+    // Смена экземпляра (уничтожение и пересборка — окно, ради которого написан zz10): новый
+    // собирается из `value`, и если дебаунс ещё не отдал набранное, документ отстаёт — догоняем
+    // СВОИМ значением. Именно сменой экземпляра, а не вообще: пока пользователь печатает,
+    // документ вправе быть свежее последней отдачи (ProseMirror дочитывает DOM следующим
+    // наблюдателем), и запись `pending` в этот момент стирала бы последние символы — это и
+    // показал CI-прогон 38795245220 на замедлении CPU ×4.
+    const swapped = instanceRef.current !== null && instanceRef.current !== editor;
+    instanceRef.current = editor;
+    if (swapped && pending.current !== null && pending.current !== html) {
       const next = pending.current;
       pending.current = null;
       editor.commands.setContent(next, { emitUpdate: false });

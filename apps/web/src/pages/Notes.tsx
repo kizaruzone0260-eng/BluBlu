@@ -283,7 +283,18 @@ export default function Notes() {
   useEffect(() => () => {
     if (!dirtyRef.current) return;
     const fullBody = composeInk(rtRef.current?.flush() || bodyRef.current, inkRef.current);
-    if (activeId === DRAFT) {
+    // Идентикатор берём СВЕЖИЙ. React запускает этот cleanup на каждый рендер, и его замыкание
+    // могло остаться на черновике, который к этому моменту уже стал реальной заметкой, — такой
+    // cleanup повторно ПОСТИЛ заметку и удваивал её (это и поймал redesign: две «Заметка
+    // проверки» с одним заголовком). Накопленное при этом снимается с очереди, чтобы таймер
+    // автосейва не написал то же самое вторично.
+    const owner = pendingOwner.current;
+    const id = owner && owner !== DRAFT ? owner : (activeIdRef.current ?? activeId);
+    dirtyRef.current = false;
+    pendingRef.current = {};
+    pendingOwner.current = null;
+    window.clearTimeout(timerRef.current);
+    if (id === DRAFT) {
       // leaving an empty draft discards it silently; a draft WITH content is created
       if (noteHasContent(titleRef.current, fullBody)) {
         void api('/api/notes', {
@@ -297,8 +308,8 @@ export default function Notes() {
       }
       return;
     }
-    if (activeId) {
-      void api(`/api/notes/${activeId}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: fullBody }), keepalive: true } as RequestInit)
+    if (id) {
+      void api(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: fullBody }), keepalive: true } as RequestInit)
         .catch(() => undefined);
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
