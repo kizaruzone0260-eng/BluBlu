@@ -178,6 +178,7 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
         role="toolbar"
         aria-label={t('lesson.barAria')}
         data-testid="lesson-bar"
+        data-popover-chrome
         data-hidden={hidden ? '1' : '0'}
         onMouseEnter={() => setOverBar(true)}
         onMouseLeave={() => setOverBar(false)}

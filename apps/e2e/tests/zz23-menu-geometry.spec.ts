@@ -27,6 +27,9 @@ const SIZES = [
  * `minItems` — сколько пунктов обязано быть: у меню purge на уроке без ученических рисунков их
  * нет (там одна строка «пусто»), и это нормальное состояние, а не сломанное меню; кликабельность
  * его пунктов проверяет zz20, где рисунок ученика действительно есть.
+ *
+ * Пункты с `disabled` не проверяются кликом — отказ по состоянию (связь с комнатой, права) лежит
+ * намеренно; вместо этого проверяется, что хотя бы один пункт меню кликабелен.
  */
 async function checkMenu(page: Page, trigger: string, testid: string, label: string, minItems = 1): Promise<void> {
   const vp = page.viewportSize()!;
@@ -52,25 +55,45 @@ async function checkMenu(page: Page, trigger: string, testid: string, label: str
   const items = menu.locator('[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]');
   const n = await items.count();
   expect(n, `${label}: пунктов не меньше ожидаемого`).toBeGreaterThanOrEqual(minItems);
+  let enabled = 0;
   for (let i = 0; i < n; i++) {
+    const item = items.nth(i);
+    // Пункт с атрибутом `disabled` откажет в клике намеренно (например, «Демонстрация экрана»
+    // вне подключённой комнаты) — это состояние продукта, а не геометрия меню. Такие
+    // пропускаем, но ниже проверяем, что меню не состоит целиком из отказов.
+    if (await item.evaluate((el) => (el as HTMLButtonElement).disabled)) continue;
+    enabled++;
     // trial: проверка доступности для клика (виден, стабилен, событие доходит до него, не перекрыто) БЕЗ самого
     // клика — иначе меню закрылось бы на первом же пункте
-    await items.nth(i).click({ trial: true, timeout: 5_000 });
+    await item.click({ trial: true, timeout: 5_000 });
   }
+  if (n > 0) expect(enabled, `${label}: каждый пункт отказывается от клика`).toBeGreaterThan(0);
 
   await page.keyboard.press('Escape');
   await expect(menu, `${label}: Escape закрывает меню`).toHaveCount(0);
 
   await open();
-  await page.mouse.click(Math.round(vp.width * 0.6), 6);
+  // Точка «снаружи»: дальний от меню угол содержимого. Края экрана не берём — там полосы
+  // приложения (шапка и нижнее меню), клик по ним ушёл бы по ссылке.
+  const m = (await menu.boundingBox())!;
+  const far = [[12, 120], [vp.width - 12, 120], [12, vp.height - 120], [vp.width - 12, vp.height - 120]]
+    .reduce((best, p) => (distRect(p[0], p[1], m) > distRect(best[0], best[1], m) ? p : best));
+  await page.mouse.click(far[0], far[1]);
   await expect(menu, `${label}: клик снаружи закрывает меню`).toHaveCount(0);
+}
+
+/** Расстояние от точки до прямоугольника (0 — внутри). */
+function distRect(x: number, y: number, r: { x: number; y: number; width: number; height: number }): number {
+  const dx = Math.max(r.x - x, 0, x - (r.x + r.width));
+  const dy = Math.max(r.y - y, 0, y - (r.y + r.height));
+  return Math.hypot(dx, dy);
 }
 
 test.describe('всплывающие меню помещаются в окно (аудит 2026-10-15)', () => {
   let api: Ctx;
   let token = '';
   let classId = '';
-  let sessionId = '';;
+  let sessionId = '';
 
   test.beforeAll(async () => {
     api = await pw.newContext({ baseURL: BASE });
@@ -113,7 +136,9 @@ test.describe('всплывающие меню помещаются в окно 
         await page.goto(`/lesson?classId=${classId}`);
         await waitBoard(page);
         await checkMenu(page, 'mic-toggle-menu', 'mic-menu', `${size.name}: меню микрофона`, 0);
-        await checkMenu(page, 'cam-toggle-menu', 'cam-menu', `${size.name}: меню камеры`, 0);
+        // у кнопки камеры testid «camera-toggle» (значок 📹), а у микрофона — «mic-toggle»:
+        // стрелка наследует имя кнопки, поэтому у камеры она «camera-toggle-menu»
+        await checkMenu(page, 'camera-toggle-menu', 'cam-menu', `${size.name}: меню камеры`, 0);
         await checkMenu(page, 'more-btn', 'more-menu', `${size.name}: «Ещё»`);
         await checkMenu(page, 'leave-btn', 'leave-menu', `${size.name}: меню выхода`, 0);
         await checkMenu(page, 'board-menu-1', 'board-pop-1', `${size.name}: меню вкладки доски`);

@@ -172,7 +172,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
       )}
 
       {/* <768px — compact app bar + bottom tabs */}
-      <header className="appbar">
+      <header className="appbar" data-popover-chrome>
         <Link to="/" className="side-brand" style={{ padding: 0 }}>
           <span className="side-logo" style={{ width: 28, height: 28, flex: '0 0 28px', fontSize: '.95rem' }}>B</span>
           <span>{APP_NAME}</span>
@@ -183,7 +183,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
       </header>
 
       {me && !loggedOut && (
-        <nav className="tabbar">
+        <nav className="tabbar" data-popover-chrome>
           {items.slice(0, 5).map((it) => (
             <NavLink key={it.to} to={it.to} end={it.end}
               className={({ isActive }) => (isActive ? 'active' : undefined)}>

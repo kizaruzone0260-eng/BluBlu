@@ -21,8 +21,11 @@ export default defineConfig({
      * Упавший RTC-тест иначе нечем объяснить: тайминги распространения прав в комнате нельзя
      * восстановить по строке «Expected true / Received false». Трасса и скриншот держатся только
      * на падении (retention в CI — 7 дней), поэтому набор не дорожает в зелёных прогонах.
+     * Снимки DOM и источники — с 2026-10-15: красный zz10 разбирался по трассе, но в ней не было
+     * ни одного снимка страницы, и промежуточное состояние редактора (какой именно символ куда
+     * вставился) восстановить было нечем. Теперь снимается DOM, а не только картинка.
      */
-    trace: 'retain-on-failure',
+    trace: { mode: 'retain-on-failure', snapshots: true, screenshots: true, sources: true },
     screenshot: 'only-on-failure',
     launchOptions: {
       args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],

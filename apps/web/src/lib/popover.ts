@@ -9,6 +9,10 @@
  *
  *  - меню целиком внутри вьюпорта: по горизонтали кламп к краям, по вертикали — переворот вверх,
  *    если снизу не помещается;
+ *  - собственная прижатая к краю полоса приложения (нижнее меню на телефоне, шапка, панель урока)
+ *    лежит ПОВЕРХ меню по z-index, поэтому её высота вычитается из доступного места — иначе
+ *    пункт меню оказывается закрытым и клик до него не доходит (это и поймал zz23 на окне
+ *    1280×500: «Сохранить черновик» утонул под `.tabbar`);
  *  - при очень низком окне меню укорачивается и прокручивается внутри, а не вылезает за экран;
  *  - закрывается по Escape и по клику/касанию снаружи (и по клику по самой кнопке — это уже
  *    делает сам компонент);
@@ -16,12 +20,13 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 
-/** Поле между меню и краем экрана. */
+/** Поле между меню и краем экрана (или краем полосы приложения). */
 const MARGIN = 8;
 /** Минимальная высота, которую ещё имеет смысл показывать вместо переворота. */
 const MIN_HEIGHT = 96;
 
-export type PopAlign = 'start' | 'center' | 'end';
+export type PopAlign = 'start' | 'end' | 'center';
+export interface PopInset { top: number; bottom: number }
 
 export interface PopPos { top: number; left: number; maxHeight: number }
 
@@ -29,6 +34,7 @@ export interface PopPos { top: number; left: number; maxHeight: number }
  * Координаты меню по прямоугольнику кнопки и собственному размеру меню.
  *
  * Чистая функция — её можно проверить без DOM, и тест геометрии меню (zz23) сверяется с ней же.
+ * `inset` — сколько места у вьюпорта отнято прижатыми к крам полосами приложения.
  */
 export function popPos(
   anchor: { top: number; bottom: number; left: number; width: number },
@@ -37,6 +43,7 @@ export function popPos(
   vh: number,
   align: PopAlign = 'start',
   gap = 4,
+  inset: PopInset = { top: 0, bottom: 0 },
 ): PopPos {
   const w = Math.min(box.w, vw - MARGIN * 2);
   const anchorX = align === 'center' ? anchor.left + anchor.width / 2 - w / 2
@@ -44,14 +51,35 @@ export function popPos(
       : anchor.left;
   const left = Math.max(MARGIN, Math.min(anchorX, vw - w - MARGIN));
 
-  const roomBelow = vh - anchor.bottom - gap - MARGIN;
-  const roomAbove = anchor.top - gap - MARGIN;
+  const yMin = MARGIN + inset.top;
+  const yMax = vh - MARGIN - inset.bottom;
+  const roomBelow = yMax - anchor.bottom - gap;
+  const roomAbove = anchor.top - gap - yMin;
   // Вниз, если там помещается хотя бы «разумный» кусок; иначе вверх, где больше места.
   const flip = roomBelow < Math.min(box.h, MIN_HEIGHT) && roomAbove > roomBelow;
   const room = flip ? roomAbove : roomBelow;
   const height = Math.max(MIN_HEIGHT, Math.min(box.h, room));
-  const top = flip ? Math.max(MARGIN, anchor.top - gap - height) : anchor.bottom + gap;
-  return { top, left, maxHeight: Math.max(MARGIN, Math.min(height, vh - top - MARGIN)) };
+  const top = flip ? Math.max(yMin, anchor.top - gap - height) : anchor.bottom + gap;
+  return { top, left, maxHeight: Math.max(MARGIN, Math.min(height, yMax - top)) };
+}
+
+/**
+ * Сколько высоты у краёв окна занимают полосы приложения: элементы, помеченные
+ * `data-popover-chrome` и прижатые к верхнему или нижнему краю. Скрытая (уехавшая за экран)
+ * полоса не считается.
+ */
+function chromeInsets(): PopInset {
+  const vh = window.innerHeight;
+  const TOL = 2;
+  const inset: PopInset = { top: 0, bottom: 0 };
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>('[data-popover-chrome]'))) {
+    const r = el.getBoundingClientRect();
+    const s = getComputedStyle(el);
+    if (r.width <= 0 || r.height <= 0 || s.visibility === 'hidden' || Number(s.opacity) === 0) continue;
+    if (r.top <= TOL && r.bottom > TOL) inset.top = Math.max(inset.top, Math.min(r.bottom, vh));
+    else if (r.bottom >= vh - TOL && r.top < vh - TOL) inset.bottom = Math.max(inset.bottom, Math.min(vh - r.top, vh));
+  }
+  return inset;
 }
 
 export interface UsePopover {
@@ -83,7 +111,7 @@ export function usePopover(params: {
     const a = latest.current.anchor;
     if (!el || !a) return;
     const p = popPos(a.getBoundingClientRect(), { w: el.offsetWidth, h: el.offsetHeight },
-      window.innerWidth, window.innerHeight, latest.current.align ?? 'start');
+      window.innerWidth, window.innerHeight, latest.current.align ?? 'start', 4, chromeInsets());
     // `right`/`bottom`/`transform` сбрасываются намеренно: меню, которые раньше крепились чистым
     // CSS (`right: 0`, `bottom: calc(100% + 8px)`, `translateX(-50%)`), оставили бы эти правила
     // поверх наших координат — и вместо меню получили бы растянутую между двумя краями полосу.
