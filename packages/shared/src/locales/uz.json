@@ -308,6 +308,7 @@
     "boardPurge": "O’quvchi chizmalarini o’chirish",
     "boardPurgeHint": "Joriy doskadan faqat server o’quvchini muallif deb yozgan elementlar o’chadi",
     "boardPurgeNone": "Bu doskada o’quvchi chizmalari yo’q",
+    "boardInk": "{{name}} chizdi, ko‘rsatish",
     "boardNoPermission": "O’qituvchi bu doskada chizishni taqiqladi",
     "boardForeign": "Bu begona chizma: uni faqat siz yoki o’qituvchi o’zgartira oladi",
     "boardStudentLimit": "Bitta o’quvchiga limit: doskada {{max}} element yoki {{mb}} MB",

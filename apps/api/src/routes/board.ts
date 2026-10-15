@@ -140,8 +140,12 @@ function broadcast(r: BoardRoom, msg: unknown, except?: WebSocket) {
  * Право при этом по-прежнему решает сервер в `gateEdits`: блокировка здесь — вежливость, а не
  * защита. Учителю сцена уходит как есть: он правит всё.
  */
-function sendScene(r: BoardRoom, msg: Record<string, unknown>, except?: WebSocket) {
+function sendScene(r: BoardRoom, msg: Record<string, unknown>, except?: WebSocket, by?: string) {
   const els = Array.isArray(msg.elements) ? (msg.elements as ExEl[]) : null;
+  // метка «<имя> нарисовал(а), показать»: получателям важно, ЧЕЙ это кадр. `by` — идентификатор
+  // отправителя из идентичности сокета (его пишет gateEdits), а не поле из присланного тела, и на
+  // права он не влияет: это только подпись у уже принятых сервером элементов.
+  if (by) msg = { ...msg, by };
   for (const [sock, who] of r.sockets) {
     if (sock === except || sock.readyState !== 1) continue;
     const payload = els && who.role === 'student'
@@ -169,7 +173,7 @@ function queueBroadcast(db: DB, r: BoardRoom, els: ExEl[], from: WebSocket) {
   r.broadcastTimer = setTimeout(() => {
     r.broadcastTimer = null;
     const batch = r.pending.splice(0);
-    sendScene(r, { type: 'edits', page: r.current, elements: batch }, from);
+    sendScene(r, { type: 'edits', page: r.current, elements: batch }, from, r.sockets.get(from)?.userId);
   }, BROADCAST_MS);
   r.broadcastTimer.unref?.();
 }
@@ -413,7 +417,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
         if (r.broadcastTimer) {
           clearTimeout(r.broadcastTimer); r.broadcastTimer = null;
           const batch = r.pending.splice(0);
-          if (batch.length) sendScene(r, { type: 'edits', page: r.current, elements: batch });
+          if (batch.length) sendScene(r, { type: 'edits', page: r.current, elements: batch }, undefined, who.userId);
         }
         void persist(db, r).then(() => {
           if (r.sockets.size === 0 && rooms.get(sessionId) === r) {
@@ -496,7 +500,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
             mergeElements(r.elements, wiped);
             r.dirty = true;
             // БЕЗ `except`: учителю этот кадр тоже нужен — его полотно ещё показывает чужой рисунок
-            sendScene(r, { type: 'edits', page: r.current, elements: wiped });
+            sendScene(r, { type: 'edits', page: r.current, elements: wiped }, undefined, who.userId);
             await persist(db, r);
             return;
           }

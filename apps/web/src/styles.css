@@ -688,6 +688,17 @@ button.danger-text { color: var(--danger); }
  * его обратно.
  */
 .board-status { display: inline-flex; align-items: center; min-height: 2.25rem; }
+.board-frame { position: relative; }
+/* метка «<имя> нарисовал(а), показать» — поверх полотна: над рамкой она сдвигала бы холст */
+.board-chip {
+  position: absolute; top: var(--sp-3); left: 50%; transform: translateX(-50%); z-index: 5;
+  display: inline-flex; align-items: center; gap: var(--sp-1); max-width: calc(100% - 24px);
+  padding: 8px 14px; min-height: var(--tap); border: 1px solid var(--border-strong);
+  border-radius: var(--r-full); background: var(--surface); color: var(--text);
+  font-size: .9rem; font-weight: 550; cursor: pointer; box-shadow: var(--shadow-md);
+  text-align: center;
+}
+.board-chip:hover { background: var(--surface-2); }                        /* плашка ученических чернил — поверх полотна, чтобы не двигать холст */
 .board-msg { display: flex; align-items: center; gap: var(--sp-2); min-height: 1.5rem; margin-top: var(--sp-1); }
 .board-msg p { margin: 0; }
 .board-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }

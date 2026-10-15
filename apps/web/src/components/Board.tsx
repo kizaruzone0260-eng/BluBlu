@@ -52,6 +52,14 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   /** часть 3: чьи рисунки лежат на доске — учительская кнопка «Удалить рисунки ученика» */
   const [drawnBy, setDrawnBy] = useState<Record<string, number> | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
+  /**
+   * Часть 3 (метка чернил): чей рисунок приехал и ещё НЕ виден учителю. Плашка живёт ПОВЕРХ
+   * полотна (`.board-chip`, position: absolute), потому что любое сообщение над рамкой сдвигало
+   * бы холст — за этим следит проверка геометрии в zz20.
+   */
+  const [inkChip, setInkChip] = useState<{ userId: string; ids: string[] } | null>(null);
+  // какие элементы уже лежат на полотне: приехавший id вне этого списка — новый штрих
+  const knownRef = useRef<Set<string>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
   const apiRef = useRef<Api | null>(null);
   const sentRef = useRef<Map<string, { version: number; versionNonce: number }>>(new Map());
@@ -75,10 +83,11 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
         ws.onmessage = (ev) => {
           const msg = JSON.parse(ev.data as string) as {
             type: string; canEdit?: boolean; canDraw?: boolean; page?: number; current?: number; pages?: number[];
-            elements?: RawEl[]; title?: string; titles?: Record<number, string>;
+            by?: string; elements?: RawEl[]; title?: string; titles?: Record<number, string>;
             code?: string; max?: number; maxElements?: number; maxBytes?: number;
           };
           if (msg.type === 'init') {
+            setInkChip(null);
             setCanEdit(!!msg.canEdit);
             setCanDraw(!!msg.canDraw);
             setPages(msg.pages ?? [1]);
@@ -91,11 +100,21 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
             setCanDraw(!!msg.canDraw);
             if (!msg.canDraw) setNotice(t('lesson.boardNoPermission'));
           } else if (msg.type === 'edits') {
-            mergeIncoming(msg.elements ?? []);
+            // метку зовём только по чужим КАДРАМ: 'current' и 'pages' — это вся доска
+            // (учитель переключил вкладку, ученик подключился позже), и на каждое такое
+            // сообщение плашка «нарисовал(а), показать» вспыхивала бы зря
+            if (msg.by && msg.by !== me?.id) {
+              const fresh = (msg.elements ?? []).filter((e) => !knownRef.current.has(e.id));
+              mergeIncoming(msg.elements ?? []);
+              noteIncomingInk(msg.by, fresh);
+            } else {
+              mergeIncoming(msg.elements ?? []);
+            }
           } else if (msg.type === 'current') {
             // the server sends this to every socket now — the teacher who switched included,
             // which is what keeps a board's screen from showing the previous board's ink
             setCurrentPage(msg.page ?? 1);
+            setInkChip(null);
             if (msg.title !== undefined) setTitles((cur) => ({ ...cur, [msg.page ?? 1]: msg.title as string }));
             sentRef.current.clear();
             replaceScene(msg.elements ?? []);
@@ -103,6 +122,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
             setPages(msg.pages ?? [1]);
             if (msg.titles) setTitles(msg.titles);
             setCurrentPage(msg.page ?? msg.current ?? msg.pages?.[0] ?? 1);
+            setInkChip(null);
             sentRef.current.clear();
             // an empty array is a real instruction here: the new board has no ink to show
             if (Array.isArray(msg.elements)) replaceScene(msg.elements);
@@ -146,6 +166,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   }, [sessionId, me]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function replaceScene(elements: RawEl[]) {
+    knownRef.current = new Set(elements.map((e) => e.id));
     apiRef.current?.updateScene({ elements: elements as never });
   }
 
@@ -206,6 +227,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
       }
     }
     if (changed) a.updateScene({ elements: [...byId.values()] as never });
+    for (const el of incoming) knownRef.current.add(el.id);
   }
 
   function onChange(elements: readonly RawEl[]) {
@@ -268,6 +290,50 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     } catch {
       setDrawnBy({});
     }
+  }
+
+  /**
+   * Метка «<имя> нарисовал(а), показать»: учитель получает чужие кадры и, если ни один из них
+   * не попал в видимую область его полотна, предлагает перейти к рисунку. Свои правки метку не
+   * зовут (их сервер и не рассылает отправителю, но `by` сверяется и здесь), чужая СТРАНИЦА
+   * целиком — тоже (см. 'edits' выше).
+   */
+  function noteIncomingInk(by: string, incoming: RawEl[] | null) {
+    if (!canEdit || !incoming?.length) return;
+    const outside = incoming.filter((e) => !inView(e)).map((e) => e.id);
+    if (outside.length) setInkChip({ userId: by, ids: outside });
+  }
+
+  /**
+   * Попадает ли элемент в видимую область полотна учителя. Координаты Excalidraw:
+   * `viewport = (scene + scroll) * zoom`, то есть левому верхнему углу окна соответствует
+   * сцена `(-scrollX, -scrollY)`, а её размер — это размер холста, делённый на zoom.
+   */
+  function inView(el: RawEl): boolean {
+    const a = apiRef.current;
+    if (!a) return true;
+    const st = a.getAppState();
+    const e = el as RawEl & { x?: number; y?: number; width?: number; height?: number; isDeleted?: boolean };
+    if (e.isDeleted || typeof e.x !== 'number' || typeof e.y !== 'number') return true;
+    const z = st.zoom?.value || 1;
+    if (!st.width || !st.height) return true;          // полотно ещё не измерено — не поднимаем метку
+    const vx = -st.scrollX; const vy = -st.scrollY;
+    const vw = st.width / z; const vh = st.height / z;
+    const w = e.width ?? 0; const h = e.height ?? 0;
+    return !(e.x + w < vx || e.x > vx + vw || e.y! + h < vy || e.y! > vy + vh);
+  }
+
+  /** По тапу — прокрутить и отмасштабировать полотно к рисунку ученика, и снять метку. */
+  function showInk() {
+    const a = apiRef.current;
+    const chip = inkChip;
+    setInkChip(null);
+    if (!a || !chip) return;
+    const els = (a.getSceneElements() as unknown as RawEl[]).filter((e) => chip.ids.includes(e.id));
+    if (!els.length) return;
+    try {
+      a.scrollToContent(els as never, { fitToContent: true, animate: true });
+    } catch { /* элемент уже стёрли — метка просто снялась */ }
   }
 
   /** Удалить рисунки одного ученика (сервер снимает их мягко и рассылает всем). */
@@ -509,6 +575,11 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
           initialData={{ elements: [], appState: { viewModeEnabled: !canDraw, showWelcomeScreen: false }, scrollToContent: false }}
         />
       </div>
+      {inkChip && canEdit && (
+        <button type="button" className="board-chip" data-testid="board-ink-chip" onClick={showInk}>
+          ✏️ {t('lesson.boardInk', { name: peerNames?.[inkChip.userId] ?? inkChip.userId.slice(0, 8) })}
+        </button>
+      )}
       {exportOpen && classId && (
         <Suspense fallback={null}>
           <BoardExportDialog

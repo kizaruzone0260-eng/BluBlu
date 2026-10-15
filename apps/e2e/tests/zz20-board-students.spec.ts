@@ -13,7 +13,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, boardGeom, geomShift, inkSeen, loginUi, makeLesson, openLesson, paintStable,
+  BASE, boardGeom, geomShift, inkAll, inkSeen, loginUi, makeLesson, openLesson, paintStable,
   registerStudent, stack, teacherToken, waitBoard, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
@@ -95,6 +95,8 @@ test.describe('students drawing on the board (part 3)', () => {
 
   const badge = (page: Page) => page.getByTestId('board-draw-badge');
   const viewOnly = (page: Page) => page.getByTestId('board-readonly');
+  /** плашка «<имя> нарисовал(а), показать» поверх полотна */
+  const chip = (page: Page) => page.getByTestId('board-ink-chip');
   /** переключатель «Рисовать» в строке участника: id = uuid пользователя = identity в комнате */
   const drawBtn = (page: Page, identity: string) => page.getByTestId(`peer-draw-${identity.slice(0, 8)}`);
 
@@ -156,6 +158,28 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect.poll(() => inkSeen(t.page), { timeout: 30_000, message: 'штрих ученика доехал до учителя' })
       .toBeGreaterThan(before);
     const inkAfterA = await inkSeen(t.page);
+    // чернила были в поле зрения обоих — метки «нарисовал(а), показать» не появилось
+    await expect(chip(t.page), 'метка не появляется, когда рисунок уже виден').toHaveCount(0, { timeout: 5_000 });
+
+    // 3б. метка и переход к ней: учитель уводит свой взгляд от холста (сам Excalidraw
+    // подтверждает это плашкой «Scroll back to content»), ученик рисует снова — чернила
+    // приехали, но их не видно.
+    const surfaceT = t.page.locator('[data-testid=board] canvas.excalidraw__canvas:not(.static)').first();
+    await surfaceT.hover();
+    await t.page.mouse.wheel(0, -6000);
+    await expect(t.page.locator('[data-testid=board] .scroll-back-to-content'),
+      'учитель ушёл от содержимого').toBeVisible({ timeout: 10_000 });
+    const aBeforeC = await inkSeen(a.page);
+    await paintStable(a.page, 'C');
+    await expect.poll(() => inkSeen(a.page),
+      { timeout: 20_000, message: 'третий штрих виден самой Анне' }).toBeGreaterThan(aBeforeC);
+    await expect(chip(t.page), 'метка об ушедшем из вида рисунке появилась').toBeVisible({ timeout: 20_000 });
+    await expect(chip(t.page)).toContainText('Анна');
+    await chip(t.page).click();
+    await expect(chip(t.page), 'метка снимается после перехода').toHaveCount(0, { timeout: 10_000 });
+    await expect.poll(() => inkAll(t.page),
+      { timeout: 20_000, message: 'по тапу на метку полотно учителя показало рисунок ученика' })
+      .toBeGreaterThan(0);
 
     // 4. отзыв действует сразу: значок снялся, и новый штрих никуда не едет
     await drawBtn(t.page, aId).click();

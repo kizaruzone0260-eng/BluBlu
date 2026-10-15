@@ -308,6 +308,7 @@
     "boardPurge": "Delete a student's drawings",
     "boardPurgeHint": "Removes only the elements the server recorded as drawn by that student on this board",
     "boardPurgeNone": "No student drawings on this board",
+    "boardInk": "{{name}} drew — show it",
     "boardNoPermission": "The teacher has stopped you drawing on this board",
     "boardForeign": "That is somebody else's drawing — only they or the teacher can change it",
     "boardStudentLimit": "Limit per student: {{max}} elements or {{mb}} MB on one board",
