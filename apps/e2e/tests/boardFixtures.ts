@@ -166,6 +166,22 @@ export async function waitBoard(page: Page): Promise<void> {
   await canvas.scrollIntoViewIfNeeded();
 }
 
+/**
+ * Геометрия полотна в координатах ДОКУМЕНТА.
+ *
+ * `boundingBox()` Playwright отдаёт относительно вьюпорта, то есть прокрутка страницы попала бы
+ * в сравнение «до/после» и показала бы сдвиг там, где его нет. Здесь к rect прибавляется скролл,
+ * поэтому сравнивать можно ровно положение и размер холста.
+ */
+export function boardGeom(page: Page): Promise<{ x: number; y: number; w: number; h: number }> {
+  return page.evaluate(() => {
+    const c = document.querySelector('[data-testid=board] canvas.excalidraw__canvas');
+    if (!c) return { x: -1, y: -1, w: 0, h: 0 };
+    const r = c.getBoundingClientRect();
+    return { x: r.x + window.scrollX, y: r.y + window.scrollY, w: r.width, h: r.height };
+  });
+}
+
 const canvas = (page: Page) => page.locator('[data-testid=board] canvas.excalidraw__canvas').first();
 
 export async function drawRect(page: Page, from: [number, number], to: [number, number]): Promise<void> {
@@ -185,18 +201,14 @@ export async function drawRect(page: Page, from: [number, number], to: [number, 
 /**
  * Тот же штрих, что `drawRect`, но с координатами, которые Playwright проверил сам.
  *
- * Причина отдельной функции — прогон `38715507790`: ученик рисует сразу после того, как учитель
- * выдал право, а вместе с правом у полотна уходит `zenModeEnabled`/`viewModeEnabled`
- * (`Board.tsx:483`), Excalidraw пересобирает свои панели и размер `<canvas>` меняется. Rect,
- * снятый до этого переезда, оказывается не там: элемент создаётся, но вне видимой области, и на
- * экране ученика остаётся «Scroll back to content» при пустом холсте — это ровно
- * `scrolledOutside: !atLeastOneVisibleElement && elements.size > 0`. Проверка полотна в
- * `drawRect` не могла этого увидеть: `page.mouse` ходит «в пустоту» и ничего не проверяет.
+ * `page.mouse` ходит «в пустоту»: он не ждёт, что элемент виден, не перекрыт и неподвижен, и
+ * молча рисует по устаревшему rect. Здесь фокус и начало перетаскивания берутся через
+ * `click`/`hover` с `position` — их Playwright выполняет только после проверки actionability.
+ * Целься по `interactive`-полотну: у `.excalidraw__canvas.static` `pointer-events: none` (index.css
+ * Excalidraw), и проверка попадания на статичном холсте падала бы всегда.
  *
- * `hover`/`click` с `position` Playwright выполняет только когда элемент виден, не перекрыт и
- * НЕ сдвинулся между двумя кадрами, то есть переезд полотна уже закончен. Целься по
- * `interactive`-полотну: `.excalidraw__canvas.static` с `pointer-events: none` (см. index.css
- * Excalidraw) никогда не бывает целью указателя, и проверка попадания на нём падала бы всегда.
+ * Это нужно, но недостаточно: прогон `38721441896` нарисовал элемент (инструмент вернулся на
+ * «выделение»), а `drawRect`-ово окно в 300×240 пикселя его не увидело — см. `inkSeen`.
  */
 export async function paintStable(page: Page, slot: keyof typeof SLOTS): Promise<void> {
   const surface = page.locator('[data-testid=board] canvas.excalidraw__canvas:not(.static)').first();
@@ -248,6 +260,48 @@ export async function inkIn(page: Page, r: { x: number; y: number; w: number; h:
     }
     return dark;
   }, r);
+}
+
+/**
+ * Всё тёмное на полотне, без окна.
+ *
+ * `inkIn` смотрит в фиксированный прямоугольник — он различает слоты A/B/C, и в статичной
+ * вёрстке zz11/zz12 это работает. В живом уроке полотно может показать содержимое в другом месте
+ * сцены (у Excalidraw свой viewport: `scrollX/scrollY` не привязаны к верхнему левому углу
+ * элемента), и тогда «штриха нет» на самом деле значит «штрих не здесь». Для проверок
+ * «доехал / не доехал» это не аргумент: считается любой тёмный пиксель холста.
+ */
+export function inkAll(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const list = [...document.querySelectorAll('[data-testid=board] canvas')] as HTMLCanvasElement[];
+    const c = list.find((el) => el.className.includes('static')) ?? list[0];
+    if (!c || !c.width || !c.height) return 0;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (!g) return 0;
+    let d: Uint8ClampedArray;
+    try { d = g.getImageData(0, 0, c.width, c.height).data; } catch { return 0; }
+    let dark = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3]! > 0 && (d[i]! < 240 || d[i + 1]! < 240 || d[i + 2]! < 240)) dark++;
+    }
+    return dark;
+  });
+}
+
+/**
+ * Вернуть вид к содержимому — той же кнопкой Excalidraw, которой пользуется живой человек
+ * («Scroll back to content»). Делается только когда полотно уехало от содержимого; если всё
+ * видно, на холме нажимать нечего.
+ */
+export async function revealInk(page: Page): Promise<void> {
+  const back = page.locator('[data-testid=board] .scroll-back-to-content');
+  if (await back.isVisible()) await back.click();
+}
+
+/** Штрих на полотне: сначала вернуть вид к содержимому, потом считать. */
+export async function inkSeen(page: Page): Promise<number> {
+  await revealInk(page);
+  return inkAll(page);
 }
 
 export interface BoardRow { pageNo: number; title: string; ids: string[] }

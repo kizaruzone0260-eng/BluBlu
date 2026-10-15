@@ -13,8 +13,8 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, inkOf, loginUi, makeLesson, openLesson, paintStable, registerStudent, stack, teacherToken,
-  waitBoard, type Ctx,
+  BASE, boardGeom, inkSeen, loginUi, makeLesson, openLesson, paintStable, registerStudent, stack,
+  teacherToken, waitBoard, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
 
@@ -123,6 +123,11 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect(viewOnly(a.page)).toBeVisible();
     await expect(viewOnly(b.page)).toBeVisible();
 
+    // точка отсчёта геометрии: право рисования не имеет права двигать или менять полотно
+    const geom0 = await boardGeom(a.page);
+    expect(geom0.w, 'полотно Анны измерено до выдачи права').toBeGreaterThan(200);
+    expect(geom0.h, 'полотно Анны имеет высоту до выдачи права').toBeGreaterThan(200);
+
     // 2. учитель даёт разрешение Анне — доходит до её экрана без перезагрузки
     await openTab(t.page, 'people');
     // сначала комната: два ряда участников, и только потом чей именно это ряд
@@ -133,24 +138,32 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect(badge(a.page), 'значок «вы можете рисовать» появился').toBeVisible({ timeout: 15_000 });
     await expect(badge(b.page), 'Борис не разрешён').toHaveCount(0, { timeout: 5_000 });
     await expect(viewOnly(b.page)).toBeVisible();
+    expect(await boardGeom(a.page), 'выдача права не сдвинула и не изменила полотно').toEqual(geom0);
 
-    // 3. Анна рисует — штрих виден и у неё, и у учителя
-    const before = await inkOf(t.page, 'A');
+    // 3. Анна рисует — штрих виден и у неё, и у учителя.
+    // Считается ВСЁ полотно, а не окно слота (`inkSeen`): у Excalidraw собственный viewport, и в
+    // живом уроке содержимое может оказаться не в верхнем левом углу элемента — «штриха нет» тогда
+    // означает лишь «штрих не здесь». Смысл проверки от этого не меняется: чернила появились.
+    const before = await inkSeen(t.page);
     await paintStable(a.page, 'A');
-    // сначала у неё самой: не лёг штрих — это геометрия рисования, а не распространение по WS
-    await expect.poll(async () => inkOf(a.page, 'A'),
+    // сначала у неё самой: не лёг штрих — это рисование, а не распространение по WS
+    await expect.poll(() => inkSeen(a.page),
       { timeout: 15_000, message: 'штрих Анны виден у неё на полотне' }).toBeGreaterThan(before);
-    await expect.poll(async () => inkOf(t.page, 'A'), { timeout: 30_000, message: 'штрих ученика доехал до учителя' })
+    await expect.poll(() => inkSeen(t.page), { timeout: 30_000, message: 'штрих ученика доехал до учителя' })
       .toBeGreaterThan(before);
-    const inkAfterA = await inkOf(t.page, 'A');
+    const inkAfterA = await inkSeen(t.page);
 
     // 4. отзыв действует сразу: значок снялся, и новый штрих никуда не едет
     await drawBtn(t.page, aId).click();
     await expect(badge(a.page), 'значок снялся вместе с разрешением').toHaveCount(0, { timeout: 15_000 });
     await expect(viewOnly(a.page), 'полотно снова только для просмотра').toBeVisible({ timeout: 15_000 });
-    const bBefore = await inkOf(t.page, 'B');
+    // отзыв ещё и показывает подсказку «нет разрешения»: место под неё зарезервировано, полотно
+    // не едет ни на пиксель
+    expect(await boardGeom(a.page), 'отзыв и подсказка не сдвинули полотно').toEqual(geom0);
+    const bBefore = await inkSeen(t.page);
     await paintStable(a.page, 'B');
-    await expect.poll(async () => inkOf(t.page, 'B'), { timeout: 6_000 }).toBe(bBefore);
+    await expect.poll(() => inkSeen(t.page),
+      { timeout: 6_000, message: 'после отзыва чернил не прибавилось' }).toBe(bBefore);
 
     // 5. «удалить рисунки ученика» снимает только Аннино: у Б на доске ничего не было
     await t.page.getByTestId('board-purge-btn').click();
@@ -159,9 +172,9 @@ test.describe('students drawing on the board (part 3)', () => {
     const item = pop.getByTestId(`board-purge-${aId.slice(0, 8)}`);
     await expect(item, 'в списке тот, кто рисовал').toBeVisible();
     await item.click();
-    await expect.poll(async () => inkOf(t.page, 'A'), { timeout: 20_000, message: 'Аннины штрихи снялись у учителя' })
+    await expect.poll(() => inkSeen(t.page), { timeout: 20_000, message: 'Аннины штрихи снялись у учителя' })
       .toBeLessThan(inkAfterA);
-    await expect.poll(async () => inkOf(a.page, 'A'), { timeout: 20_000, message: 'и у Анны тоже' })
+    await expect.poll(() => inkSeen(a.page), { timeout: 20_000, message: 'и у Анны тоже' })
       .toBeLessThan(inkAfterA);
 
     for (const v of [t, a, b]) await v.ctx.close();

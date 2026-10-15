@@ -678,6 +678,17 @@ button.danger-text { color: var(--danger); }
   margin: auto 0; padding: 4px 10px; border-radius: var(--r-full);
   background: var(--accent-soft); color: var(--accent); font-weight: 600;
 }
+/*
+ * Две ячейки, которые не имеют права двигать холст (2026-10-15). Статус ученика — в блоке
+ * фиксированной высоты: акцентный «pill» с отступами выше обычного текста, и без reserve строка
+ * шапки растягивалась ровно в момент, когда учитель выдавал право, то есть полотно уезжало вниз
+ * под уже наведённым курсором. Подсказка над полотном занимает своё место всегда: раньше каждое
+ * «это чужой рисунок»/«нет разрешения» сдвигал холст на свою высоту, а пустая строка возвращал
+ * его обратно.
+ */
+.board-status { display: inline-flex; align-items: center; min-height: 2.25rem; }
+.board-msg { display: flex; align-items: center; gap: var(--sp-2); min-height: 1.5rem; margin-top: var(--sp-1); }
+.board-msg p { margin: 0; }
 .board-confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 @media (max-width: 520px) { .board-tab-name { max-width: 110px; } }
 

@@ -456,10 +456,17 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
         ) : (
           <>
             <span className="board-current" data-testid="board-current-name">{label(current)}</span>
-            {/* часть 3: разрешённый ученик видит, что ему можно, а не догадывается по курсору */}
-            {canDraw
-              ? <span className="board-draw-badge" data-testid="board-draw-badge">✏️ {t('lesson.boardYouCanDraw')}</span>
-              : <span className="muted" data-testid="board-readonly">👁 {t('lesson.readonly')}</span>}
+            {/*
+              Часть 3: разрешённый ученик видит, что ему можно, а не догадывается по курсору.
+              Обе состояния лежат в одной ячейке фиксированной высоты: без неё «pill» с
+              отступами выше обычного текста, и строка шапки растягивалась ровно в тот момент,
+              когда учитель выдавал право, — полотно уезжало на несколько пикселей вниз.
+            */}
+            <span className="board-status">
+              {canDraw
+                ? <span className="board-draw-badge" data-testid="board-draw-badge">✏️ {t('lesson.boardYouCanDraw')}</span>
+                : <span className="muted" data-testid="board-readonly">👁 {t('lesson.readonly')}</span>}
+            </span>
           </>
         )}
       </div>
@@ -476,8 +483,15 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
           </button>
         </div>
       )}
-      {notice && <p className="muted" data-testid="board-notice">{notice}</p>}
-      {error && <p className="error">{error}</p>}
+      {/*
+        Ячейка сообщения всегда на месте, пустая или нет: раньше подсказка («это чужой рисунок»,
+        «нет разрешения») появлялась и исчезала НАД полотном и сдвигала его вниз/вверх на свою
+        высоту, то есть каждый отказ отбрасывал холст под курсором.
+      */}
+      <div className="board-msg">
+        {notice && <p className="muted" data-testid="board-notice">{notice}</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
       <div style={{ height }} className="board-frame">
         <Excalidraw
           viewModeEnabled={!canDraw}
