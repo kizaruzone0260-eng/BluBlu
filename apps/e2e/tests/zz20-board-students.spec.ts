@@ -13,7 +13,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, inkOf, loginUi, makeLesson, openLesson, paint, registerStudent, stack, teacherToken,
+  BASE, inkOf, loginUi, makeLesson, openLesson, paintStable, registerStudent, stack, teacherToken,
   waitBoard, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
@@ -136,10 +136,12 @@ test.describe('students drawing on the board (part 3)', () => {
 
     // 3. Анна рисует — штрих виден и у неё, и у учителя
     const before = await inkOf(t.page, 'A');
-    await paint(a.page, 'A');
+    await paintStable(a.page, 'A');
+    // сначала у неё самой: не лёг штрих — это геометрия рисования, а не распространение по WS
+    await expect.poll(async () => inkOf(a.page, 'A'),
+      { timeout: 15_000, message: 'штрих Анны виден у неё на полотне' }).toBeGreaterThan(before);
     await expect.poll(async () => inkOf(t.page, 'A'), { timeout: 30_000, message: 'штрих ученика доехал до учителя' })
       .toBeGreaterThan(before);
-    expect(await inkOf(a.page, 'A'), 'у Анны её рисунок на экране').toBeGreaterThan(before);
     const inkAfterA = await inkOf(t.page, 'A');
 
     // 4. отзыв действует сразу: значок снялся, и новый штрих никуда не едет
@@ -147,7 +149,7 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect(badge(a.page), 'значок снялся вместе с разрешением').toHaveCount(0, { timeout: 15_000 });
     await expect(viewOnly(a.page), 'полотно снова только для просмотра').toBeVisible({ timeout: 15_000 });
     const bBefore = await inkOf(t.page, 'B');
-    await paint(a.page, 'B');
+    await paintStable(a.page, 'B');
     await expect.poll(async () => inkOf(t.page, 'B'), { timeout: 6_000 }).toBe(bBefore);
 
     // 5. «удалить рисунки ученика» снимает только Аннино: у Б на доске ничего не было

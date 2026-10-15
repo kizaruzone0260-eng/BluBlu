@@ -182,6 +182,34 @@ export async function drawRect(page: Page, from: [number, number], to: [number, 
   await page.waitForTimeout(800);
 }
 
+/**
+ * Тот же штрих, что `drawRect`, но с координатами, которые Playwright проверил сам.
+ *
+ * Причина отдельной функции — прогон `38715507790`: ученик рисует сразу после того, как учитель
+ * выдал право, а вместе с правом у полотна уходит `zenModeEnabled`/`viewModeEnabled`
+ * (`Board.tsx:483`), Excalidraw пересобирает свои панели и размер `<canvas>` меняется. Rect,
+ * снятый до этого переезда, оказывается не там: элемент создаётся, но вне видимой области, и на
+ * экране ученика остаётся «Scroll back to content» при пустом холсте — это ровно
+ * `scrolledOutside: !atLeastOneVisibleElement && elements.size > 0`. Проверка полотна в
+ * `drawRect` не могла этого увидеть: `page.mouse` ходит «в пустоту» и ничего не проверяет.
+ *
+ * `hover`/`click` с `position` Playwright выполняет только когда элемент виден, не перекрыт и
+ * НЕ сдвинулся между двумя кадрами, то есть переезд полотна уже закончен. Целься по
+ * `interactive`-полотну: `.excalidraw__canvas.static` с `pointer-events: none` (см. index.css
+ * Excalidraw) никогда не бывает целью указателя, и проверка попадания на нём падала бы всегда.
+ */
+export async function paintStable(page: Page, slot: keyof typeof SLOTS): Promise<void> {
+  const surface = page.locator('[data-testid=board] canvas.excalidraw__canvas:not(.static)').first();
+  const { from, to } = SLOTS[slot];
+  await surface.click({ position: { x: from[0], y: from[1] } });   // фокус на полотне
+  await page.keyboard.press('r');                                   // инструмент «прямоугольник»
+  await surface.hover({ position: { x: from[0], y: from[1] } });     // полотно стоит на месте
+  const box = (await surface.boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(box.x + to[0], box.y + to[1], { steps: 6 });
+  await page.mouse.up();
+}
+
 /** A text element typed on the canvas — used by the font/rendering test (task 3). */
 export async function drawText(page: Page, at: [number, number], text: string): Promise<void> {
   const box = (await canvas(page).boundingBox())!;
