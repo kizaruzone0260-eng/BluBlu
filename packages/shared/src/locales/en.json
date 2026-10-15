@@ -616,6 +616,7 @@
     "description": "Description",
     "descriptionAria": "Material description",
     "bold": "Bold",
+    "heading": "Heading H2",
     "italic": "Italic",
     "underline": "Underline",
     "bullet": "Bullet list",

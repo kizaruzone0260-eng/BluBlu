@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import { EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
 import { editorIsAlive } from '../lib/tiptapSafe';
+import { useControlledEditor, type EditorHandle } from '../lib/controlledEditor';
 import { useAuth } from '../App';
 import { InkEditor, composeInk, extractInk, type InkData } from '../components/NoteInk';
 
@@ -20,29 +21,21 @@ interface Note {
   title: string; body: string; sharedPostId: string | null; updatedAt: string;
 }
 
-function Tiptap({ value, onChange }: { value: string; onChange: (html: string) => void }) {
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  // Stable options (see components/RichText.tsx) + every read guarded by editorIsAlive:
-  // the notes editor is the other place that used to call getHTML() on an instance
-  // @tiptap/react had already destroyed, which put the whole page behind the 500 screen.
+/**
+ * Редактор заметки — тот же контролируемый редактор, что и в форме материала: значение
+ * возвращается в документ только при смене заметки или когда фокус вне редактора
+ * (см. lib/controlledEditor). `handle` даёт странице flush: отдать последние символы перед
+ * переключением заметки, перед отправкой и при закрытии вкладки.
+ */
+function Tiptap({ value, docId, onChange, handle }: {
+  value: string; docId: string; onChange: (html: string) => void;
+  handle?: { current: EditorHandle | null };
+}) {
+  // Stable options (see components/RichText.tsx): the notes editor is the other place that
+  // used to call getHTML() on an instance @tiptap/react had already destroyed, which put the
+  // whole page behind the 500 screen.
   const editorProps = useMemo(() => ({ attributes: { class: 'tiptap' } }), []);
-  const onUpdate = useCallback(({ editor }: { editor: Editor }) => {
-    if (editorIsAlive(editor)) onChangeRef.current(editor.getHTML());
-  }, []);
-  const editor = useEditor({
-    extensions: EXTENSIONS,
-    content: value || '<p></p>',
-    editorProps,
-    onUpdate,
-  });
-  // controlled-content sync: when the note SWITCHES (value arrives from the
-  // server after mount) push it into the editor; typing never round-trips back
-  // because onUpdate already keeps value === editor.getHTML().
-  useEffect(() => {
-    if (!editorIsAlive(editor)) return;
-    if (value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
-  }, [value, editor]);
+  const editor = useControlledEditor({ value, docId, extensions: EXTENSIONS, editorProps, onChange, handle });
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>
       <MenuBar editor={editor} />
@@ -52,25 +45,29 @@ function Tiptap({ value, onChange }: { value: string; onChange: (html: string) =
 }
 
 function MenuBar({ editor }: { editor: Editor | null }) {
+  const { t } = useTranslation();
   // an un-mounted-but-alive instance still gets its toolbar (EditorContent mounts it);
   // a destroyed one has no commands left to build buttons from.
   if (!editorIsAlive(editor)) return null;
-  const btn = (label: string, fn: () => void, active = false) => (
+  // Доступное имя обязательно: «B», «•» и «1.» экранному диктору ничего не говорят.
+  // testid — те же, что у панели формы материала, чтобы одна проверка прошла по обоим.
+  const btn = (label: string, title: string, testid: string, fn: () => void, active = false) => (
     <button
-      key={label} type="button" className="secondary"
+      key={label} type="button" className="secondary" aria-label={title} title={title}
+      data-testid={testid} aria-pressed={active}
       style={{ margin: 2, padding: '4px 8px', minWidth: 36, minHeight: 36, fontWeight: active ? 700 : 400, marginTop: 4 }}
       onClick={fn}
     >{label}</button>
   );
   return (
     <div style={{ padding: 4, borderBottom: '1px solid var(--border)' }}>
-      {btn('B', () => editor.chain().focus().toggleBold().run(), editor.isActive('bold'))}
-      {btn('I', () => editor.chain().focus().toggleItalic().run(), editor.isActive('italic'))}
-      {btn('H2', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), editor.isActive('heading', { level: 2 }))}
-      {btn('•', () => editor.chain().focus().toggleBulletList().run(), editor.isActive('bulletList'))}
-      {btn('1.', () => editor.chain().focus().toggleOrderedList().run(), editor.isActive('orderedList'))}
-      {btn('↩', () => editor.chain().focus().undo().run())}
-      {btn('↪', () => editor.chain().focus().redo().run())}
+      {btn('B', t('material.bold'), 'rt-bold', () => editor.chain().focus().toggleBold().run(), editor.isActive('bold'))}
+      {btn('I', t('material.italic'), 'rt-italic', () => editor.chain().focus().toggleItalic().run(), editor.isActive('italic'))}
+      {btn('H2', t('material.heading'), 'rt-h2', () => editor.chain().focus().toggleHeading({ level: 2 }).run(), editor.isActive('heading', { level: 2 }))}
+      {btn('•', t('material.bullet'), 'rt-ul', () => editor.chain().focus().toggleBulletList().run(), editor.isActive('bulletList'))}
+      {btn('1.', t('material.ordered'), 'rt-ol', () => editor.chain().focus().toggleOrderedList().run(), editor.isActive('orderedList'))}
+      {btn('↩', t('material.undo'), 'rt-undo', () => editor.chain().focus().undo().run())}
+      {btn('↪', t('material.redo'), 'rt-redo', () => editor.chain().focus().redo().run())}
     </div>
   );
 }
@@ -117,6 +114,12 @@ export default function Notes() {
   const skipLoadRef = useRef<string | null>(null);
   const activeIdRef = useRef<string | null>(activeId);
   activeIdRef.current = activeId;
+  // редактор заметки: страница забирает у него последние символы перед сменой заметки,
+  // перед публикацией и при закрытии вкладки (дебаунс см. в lib/controlledEditor)
+  const rtRef = useRef<EditorHandle | null>(null);
+  // для какой заметки накоплен pendingRef: переключение не должно перелить текст в другую
+  const pendingOwner = useRef<string | null>(null);
+  const fireRef = useRef<(() => void) | null>(null);
 
   // D.1/§2: a note exists only once it has content — «add» opens a client-side
   // draft; the POST fires at the first autosave with non-blank title/body.
@@ -126,6 +129,7 @@ export default function Notes() {
     onSuccess: (n) => {
       creatingRef.current = false;
       skipLoadRef.current = n.id; // the note we just made — do not clobber the in-progress editor
+      if (pendingOwner.current === DRAFT) pendingOwner.current = n.id;
       setActiveId(n.id);
       // the POST itself IS a save — without this a draft written in one burst
       // (title+body together) would never show «Сохранено»
@@ -223,6 +227,7 @@ export default function Notes() {
 
   function queueSave(next: { title?: string; body?: string; classId?: string | null; eventId?: string | null }) {
     if (!activeId) return;
+    if (!dirtyRef.current) pendingOwner.current = activeId;   // чей это текст, если успеют переключиться
     // merge, don't replace: a fast edit of two fields must not lose the first one
     Object.assign(pendingRef.current, next);
     dirtyRef.current = true;
@@ -230,12 +235,17 @@ export default function Notes() {
     const fire = () => {
       if (!dirtyRef.current) return;
       const curId = activeIdRef.current; // may have moved DRAFT→real since scheduling
+      // если успели открыть ДРУГУЮ заметку, писать надо туда, откуда набрали, а не в новую;
+      // DRAFT остаётся текущим — его продвижение в реальную заметку обновляет владельца само
+      const owner = pendingOwner.current;
+      const id = owner && owner !== DRAFT && owner !== curId ? owner : curId;
+      const mine = id === curId;
       const patch = { ...pendingRef.current };
-      const mergedTitle = (patch.title as string | undefined) ?? titleRef.current;
-      const mergedBody = (patch.body as string | undefined) ?? composeInk(bodyRef.current, inkRef.current);
+      const mergedTitle = (patch.title as string | undefined) ?? (mine ? titleRef.current : '');
+      const mergedBody = (patch.body as string | undefined) ?? (mine ? composeInk(bodyRef.current, inkRef.current) : '');
       // §2: an empty DRAFT is never sent to the API at all; the note is created
       // at the first save that has content.
-      if (curId === DRAFT) {
+      if (id === DRAFT) {
         if (!noteHasContent(mergedTitle, mergedBody)) return;
         // the promoting POST is still in flight → retry shortly; once it lands,
         // activeIdRef holds the real id and the next fire takes the PATCH path
@@ -243,6 +253,7 @@ export default function Notes() {
         if (creatingRef.current) return;
         dirtyRef.current = false;
         pendingRef.current = {};
+        pendingOwner.current = null;
         creatingRef.current = true;
         create.mutate({
           classId: (patch.classId as string | null | undefined) ?? (noteClass || null),
@@ -253,15 +264,25 @@ export default function Notes() {
       }
       dirtyRef.current = false;
       pendingRef.current = {};
-      if (curId) patchNote.mutate({ id: curId, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
+      pendingOwner.current = null;
+      if (id) patchNote.mutate({ id, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
     };
+    fireRef.current = fire;
     timerRef.current = window.setTimeout(fire, 800);
+  }
+
+  /** Сохранить накопленное СЕЙЧАС — вызывается до смены заметки, пока id ещё старый. */
+  function saveNow() {
+    window.clearTimeout(timerRef.current);
+    const f = fireRef.current;
+    fireRef.current = null;
+    if (f) f();
   }
 
   // save on unmount/switch too (real api() helper → keeps the Authorization header)
   useEffect(() => () => {
     if (!dirtyRef.current) return;
-    const fullBody = composeInk(bodyRef.current, inkRef.current);
+    const fullBody = composeInk(rtRef.current?.flush() || bodyRef.current, inkRef.current);
     if (activeId === DRAFT) {
       // leaving an empty draft discards it silently; a draft WITH content is created
       if (noteHasContent(titleRef.current, fullBody)) {
@@ -324,7 +345,7 @@ export default function Notes() {
           {list.map((n) => (
             <button key={n.id} type="button" data-testid="note-item"
               className={n.id === activeId ? 'note-item active' : 'note-item'}
-              onClick={() => { setActiveId(n.id); setEditorSeed(n.id); }}>
+              onClick={() => { rtRef.current?.flush(); saveNow(); setActiveId(n.id); setEditorSeed(n.id); }}>
               <strong>{n.pinned && <span className="pin-star">★ </span>}{n.title || t('notes.untitled')}</strong>
               <span className="meta">
                 {new Intl.DateTimeFormat(i18n.language, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(n.updatedAt))}
@@ -372,7 +393,7 @@ export default function Notes() {
                 </select>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Tiptap key={editorSeed} value={body}
+                <Tiptap key={editorSeed} value={body} docId={editorSeed} handle={rtRef}
                   onChange={(html) => { setBody(html); queueSave({ body: composeInk(html, inkRef.current) }); }} />
                 {/* item 3 — drawing (pen/eraser/colors/thickness/undo/redo/clear), stored in the body */}
                 <InkEditor ink={ink} onChange={(next) => {

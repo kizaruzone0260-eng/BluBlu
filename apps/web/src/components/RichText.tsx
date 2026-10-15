@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import { useMemo } from 'react';
+import { EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useTranslation } from 'react-i18next';
 import { editorIsAlive } from '../lib/tiptapSafe';
+import { useControlledEditor, type EditorHandle } from '../lib/controlledEditor';
 
 /**
  * Shared rich-text block (extracted from the notes editor for the material
@@ -10,42 +11,25 @@ import { editorIsAlive } from '../lib/tiptapSafe';
  * toolbar is a fixed superset: material and notes use the same buttons.
  *
  * The option objects handed to `useEditor` are STABLE on purpose (module-level array,
- * memoised props, one `useCallback`): a fresh literal per render makes
- * `@tiptap/react`'s `EditorInstanceManager.compareOptions` fail, and it then reconfigures
- * the editor on every render — churn around the destroyed-instance window below.
- * Every read of the instance goes through `editorIsAlive` (see lib/tiptapSafe).
+ * memoised props): a fresh literal per render makes `@tiptap/react`'s
+ * `EditorInstanceManager.compareOptions` fail, and it then reconfigures the editor on every
+ * render — churn around the destroyed-instance window below. Every read of the instance goes
+ * through `editorIsAlive` (see lib/tiptapSafe). Правила обратной записи значения — там же,
+ * в lib/controlledEditor.
  */
 const EXTENSIONS = [StarterKit];
 
-export default function RichText({ value, onChange, minHeight = 140 }: {
-  value: string; onChange: (html: string) => void; minHeight?: number;
+export default function RichText({ value, docId, onChange, minHeight = 140, handle }: {
+  value: string; docId: string; onChange: (html: string) => void; minHeight?: number;
+  handle?: { current: EditorHandle | null };
 }) {
   const { t } = useTranslation();
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
 
   const editorProps = useMemo(
     () => ({ attributes: { class: 'tiptap', 'aria-label': t('material.descriptionAria') } }),
     [t],
   );
-  const onUpdate = useCallback(({ editor }: { editor: Editor }) => {
-    if (editorIsAlive(editor)) onChangeRef.current(editor.getHTML());
-  }, []);
-
-  const editor = useEditor({
-    extensions: EXTENSIONS,
-    content: value || '<p></p>',
-    editorProps,
-    onUpdate,
-  });
-
-  // controlled-content sync (same contract as the notes editor): external
-  // value changes are pushed in without emitting an update loop. A destroyed instance is
-  // skipped, and the store re-renders with its replacement — same deps, so this runs again.
-  useEffect(() => {
-    if (!editorIsAlive(editor)) return;
-    if (value !== editor.getHTML()) editor.commands.setContent(value || '<p></p>', { emitUpdate: false });
-  }, [value, editor]);
+  const editor = useControlledEditor({ value, docId, extensions: EXTENSIONS, editorProps, onChange, handle });
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>

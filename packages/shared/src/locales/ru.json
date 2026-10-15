@@ -616,6 +616,7 @@
     "description": "Описание",
     "descriptionAria": "Описание материала",
     "bold": "Жирный",
+    "heading": "Заголовок H2",
     "italic": "Курсив",
     "underline": "Подчёркнутый",
     "bullet": "Список",

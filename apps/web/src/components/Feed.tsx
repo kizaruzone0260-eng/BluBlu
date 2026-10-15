@@ -8,6 +8,7 @@ import { classifyAttachmentUrl, safeExternalUrl, youtubeVideoId } from '../lib/a
 import { fmtDateTime } from '../lib/format';
 import { NoteBodyView } from './NoteInk';
 import RichText from './RichText';
+import type { EditorHandle } from '../lib/controlledEditor';
 import { useAuth } from '../App';
 
 /**
@@ -311,6 +312,7 @@ function MaterialEdit({ classId, post, onDone }: { classId: string; post: FeedPo
   const [linkUrl, setLinkUrl] = useState('');
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const rtRef = useRef<EditorHandle | null>(null);
 
   const topicsQ = useQuery({ queryKey: ['topics', classId], queryFn: () => api<TopicRow[]>(`/api/classes/${classId}/topics`) });
   const membersQ = useQuery({ queryKey: ['members', classId], queryFn: () => api<MemberRow[]>(`/api/classes/${classId}/members`) });
@@ -319,7 +321,9 @@ function MaterialEdit({ classId, post, onDone }: { classId: string; post: FeedPo
     mutationFn: () => api(`/api/posts/${post.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        title: title.trim() || post.title, body,
+        title: title.trim() || post.title,
+        // последние символы могли ещё не дойти до состояния (дебаунс редактора)
+        body: rtRef.current?.flush() || body,
         topicId: topicId || null,
         audience: allAudience ? [] : [...audience],
       }),
@@ -348,7 +352,7 @@ function MaterialEdit({ classId, post, onDone }: { classId: string; post: FeedPo
       <label>{t('common.name')}</label>
       <input data-testid="edit-title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
       <label>{t('material.description')}</label>
-      <RichText value={body} onChange={setBody} minHeight={90} />
+      <RichText value={body} docId={post.id} onChange={setBody} minHeight={90} handle={rtRef} />
       <label>{t('material.topic')}</label>
       <select data-testid="edit-topic" value={topicId} onChange={(e) => setTopicId(e.target.value)}>
         <option value="">{t('material.noTopic')}</option>

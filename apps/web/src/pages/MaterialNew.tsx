@@ -7,6 +7,7 @@ import { classifyAttachmentUrl, safeExternalUrl, type AttachmentKind } from '../
 import RichText from '../components/RichText';
 import { useAuth } from '../App';
 import { usePopover } from '../lib/popover';
+import type { EditorHandle } from '../lib/controlledEditor';
 
 /**
  * Material task A — «Создать материал» as a separate page (fullscreen on
@@ -50,6 +51,7 @@ export default function MaterialNew() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const rtRef = useRef<EditorHandle | null>(null);
 
   const classesQ = useQuery({ queryKey: ['classes'], queryFn: () => api<ClassView[]>('/api/classes') });
   const classes = useMemo(() => (classesQ.data ?? []).filter((c) => !c.archived), [classesQ.data]);
@@ -75,10 +77,12 @@ export default function MaterialNew() {
 
   const create = useMutation({
     mutationFn: async (vars: { publish: 'now' | 'schedule' | 'draft'; scheduledAt: string | null }) => {
+      // последние символы могли ещё не уйти в состояние (дебаунс редактора) — забираем их сейчас
+      const description = rtRef.current?.flush() || body;
       for (const cid of pickedClasses) {
         const form = new FormData();
         form.set('title', title.trim());
-        form.set('description', body);
+        form.set('description', description);
         form.set('publish', vars.publish);
         if (vars.scheduledAt) form.set('scheduledAt', vars.scheduledAt);
         // audience for THIS class only (ids that are its members)
@@ -157,7 +161,7 @@ export default function MaterialNew() {
         {titleErr && <p className="error" data-testid="material-title-err" style={{ marginTop: 4 }}>{titleErr}</p>}
 
         <label>{t('material.description')}</label>
-        <RichText value={body} onChange={setBody} />
+        <RichText value={body} docId={id} onChange={setBody} handle={rtRef} />
 
         {/* ── Прикрепить ── */}
         <label style={{ marginTop: 12 }}>{t('material.attach')}</label>
