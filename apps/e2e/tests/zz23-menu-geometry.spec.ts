@@ -31,8 +31,9 @@ const SIZES = [
 async function checkMenu(page: Page, trigger: string, testid: string, label: string, minItems = 1): Promise<void> {
   const vp = page.viewportSize()!;
   const menu = page.getByTestId(testid);
+  // язык рендерится дважды (широкая колонка и мобильная шапка) — кликаем тот, что виден
   const open = async () => {
-    await page.getByTestId(trigger).click();
+    await page.getByTestId(trigger).locator('visible=true').first().click();
     await expect(menu, `${label}: меню открылось`).toBeVisible({ timeout: 10_000 });
   };
   await open();
