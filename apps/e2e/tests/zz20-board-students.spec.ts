@@ -13,8 +13,8 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, boardGeom, inkSeen, loginUi, makeLesson, openLesson, paintStable, registerStudent, stack,
-  teacherToken, waitBoard, type Ctx,
+  BASE, boardGeom, geomShift, inkSeen, loginUi, makeLesson, openLesson, paintStable,
+  registerStudent, stack, teacherToken, waitBoard, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
 
@@ -138,7 +138,11 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect(badge(a.page), 'значок «вы можете рисовать» появился').toBeVisible({ timeout: 15_000 });
     await expect(badge(b.page), 'Борис не разрешён').toHaveCount(0, { timeout: 5_000 });
     await expect(viewOnly(b.page)).toBeVisible();
-    expect(await boardGeom(a.page), 'выдача права не сдвинула и не изменила полотно').toEqual(geom0);
+    {
+      const s = geomShift(geom0, await boardGeom(a.page));
+      expect(s.max, `выдача права не сдвигает и не меняет полотно (допуск 2 px), разнос ${JSON.stringify(s.d)}`)
+        .toBeLessThanOrEqual(2);
+    }
 
     // 3. Анна рисует — штрих виден и у неё, и у учителя.
     // Считается ВСЁ полотно, а не окно слота (`inkSeen`): у Excalidraw собственный viewport, и в
@@ -159,7 +163,11 @@ test.describe('students drawing on the board (part 3)', () => {
     await expect(viewOnly(a.page), 'полотно снова только для просмотра').toBeVisible({ timeout: 15_000 });
     // отзыв ещё и показывает подсказку «нет разрешения»: место под неё зарезервировано, полотно
     // не едет ни на пиксель
-    expect(await boardGeom(a.page), 'отзыв и подсказка не сдвинули полотно').toEqual(geom0);
+    {
+      const s = geomShift(geom0, await boardGeom(a.page));
+      expect(s.max, `отзыв и подсказка не сдвигают полотно (допуск 2 px), разнос ${JSON.stringify(s.d)}`)
+        .toBeLessThanOrEqual(2);
+    }
     const bBefore = await inkSeen(t.page);
     await paintStable(a.page, 'B');
     await expect.poll(() => inkSeen(t.page),

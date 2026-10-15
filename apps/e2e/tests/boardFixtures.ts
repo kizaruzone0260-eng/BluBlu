@@ -263,6 +263,21 @@ export async function inkIn(page: Page, r: { x: number; y: number; w: number; h:
 }
 
 /**
+ * Максимальное расхождение двух геометрий по любой из четырёх координат, и сами разносы.
+ *
+ * Допуск нужен: субпиксельная прокрутка (`scrollIntoViewIfNeeded` даёт y вроде 302.5625) и
+ * округление `calc(100dvh - 420px)` дают разницу в доли пикселя, которая не имеет отношения к
+ * «полотно сдвинуло». 2 px — потолок этого шума; реальный сдвиг строки шапки был 5–8 px.
+ */
+export function geomShift(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+): { max: number; d: { x: number; y: number; w: number; h: number } } {
+  const d = { x: b.x - a.x, y: b.y - a.y, w: b.w - a.w, h: b.h - a.h };
+  return { max: Math.max(Math.abs(d.x), Math.abs(d.y), Math.abs(d.w), Math.abs(d.h)), d };
+}
+
+/**
  * Всё тёмное на полотне, без окна.
  *
  * `inkIn` смотрит в фиксированный прямоугольник — он различает слоты A/B/C, и в статичной

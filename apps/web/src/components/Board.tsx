@@ -204,6 +204,33 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     placeMenu();
   }
 
+  /**
+   * Меню «Удалить рисунки ученика» прижимается к вьюпорту тем же способом, что и меню вкладки.
+   *
+   * `.board-tab-pop` — `position: fixed`, а фиксированный элемент в процентах считает размеры от
+   * окна, а не от родителя: `top: 100%` означал «900 px от верхнего края», то есть список
+   * «Анна Тест · 1» всегда рождался ЗА нижним краем экрана — до него нельзя было дотянуться ни
+   * мышью, ни тестом (это и поймал zz20 на шаге purge: `element is outside of the viewport`).
+   * Запас по высоте — примерная высота самого списка (строки по ~44 px).
+   */
+  const purgeAnchorRef = useRef<HTMLElement | null>(null);
+  const [purgeAt, setPurgeAt] = useState<{ top: number; left: number } | null>(null);
+  function placePurge() {
+    const el = purgeAnchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPurgeAt({
+      top: Math.max(8, Math.min(r.bottom + 4, window.innerHeight - 160)),
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 208 - 8)),
+    });
+  }
+  useEffect(() => {
+    if (!purgeOpen) return;
+    const scrolled = () => placePurge();
+    window.addEventListener('scroll', scrolled, true);
+    return () => window.removeEventListener('scroll', scrolled, true);
+  }, [purgeOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function mergeIncoming(incoming: RawEl[]) {
     const a = apiRef.current;
     if (!a) return;
@@ -415,12 +442,17 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
               <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="board-purge-btn"
                 aria-haspopup="menu" aria-expanded={purgeOpen}
                 title={t('lesson.boardPurgeHint')}
-                onClick={() => { setPurgeOpen((v) => !v); if (!purgeOpen) void loadDrawnBy(); }}>
+                onClick={(e) => {
+                  const on = !purgeOpen;
+                  setPurgeOpen(false);
+                  setNotice('');
+                  if (on) { purgeAnchorRef.current = e.currentTarget; placePurge(); setPurgeOpen(true); void loadDrawnBy(); }
+                }}>
                 🧹 {t('lesson.boardPurge')}
               </button>
               {purgeOpen && (
                 <div className="board-tab-pop" role="menu" data-testid="board-purge-pop"
-                  style={{ top: '100%', left: 0, marginTop: 4 }}>
+                  style={purgeAt ?? undefined}>
                   {drawnBy === null && <span className="muted">…</span>}
                   {drawnBy !== null
                     && !Object.entries(drawnBy).some(([id, n]) => n > 0 && id !== me?.id) && (
