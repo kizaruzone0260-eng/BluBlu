@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePopover } from '../lib/popover';
 
 /**
  * Единая нижняя панель управления уроком (задача 2026-10-10, образец Zoom/Meet).
@@ -83,27 +84,21 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
   }, []);
   const hidden = mustHide && !awake && !overBar && menu === '';
 
-  // Escape и клик мимо закрывают меню
-  useEffect(() => {
-    if (!menu) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation(); e.preventDefault();
-      setMenu(''); setConfirmEnd(false);
-    };
-    const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) { setMenu(''); setConfirmEnd(false); }
-    };
-    window.addEventListener('keydown', onKey, true);
-    window.addEventListener('pointerdown', onDown, true);
-    return () => {
-      window.removeEventListener('keydown', onKey, true);
-      window.removeEventListener('pointerdown', onDown, true);
-    };
-  }, [menu]);
-
-  const toggle = (m: Menu) => { setConfirmEnd(false); setMenu((cur) => (cur === m ? '' : m)); };
+  /*
+   * Меню полосы управления (устройства, «Ещё», «Выйти») живёт на общем механизме размещения
+   * (`lib/popover`): раньше оно крепилось к кнопке чистым CSS (`bottom: 100%`, `left: 50%` +
+   * translateX), и на узком экране меню крайней кнопки свешивалось за границу вьюпорта, а в низком
+   * окне упиралось в верхний край. Здесь то же самое, что и у остальных меню: кламп к краям,
+   * внутренняя прокрутка, Escape и клик снаружи.
+   */
+  const [barAnchor, setBarAnchor] = useState<HTMLElement | null>(null);
   const close = () => { setMenu(''); setConfirmEnd(false); };
+  const barPop = usePopover({ open: menu !== '', anchor: barAnchor, align: 'center', onClose: close });
+  const toggle = (m: Menu, el: HTMLElement) => {
+    setConfirmEnd(false);
+    setBarAnchor(el);
+    setMenu((cur) => (cur === m ? '' : m));
+  };
 
   /**
    * Кнопка с иконкой и подписью (подпись — от 1024 px), state=aria-pressed.
@@ -146,7 +141,7 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
         aria-label={kind === 'mic' ? t('lesson.pickMic') : t('lesson.pickCam')}
         aria-haspopup="menu" aria-expanded={menu === kind}
         title={kind === 'mic' ? t('lesson.pickMic') : t('lesson.pickCam')}
-        onClick={() => toggle(kind)}
+        onClick={(e) => toggle(kind, e.currentTarget)}
       >▾</button>
     </span>
   );
@@ -233,7 +228,7 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
           <button
             type="button" className={`bar-btn${menu === 'more' ? ' bar-active' : ''}`}
             data-testid="more-btn" aria-label={t('lesson.more')} aria-haspopup="menu"
-            aria-expanded={menu === 'more'} title={t('lesson.more')} onClick={() => toggle('more')}
+            aria-expanded={menu === 'more'} title={t('lesson.more')} onClick={(e) => toggle('more', e.currentTarget)}
           >
             <span className="bar-ico" aria-hidden="true">⋯</span>
             <span className="bar-lbl">{t('lesson.more')}</span>
@@ -245,7 +240,7 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
             type="button" className="bar-btn bar-leave" data-testid="leave-btn"
             aria-label={t('lesson.leave')} title={t('lesson.leave')}
             aria-haspopup="menu" aria-expanded={menu === 'leave'}
-            onClick={() => toggle('leave')}
+            onClick={(e) => toggle('leave', e.currentTarget)}
           >
             <span className="bar-ico" aria-hidden="true">📴</span>
             <span className="bar-lbl">{t('lesson.leave')}</span>
@@ -261,19 +256,22 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
         )}
 
         {menu === 'mic' && (
-          <div className="bar-menu" role="group" aria-label={t('lesson.pickMic')} data-testid="mic-menu">
+          <div className="bar-menu" role="group" aria-label={t('lesson.pickMic')} data-testid="mic-menu"
+            ref={barPop.ref} style={barPop.style}>
             <div className="bar-menu-title">🎙 {t('lesson.pickMic')}</div>
             {deviceRows('mic')}
           </div>
         )}
         {menu === 'cam' && (
-          <div className="bar-menu" role="group" aria-label={t('lesson.pickCam')} data-testid="cam-menu">
+          <div className="bar-menu" role="group" aria-label={t('lesson.pickCam')} data-testid="cam-menu"
+            ref={barPop.ref} style={barPop.style}>
             <div className="bar-menu-title">📹 {t('lesson.pickCam')}</div>
             {deviceRows('cam')}
           </div>
         )}
         {menu === 'leave' && (
-          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="leave-menu">
+          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="leave-menu"
+            ref={barPop.ref} style={barPop.style}>
             <button type="button" className="bar-item" role="menuitem" data-testid="leave-keep"
               onClick={() => { close(); actions.leave(); }}>
               📴 {t('lesson.leaveKeep')}
@@ -300,7 +298,8 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
           </div>
         )}
         {menu === 'more' && (
-          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="more-menu">
+          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="more-menu"
+            ref={barPop.ref} style={barPop.style}>
             <div className="bar-menu-title" role="presentation">📱 {t('lesson.layout')}</div>
             {([
               ['auto', t('lesson.layoutAuto')], ['gallery', t('lesson.layoutGrid')],

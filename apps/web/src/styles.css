@@ -417,8 +417,9 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 
 /* ── language dropdown ──────────────────────────────────────────────────── */
 .lang-wrap { position: relative; }
+/* координаты — у lib/popover: меню прижимается к вьюпорту, а не к кнопке */
 .lang-menu {
-  position: absolute; top: calc(100% + 6px); right: 0; min-width: 160px; z-index: 70;
+  position: fixed; min-width: 160px; z-index: 70;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
   box-shadow: var(--shadow-lg); padding: var(--sp-1);
 }
@@ -548,7 +549,7 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .chat-msg:hover .chat-more, .chat-msg:focus-within .chat-more { opacity: 1; }
 @media (hover: none) { .chat-more { opacity: 1; } }
 .chat-menu {
-  position: absolute; right: 8px; top: calc(100% - 4px); z-index: 30; min-width: 160px;
+  position: fixed; z-index: 30; min-width: 160px;
   display: flex; flex-direction: column; gap: 2px; padding: 6px;
   box-shadow: 0 6px 24px rgb(0 0 0 / .18);
 }
@@ -616,7 +617,7 @@ button.danger-text { color: var(--danger); }
 .att-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
 .pub-row { position: relative; display: flex; gap: 6px; margin-top: 16px; }
 .pub-menu {
-  position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; min-width: 210px;
+  position: fixed; z-index: 30; min-width: 210px;
   display: flex; flex-direction: column; gap: 4px; padding: 8px;
   box-shadow: 0 6px 24px rgb(0 0 0 / .18);
 }
@@ -776,7 +777,7 @@ button.danger-text { color: var(--danger); }
 }
 /* вспашивающиеся меню над кнопкой: список устройств, «Ещё», горячие клавиши */
 .bar-menu {
-  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  position: fixed;
   min-width: 240px; max-width: min(92vw, 380px); max-height: 60vh; overflow: auto;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg);
   box-shadow: var(--shadow-lg); padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2);

@@ -3,6 +3,7 @@ import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import { useTranslation } from 'react-i18next';
 import { api, getToken, wsTicket } from '../lib/api';
+import { usePopover } from '../lib/popover';
 import { useAuth } from '../App';
 
 /**
@@ -45,8 +46,6 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [menuFor, setMenuFor] = useState<number | null>(null);
-  /** где сидит поповер «⋯» — см. openMenu: он прижат к вьюпорту */
-  const [menuAt, setMenuAt] = useState<{ top: number; left: number } | null>(null);
   const [renaming, setRenaming] = useState<{ page: number; value: string } | null>(null);
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -157,79 +156,41 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [current, pages.length]);
 
-  // the per-tab menu closes on a click anywhere else or on Escape; a scroll moves it instead
-  useEffect(() => {
-    if (menuFor === null) return;
-    const away = (e: MouseEvent) => {
-      if (!tabsRef.current?.contains(e.target as Node)) setMenuFor(null);
-    };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuFor(null); };
-    // capture: true also catches the scroll of the tab strip itself. The popover is REPOSITIONED
-    // rather than closed, because clicking a partly visible tab makes the browser scroll it in —
-    // closing there would snap the menu shut the instant it opened (seen at 390 px).
-    const scrolled = () => placeMenu();
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', esc);
-    window.addEventListener('scroll', scrolled, true);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('keydown', esc);
-      window.removeEventListener('scroll', scrolled, true);
-    };
-  }, [menuFor]);
-
-  /**
-   * The popover is positioned against the VIEWPORT, not the tab: the strip scrolls horizontally
-   * at 390 px, and an `absolute` menu on the last tab hung off the right edge of the phone screen
-   * while inside the scrolling strip it was clipped altogether (both found in the 2026-10-08
-   * screenshot review). If the anchor slides out of the strip, the menu closes with it.
-   */
-  const menuAnchorRef = useRef<HTMLElement | null>(null);
-  function placeMenu() {
-    const el = menuAnchorRef.current;
-    const strip = tabsRef.current;
-    if (!el || !strip) return;
-    const r = el.getBoundingClientRect();
-    const box = strip.getBoundingClientRect();
-    if (r.right < box.left || r.left > box.right) { setMenuFor(null); return; }
-    const width = 208;                                   // .board-tab-pop min-width + padding
-    setMenuAt({
-      top: Math.max(8, Math.min(r.bottom + 4, window.innerHeight - 8)),
-      left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)),
-    });
-  }
-  function openMenu(page: number, anchor: HTMLElement) {
-    menuAnchorRef.current = anchor;
-    setMenuFor(page);
-    placeMenu();
-  }
-
-  /**
-   * Меню «Удалить рисунки ученика» прижимается к вьюпорту тем же способом, что и меню вкладки.
+  /*
+   * Оба меню доски живут на общем механизме размещения (`lib/popover`): целиком во вьюпорте,
+   * переворот вверх, когда снизу не помещается, внутренняя прокрутка в низком окне, закрытие по
+   * Escape и по клику снаружи.
    *
-   * `.board-tab-pop` — `position: fixed`, а фиксированный элемент в процентах считает размеры от
-   * окна, а не от родителя: `top: 100%` означал «900 px от верхнего края», то есть список
-   * «Анна Тест · 1» всегда рождался ЗА нижним краем экрана — до него нельзя было дотянуться ни
-   * мышью, ни тестом (это и поймал zz20 на шаге purge: `element is outside of the viewport`).
-   * Запас по высоте — примерная высота самого списка (строки по ~44 px).
+   * `.board-tab-pop` — `position: fixed`, то есть координаты считаются от окна: наивное
+   * `top: 100%` у меню purge означало «высота экрана от верхнего края», и список «Анна Тест · 1»
+   * всегда рождался за нижним краем — до него нельзя было дотянуться ни мышью, ни тестом
+   * (это и поймал zz20). Полоска вкладок прокручивается горизонтально на 390 px, поэтому меню
+   * обязано оставаться ПРИВЯЗАННОЙ К ВКЛАДКЕ: уехала вкладка из полоски — закрывается и меню
+   * (разбор скриншотов 2026-10-08). Сама прокрутка меню не закрывает: клик по наполовину видимой
+   * вкладке заставляет браузер докрутить её, и закрытие захлопнуло бы меню в тот же миг.
    */
-  const purgeAnchorRef = useRef<HTMLElement | null>(null);
-  const [purgeAt, setPurgeAt] = useState<{ top: number; left: number } | null>(null);
-  function placePurge() {
-    const el = purgeAnchorRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPurgeAt({
-      top: Math.max(8, Math.min(r.bottom + 4, window.innerHeight - 160)),
-      left: Math.max(8, Math.min(r.left, window.innerWidth - 208 - 8)),
-    });
-  }
+  const [tabAnchor, setTabAnchor] = useState<HTMLElement | null>(null);
+  const tabPop = usePopover({ open: menuFor !== null, anchor: tabAnchor, onClose: () => setMenuFor(null) });
+  const [purgeAnchor, setPurgeAnchor] = useState<HTMLElement | null>(null);
+  const purgePop = usePopover({ open: purgeOpen, anchor: purgeAnchor, onClose: () => setPurgeOpen(false) });
+
   useEffect(() => {
-    if (!purgeOpen) return;
-    const scrolled = () => placePurge();
-    window.addEventListener('scroll', scrolled, true);
-    return () => window.removeEventListener('scroll', scrolled, true);
-  }, [purgeOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (menuFor === null || !tabAnchor) return;
+    const leaveStrip = () => {
+      const strip = tabsRef.current;
+      if (!strip) return;
+      const r = tabAnchor.getBoundingClientRect();
+      const box = strip.getBoundingClientRect();
+      if (r.right < box.left || r.left > box.right) setMenuFor(null);
+    };
+    window.addEventListener('scroll', leaveStrip, true);
+    return () => window.removeEventListener('scroll', leaveStrip, true);
+  }, [menuFor, tabAnchor]);
+
+  function openMenu(page: number, anchor: HTMLElement) {
+    setTabAnchor(anchor);
+    setMenuFor(page);
+  }
 
   function mergeIncoming(incoming: RawEl[]) {
     const a = apiRef.current;
@@ -402,7 +363,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
                       setNotice('');
                     }}>⋯</button>
                   {menuFor === p && (
-                    <div className="board-tab-pop" role="menu" data-testid={`board-pop-${p}`} style={menuAt ?? undefined}>
+                    <div className="board-tab-pop" role="menu" data-testid={`board-pop-${p}`} ref={tabPop.ref} style={tabPop.style}>
                       <button type="button" role="menuitem" data-testid="board-rename"
                         onClick={() => { setRenaming({ page: p, value: titles[p] ?? '' }); setMenuFor(null); }}>
                         {t('lesson.boardRename')}
@@ -446,13 +407,13 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
                   const on = !purgeOpen;
                   setPurgeOpen(false);
                   setNotice('');
-                  if (on) { purgeAnchorRef.current = e.currentTarget; placePurge(); setPurgeOpen(true); void loadDrawnBy(); }
+                  if (on) { setPurgeAnchor(e.currentTarget); setPurgeOpen(true); void loadDrawnBy(); }
                 }}>
                 🧹 {t('lesson.boardPurge')}
               </button>
               {purgeOpen && (
                 <div className="board-tab-pop" role="menu" data-testid="board-purge-pop"
-                  style={purgeAt ?? undefined}>
+                  ref={purgePop.ref} style={purgePop.style}>
                   {drawnBy === null && <span className="muted">…</span>}
                   {drawnBy !== null
                     && !Object.entries(drawnBy).some(([id, n]) => n > 0 && id !== me?.id) && (

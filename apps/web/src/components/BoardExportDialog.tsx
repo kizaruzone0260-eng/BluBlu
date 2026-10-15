@@ -197,9 +197,20 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
     }
   }
 
+  /*
+   * Окно обязано закрываться так же, как всё остальное: Escape и клик по затемнению за пределами
+   * карточки. До этого единственным выходом была кнопка «✕» внутри.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
   return (
     <div className="modal-backdrop" data-testid="pdf-dialog" role="dialog" aria-modal="true"
-      aria-label={t('lesson.pdfTitle')}>
+      aria-label={t('lesson.pdfTitle')}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal pdf-modal">
         <div className="row">
           <h2 style={{ margin: 0 }}>{t('lesson.pdfTitle')}</h2>

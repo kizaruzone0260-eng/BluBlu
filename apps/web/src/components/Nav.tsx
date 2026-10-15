@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePopover } from '../lib/popover';
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, type Me } from '../lib/api';
@@ -39,12 +40,8 @@ const LOCALES = [
 export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?: () => void }) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const pop = usePopover({ open, anchor, align: 'end', onClose: () => setOpen(false) });
   const current = LOCALES.find((l) => l.code === i18n.language) ?? LOCALES[0];
   async function pick(code: string) {
     setOpen(false);
@@ -61,12 +58,12 @@ export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?:
     }
   }
   return (
-    <div className="lang-wrap" ref={ref}>
-      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={() => setOpen(!open)} aria-label={t('common.language')}>
+    <div className="lang-wrap">
+      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={(e) => { setAnchor(e.currentTarget); setOpen((v) => !v); }} aria-label={t('common.language')}>
         <Icon d={icons.globe} size={18} /> {current.code.toUpperCase()}
       </button>
       {open && (
-        <div className="lang-menu" role="menu">
+        <div className="lang-menu" role="menu" data-testid="lang-menu" ref={pop.ref} style={pop.style}>
           {LOCALES.map((l) => (
             <button key={l.code} data-testid={`lang-${l.code}`} className={l.code === current.code ? 'sel' : ''} onClick={() => void pick(l.code)} role="menuitem">
               {l.native}{l.code === current.code ? ' ✓' : ''}

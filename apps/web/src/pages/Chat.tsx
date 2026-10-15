@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { useChatUnread } from '../lib/chat';
 import { fmtDateTime } from '../lib/format';
 import { useAuth } from '../App';
+import { usePopover } from '../lib/popover';
 
 interface Msg {
   id: string; authorId: string; authorName: string; text: string; createdAt: string; editedAt: string | null;
@@ -60,6 +61,8 @@ export default function ChatRoom() {
   const [connected, setConnected] = useState(false);
   // item 7 — per-message action menu (⋯), inline editor and the copy toast
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const menuPop = usePopover({ open: menuFor !== null, anchor: menuAnchor, align: 'end', onClose: () => setMenuFor(null) });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [toast, setToast] = useState('');
@@ -323,14 +326,6 @@ export default function ChatRoom() {
   }
   function swipeEnd() { swipe.current = null; }
 
-  // keyboard: Escape closes the open action menu
-  useEffect(() => {
-    if (!menuFor) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuFor(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [menuFor]);
-
   return (
     <div className="chat-room">
       <div className="row" style={{ alignItems: 'center' }}>
@@ -384,7 +379,7 @@ export default function ChatRoom() {
                 {canMenu && !editing && (
                   <button className="ghost chat-more" style={{ marginTop: 0, padding: 2 }} data-testid="chat-more"
                     aria-label={t('chat.menu')} aria-haspopup="menu" aria-expanded={menuFor === m.id}
-                    onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>⋯</button>
+                    onClick={(e) => { setMenuAnchor(e.currentTarget); setMenuFor(menuFor === m.id ? null : m.id); }}>⋯</button>
                 )}
               </div>
               {editing ? (
@@ -435,7 +430,8 @@ export default function ChatRoom() {
                 </>
               )}
               {menuFor === m.id && !editing && (
-                <div className="chat-menu card" role="menu" aria-label={t('chat.menu')} data-testid="chat-menu">
+                <div className="chat-menu card" role="menu" aria-label={t('chat.menu')} data-testid="chat-menu"
+                  ref={menuPop.ref} style={menuPop.style}>
                   {canPost && (
                     <button type="button" role="menuitem" data-testid="chat-act-reply" style={{ marginTop: 0 }}
                       onClick={() => startReply(m)}>{t('chat.reply')}</button>

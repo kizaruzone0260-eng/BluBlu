@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { classifyAttachmentUrl, safeExternalUrl, type AttachmentKind } from '../lib/attachments';
 import RichText from '../components/RichText';
 import { useAuth } from '../App';
+import { usePopover } from '../lib/popover';
 
 /**
  * Material task A — «Создать материал» as a separate page (fullscreen on
@@ -44,6 +45,8 @@ export default function MaterialNew() {
   const [publish, setPublish] = useState<'now' | 'schedule' | 'draft'>('now');
   const [scheduledAt, setScheduledAt] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [pubAnchor, setPubAnchor] = useState<HTMLElement | null>(null);
+  const pubPop = usePopover({ open: menuOpen, anchor: pubAnchor, align: 'end', onClose: () => setMenuOpen(false) });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -288,9 +291,10 @@ export default function MaterialNew() {
             {publish === 'now' ? t('material.publishNow') : publish === 'draft' ? t('material.saveDraft') : t('material.scheduleBtn')}
           </button>
           <button className="secondary pub-caret" data-testid="publish-menu" aria-haspopup="menu" aria-expanded={menuOpen}
-            style={{ marginTop: 0, minWidth: 40 }} disabled={busy} onClick={() => setMenuOpen((v) => !v)}>▾</button>
+            style={{ marginTop: 0, minWidth: 40 }} disabled={busy}
+            onClick={(e) => { setPubAnchor(e.currentTarget); setMenuOpen((v) => !v); }}>▾</button>
           {menuOpen && (
-            <div className="card pub-menu" role="menu" data-testid="publish-options">
+            <div className="card pub-menu" role="menu" data-testid="publish-options" ref={pubPop.ref} style={pubPop.style}>
               <button role="menuitem" data-testid="pub-now" style={{ marginTop: 0 }} onClick={() => { setPublish('now'); setMenuOpen(false); }}>{t('material.publishNow')}</button>
               <button role="menuitem" data-testid="pub-schedule" style={{ marginTop: 0 }} onClick={() => { setPublish('schedule'); setMenuOpen(false); }}>{t('material.schedule')}</button>
               <button role="menuitem" data-testid="pub-draft" style={{ marginTop: 0 }} onClick={() => { setPublish('draft'); setMenuOpen(false); }}>{t('material.saveDraft')}</button>
