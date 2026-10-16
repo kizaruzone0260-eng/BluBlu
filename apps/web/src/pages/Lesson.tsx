@@ -12,6 +12,7 @@ import { useHandFrames, useHands } from '../components/LessonHands';
 import LessonBar, { type BarActions, type BarDevices, type BarState } from '../components/LessonBar';
 import type { PanelTab } from '../components/LessonPanel';
 import { DeviceSettings, speakerPickSupported, useMicMeter } from '../components/DeviceSettings';
+import { capabilities } from '../lib/capabilities';
 import LessonMini, { useLessonHost, type LessonMode } from '../components/LessonLive';
 import VideoTile, { type Tile } from '../components/VideoTile';
 import {
@@ -555,6 +556,8 @@ export default function Lesson({ mode = 'full', target = null }: {
   const [savedMic, setSavedMic] = useState<string>(() => localStorage.getItem(LS_MIC) ?? '');
   const [savedSpk, setSavedSpk] = useState<string>(() => localStorage.getItem(LS_SPK) ?? '');
   const canPickSpeaker = useMemo(() => speakerPickSupported(), []);
+  /** шаг B1: возможности браузера считываются один раз — они не меняются посреди урока */
+  const caps = useMemo(() => capabilities(), []);
   const micLevel = useMicMeter(micStream);
 
   const isTeacher = me?.role === 'teacher';
@@ -1465,6 +1468,8 @@ export default function Lesson({ mode = 'full', target = null }: {
     boardOpen, commentsOpen, participantsOpen, unread, peers: peers.length,
     hands: handsQ.q.data?.hands?.length ?? 0, isTeacher, lectureMode,
     videoPaused, selfHidden: pip.hidden, fullscreen: boardFull, layout,
+    // шаг B1 (2026-10-16): чего не умеет этот браузер — панель прячет кнопку и даёт объяснение
+    canScreen: caps.screen, canFullscreen: caps.fullscreen,
   };
   const barDevices: BarDevices = {
     cams: cams.map((d) => ({ deviceId: d.deviceId, label: d.label })),
@@ -1695,8 +1700,10 @@ export default function Lesson({ mode = 'full', target = null }: {
                             <Suspense fallback={<div className="card board-loading" style={{ height: boardFull ? 'calc(100vh - 64px)' : '62vh' }} />}>
                               <Board sessionId={session.id} classId={session.classId} peerNames={peerNames} height={boardFull ? 'calc(100vh - 64px)' : '62vh'} />
                             </Suspense>
-                            <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
-                              onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
+                            {caps.fullscreen && (
+                              <button className="stage-full" style={{ marginTop: 0 }} data-testid="board-full"
+                                onClick={toggleStageFull}>⛶ {t('lesson.boardFull')}</button>
+                            )}
                           </>
                         ) : screenIsMain && stage.tile ? (
                           <ScreenStage

@@ -228,6 +228,8 @@
     "rejoin": "Return to the lesson",
     "rejoinHint": "You were in this lesson moments ago. One click, with the same devices.",
     "dupIdentity": "This lesson is already open in another window of this browser. Close that window and join again.",
+    "capNoScreen": "This browser cannot share the screen.",
+    "capNoFullscreen": "This browser cannot put the lesson window in full screen.",
     "inRoom": "in room",
     "mediaServerUnavailable": "Media server unavailable — try again later",
     "notesPanel": "My notes",

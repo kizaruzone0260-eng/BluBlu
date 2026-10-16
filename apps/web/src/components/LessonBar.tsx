@@ -30,6 +30,11 @@ export interface BarState {
   commentsOpen: boolean; participantsOpen: boolean; unread: number; peers: number; hands: number;
   isTeacher: boolean; lectureMode: boolean; videoPaused: boolean; selfHidden: boolean;
   fullscreen: boolean; layout: string;
+  /**
+   * Шаг B1 (2026-10-16): что умеет ЭТОТ браузер. `false` значит не «кнопка неактивна сейчас»,
+   * а «кнопка никогда не сработает» — её не видно, а вместо неё стоит объяснение.
+   */
+  canScreen: boolean; canFullscreen: boolean;
 }
 
 export interface BarActions {
@@ -319,11 +324,18 @@ export default function LessonBar({ state, actions, devices }: {
               Двухпозиционный пункт меню — это menuitemcheckbox + aria-checked (так же сделаны
               «Доска», режим лекции и полноэкранный режим), поэтому показ экрана переехал на них.
             */}
-            <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.screenOn}
-              data-testid="more-share" disabled={!state.connected}
-              onClick={() => { close(); actions.share(); }}>
-              🖥 {state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
-            </button>
+            {state.canScreen ? (
+              <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.screenOn}
+                data-testid="more-share" disabled={!state.connected}
+                onClick={() => { close(); actions.share(); }}>
+                🖥 {state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
+              </button>
+            ) : (
+              /* шаг B1: на мобильном Safari `getDisplayMedia` нет — вместо мёртвой кнопки строка,
+                   объясняющая, почему показа экрана нет. Кнопка, которая «никогда не жмётся»,
+                   читается как сломанный урок. */
+              <p className="bar-hint bar-mob" role="note" data-testid="cap-no-screen">{t('lesson.capNoScreen')}</p>
+            )}
             <button type="button" className="bar-item bar-mob" role="menuitem" data-testid="more-participants"
               onClick={() => { close(); actions.participants(); }}>
               👥 {t('lesson.peersTitle')} · {state.peers}
@@ -343,11 +355,13 @@ export default function LessonBar({ state, actions, devices }: {
                 обрывала урок, теперь она и вовсе не нужна */}
             <button type="button" className="bar-item" role="menuitem" data-testid="lesson-new-note"
               onClick={() => { close(); actions.note(); }}>📝 {t('home.newNote')}</button>
-            <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.fullscreen}
-              data-testid="fullscreen-btn" disabled={!state.connected}
-              onClick={() => { close(); actions.fullscreenToggle(); }}>
-              ⛶ {t('lesson.boardFull')}
-            </button>
+            {state.canFullscreen && (
+              <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.fullscreen}
+                data-testid="fullscreen-btn" disabled={!state.connected}
+                onClick={() => { close(); actions.fullscreenToggle(); }}>
+                ⛶ {t('lesson.boardFull')}
+              </button>
+            )}
             <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.selfHidden}
               data-testid="hide-self" disabled={!state.connected}
               onClick={() => { close(); actions.hideSelf(); }}>

@@ -7,3 +7,4 @@ export * from './stageModel.js';
 export * from './chatReply.js';
 export * from './localePick.js';
 export * from './lessonKeep.js';
+export * from './caps.js';

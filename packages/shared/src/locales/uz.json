@@ -228,6 +228,8 @@
     "rejoin": "Darsga qaytish",
     "rejoinHint": "Siz bir lahza oldin shu darsda edingiz. Bir bosishda, avvalgi qurilmalar bilan kirasiz.",
     "dupIdentity": "Bu dars shu brauzerning yana bir oynasida ochiq. Oʻsha oynani yopib, qaytadan kiring.",
+    "capNoScreen": "Bu brauzer ekranni koʻrsata olmaydi.",
+    "capNoFullscreen": "Bu brauzer dars oynasini toʻliq ekrana oʻtkaza olmaydi.",
     "inRoom": "xonada",
     "mediaServerUnavailable": "Media server mavjud emas — keyinroq urinib ko'ring",
     "notesPanel": "Mening qaydlarim",
