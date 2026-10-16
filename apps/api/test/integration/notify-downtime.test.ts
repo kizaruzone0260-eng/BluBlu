@@ -10,8 +10,10 @@
  *
  * Отсюда два разных исхода «проспанного» времени: напоминание, которое НЕ успело встать в
  * очередь, теряется совсем (это и есть защита от лавины старых напоминаний после пробуждения),
- * а то, что уже лежит в таблице, уходит позже — один раз, но без всякой проверки, что урок
- * уже начался или прошёл. Ниже зафиксировано фактическое поведение.
+ * а то, что уже лежит в таблице, раньше уходило позже — один раз, но без всякой проверки, что
+ * урок уже начался или прошёл. Часть A2 (2026-10-16) это исправила: ряд старше двух часов после
+ * `send_at` и напоминание, у которого событие уже началось, теперь помечаются `expired` и не
+ * отправляются. Ниже закреплено новое поведение (и изменённые тесты помечены как изменённые).
  *
  * Всё время задаётся аргументом `now`, тесты детерминированы; данные и чат-id фиктивные.
  */
@@ -112,28 +114,50 @@ suite('напоминания и очередь при сне сервиса (а
     }
   });
 
-  it('напоминание, успевшее встать в очередь до сна, уходит позже — ровно один раз и без проверки свежести', async () => {
+  it('напоминание, успевшее встать в очередь до сна, уходит позже — ровно один раз', async () => {
+    // 24-часовое окно: после пробужда ряд остаётся свежим (младше двух часов) и событие ещё
+    // не началось — именно этот случай и должен дойти до человека.
     const t0 = minute(new Date(Date.now() + 10 * 3600_000));
-    const starts = new Date(t0.getTime() + 10 * 60_000); // срабатывание reminder10m = ровно t0
+    const starts = new Date(t0.getTime() + 24 * 3600_000);
     const ev = await mkEvent('Урок после сна', starts);
     expect(await scanReminders(t.db, t0)).toBe(1);
-    const mine = await rowsFor(ev!.id, 10, 'reminder10m');
+    const mine = await rowsFor(ev!.id, 1440, 'reminder24h');
     expect(mine).toHaveLength(1);
     expect(mine[0]!.status).toBe('pending');
     expect(mine[0]!.sendAt.getTime()).toBe(t0.getTime());
 
-    // процесс спал 8 часов: очередь не работала, ряд остался pending; урок к пробуждению прошёл
-    const wake = new Date(t0.getTime() + 8 * 3600_000);
-    expect(starts.getTime() < wake.getTime(), 'факт проверки: урок уже начался').toBe(true);
+    // процесс спал полтора часа: очередь не работала, ряд остался pending
+    const wake = new Date(t0.getTime() + 90 * 60_000);
     expect(await sendDue(t.db, rec, wake, 50)).toBe(1);
-    const [row] = await rowsFor(ev!.id, 10, 'reminder10m');
+    const [row] = await rowsFor(ev!.id, 1440, 'reminder24h');
     expect(row!.status).toBe('sent');
     expect(rec.sent.at(-1)?.text).toContain('Урок после сна');
 
     const before = rec.sent.length;
     await sendDue(t.db, rec, new Date(wake.getTime() + 60_000), 50);
     expect(rec.sent.length, 'второй проход не отправляет повтор').toBe(before);
-    expect((await rowsFor(ev!.id, 10, 'reminder10m')).filter((x) => x.status === 'sent')).toHaveLength(1);
+    expect((await rowsFor(ev!.id, 1440, 'reminder24h')).filter((x) => x.status === 'sent')).toHaveLength(1);
+  });
+
+  // Часть A2 (2026-10-16) изменила это место набора СПРАВЕДЛИВО: раньше тест закреплял факт
+  // «ряд уходит позже — и никакого проверки свежести». Владельцем поставлено наоборот:
+  // просроченное уведомление не отправляется вовсе. Числа те же, что измерял аудит: 8 часов
+  // сна = ряд на 8 часов старше send_at, а урок за 10-минутным напоминанием уже начался.
+  it('A2: ряд после 8-часового сна не отправляется вовсе — он помечен expired', async () => {
+    const t0 = minute(new Date(Date.now() + 10 * 3600_000));
+    const starts = new Date(t0.getTime() + 10 * 60_000); // срабатывание reminder10m = ровно t0
+    const ev = await mkEvent('Урок во сне', starts);
+    expect(await scanReminders(t.db, t0)).toBe(1);
+    const mine = await rowsFor(ev!.id, 10, 'reminder10m');
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.status).toBe('pending');
+
+    const wake = new Date(t0.getTime() + 8 * 3600_000);
+    const before = rec.sent.length;
+    expect(await sendDue(t.db, rec, wake, 50)).toBe(1);
+    const [row] = await rowsFor(ev!.id, 10, 'reminder10m');
+    expect(row!.status).toBe('expired');
+    expect(rec.sent.length, 'просроченный ряд не должен был отправляться').toBe(before);
   });
 
   it('две параллельные доставки (heartbeat и pg-boss) одного ряда: сообщение строго одно', async () => {
@@ -171,7 +195,10 @@ suite('напоминания и очередь при сне сервиса (а
     await t.db.update(telegramLinks).set({ blockedAt: null }).where(eq(telegramLinks.userId, studentId));
   });
 
-  it('429: повтор ровно через retry_after, лимита попыток в этой ветке нет — 12 подряд оставляют ряд pending', async () => {
+  // Часть A3 (2026-10-16) изменила ЭТОТ тест СПРАВЕДЛИВО: раньше он закреплял измеренный
+  // отсутствие потолка («12 ответов 429 подряд оставляют ряд pending» — очередь из таких
+  // рядов не кончается никогда). Теперь у ветки 429 есть потолок MAX_ATTEMPTS_429 = 12.
+  it('429: повтор ровно через retry_after, но попыток не больше 12 — потом failed', async () => {
     rec.mode = 'retry';
     const base = `retry:${randomUUID()}`;
     await enqueueNotification(t.db, {
@@ -187,14 +214,16 @@ suite('напоминания и очередь при сне сервиса (а
     }
     expect(passes).toBe(12);
     const [row] = await t.db.select().from(notifications).where(sql`dedupe_key like ${base + '%'}`);
-    expect(row!.attempts).toBe(12);
+    // 11, а не 12: терминальный проход меняет статус, но счётчик в ряд уже не пишет
+    expect(row!.attempts).toBe(11);
     expect(row!.lastError).toBe('429');
-    expect(row!.status, '12 ответов 429 ряд не исчерпали: он всё ещё pending').toBe('pending');
-    expect(row!.sendAt.getTime() - now.getTime(), 'send_at сдвинут ровно на retry_after').toBeGreaterThanOrEqual(50_000);
+    expect(row!.status, 'двенадцатый ответ 429 исчерпывает ряд').toBe('failed');
     rec.mode = 'ok';
-    await sendDue(t.db, rec, new Date(row!.sendAt.getTime() + 1000), 50);
+    const before = rec.sent.length;
+    await sendDue(t.db, rec, new Date(row!.sendAt.getTime() + 60_000), 50);
     const [done] = await t.db.select().from(notifications).where(sql`dedupe_key like ${base + '%'}`);
-    expect(done!.status).toBe('sent');
+    expect(done!.status, 'failed — это конец, ряд больше не отправляется').toBe('failed');
+    expect(rec.sent.length).toBe(before);
   });
 
   it('обычная ошибка транспорта ограничена: 6 попыток с экспоненциальным шагом, затем failed', async () => {

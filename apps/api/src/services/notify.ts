@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lte, sql, or } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, lte, sql, or } from 'drizzle-orm';
 import { randomBytes, createHash } from 'node:crypto';
 import { DEFAULT_LOCALE } from '@klass/shared';
 import {
@@ -9,6 +9,14 @@ import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { effectiveSiteBase } from '../lib/prodConfig.js';
 import { listEventsInRange } from './events.js';
+/*
+ * A5 (2026-10-16): `scheduleFlush` был мёртвым кодом — очередь pg-boss создавалась, воркер
+ * стоял, но заданий в неё не клал никто, и вся доставка держалась на 30-секундном heartbeat.
+ * Теперь ряд при постановке в очередь будит воркера на свой `send_at`, а heartbeat остаётся
+ * страховкой. Кольцо импортов (notifyQueue → notify → notifyQueue) безопасно: используются
+ * только объявления функций, доступные до выполнения тела модуля.
+ */
+import { scheduleFlush } from './notifyQueue.js';
 
 export type NotifyKind =
   | 'eventNew' | 'eventChanged' | 'eventCancelled'
@@ -187,6 +195,21 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
 
   if (channel === 'group' || channel === 'both') {
     if (!a.onlyUserIds) {
+      /*
+       * A5 (2026-10-16): групповой канал уважает тихие часы так же, как личный. Раньше ряд для
+       * группы ставился с `send_at = when` напрямую, и «объявление в 23:40» прилетало в чат класса
+       * ночью, даже у класса с ночным молчанием. Своей колонки пояса у класса нет (`classes` её
+       * не заводит), поэтому берётся пояс учителя класса — тот же, из которого строятся события
+       * этого класса, — а при недоступном учителе продуктовый дефолт Asia/Tashkent.
+       * Настройки тишины берутся у учителя: группа — это его канал, и других профилей у неё нет.
+       */
+      let groupTz = 'Asia/Tashkent';
+      if (teacherId) {
+        const [teacherRow] = await db.select({ tz: users.tz }).from(users).where(eq(users.id, teacherId)).limit(1);
+        groupTz = teacherRow?.tz ?? groupTz;
+      }
+      // у класса без учителя (сервисный путь) настроек тишины нет — дефолты 22→8 отдаёт getPrefs
+      const groupPrefs = await getPrefs(db, teacherId);
       const chats = await db.select().from(classTelegramChats).where(eq(classTelegramChats.classId, a.classId));
       for (const chat of chats) {
         const key = `${a.dedupeBase}|g:${chat.chatId}`;
@@ -194,7 +217,8 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
         // get the silent Russian template. The product default is now English; private messages to
         // people keep their own profile language (below), and `class_telegram_chats` stays
         // language-less — adding a group language is a separate decision, not a default flip.
-        const did = await tryInsert(db, a, key, null, chat.chatId, DEFAULT_LOCALE, a.when);
+        const sendAt = applyQuietHours(a.kind, a.when, groupPrefs.quietFrom, groupPrefs.quietTo, groupTz);
+        const did = await tryInsert(db, a, key, null, chat.chatId, DEFAULT_LOCALE, sendAt, a.when);
         if (did) inserted.push(did);
       }
     }
@@ -209,7 +233,7 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
       if (!link[0]) continue; // no /start — never write first (§3.9 acceptance)
       const key = `${a.dedupeBase}|u:${u.id}`;
       const sendAt = applyQuietHours(a.kind, a.when, prefs.quietFrom, prefs.quietTo, u.tz);
-      const did = await tryInsert(db, { ...a, when: sendAt }, key, u.id, link[0].chatId, u.locale, sendAt);
+      const did = await tryInsert(db, a, key, u.id, link[0].chatId, u.locale, sendAt, a.when);
       if (did) inserted.push(did);
     }
   }
@@ -218,33 +242,96 @@ export async function enqueueNotification(db: DB, a: EnqueueArgs): Promise<numbe
 
 async function tryInsert(
   db: DB, a: EnqueueArgs, key: string, userId: string | null, chatId: string,
-  locale: 'ru' | 'uz' | 'en', sendAt: Date,
+  locale: 'ru' | 'uz' | 'en', sendAt: Date, startsAt: Date | null,
 ): Promise<string | null> {
   const text = T[a.kind][locale]({ ...a.params, url: siteUrl(), lessonUrl: a.params.lessonUrl ?? siteUrl(), when: '' });
   const [row] = await db.insert(notifications).values({
     kind: a.kind, classId: a.classId, userId, chatId,
     payload: { text, params: a.params },
-    dedupeKey: key, sendAt,
+    dedupeKey: key, sendAt, startsAt,
   }).onConflictDoNothing().returning({ id: notifications.id });
+  if (row) scheduleFlush(sendAt);
   return row?.id ?? null;
 }
 
 // ─── sender ───────────────────────────────────────────────────────────────────
 
-/** One pass over due notifications. Returns number processed. */
+/**
+ * Часть A (2026-10-16) — константы очереди.
+ *  • STUCK_MS: как долго ряд может пролежать в `sending`, прежде чем его снова считают
+ *    живым. Берётся с запасом: обычный проход — 25 рядов, у Telegram ответ десятки
+ *    миллисекунд; 5 минут покрывают и медленный исходящий запрос, и рестарт сервиса.
+ *  • STALE_MS: ряд старше двух часов после `send_at` уже не новость, а мусор простоя.
+ *  • MAX_ATTEMPTS_429: потолок и в ветке 429 (аудит п.3 измерял, что его нет вовсе —
+ *    12 ответов «retry_after 5» подряд оставляли ряд pending навсегда).
+ */
+export const STUCK_MS = 5 * 60_000;
+export const STALE_MS = 2 * 3600_000;
+export const MAX_ATTEMPTS_429 = 12;
+export const MAX_ATTEMPTS = 6;
+
+/** Кинды «за N до начала»: для них потеряна смысл отправка, когда событие уже идёт. */
+const REMINDER_KINDS = new Set<string>(['reminder24h', 'reminder1h', 'reminder10m']);
+
+/**
+ * A1: зависшие захваты возвращаются в очередь. Возвращает number of reclaimed rows.
+ * Ряд в `sending` виден только этому запросу — никто параллельный его уже не возьмёт.
+ * Захват без метки времени (`locked_at is null`) тоже возвращается: такое может дать только
+ * сбой записи, а «вечный sending» означал бы, что уведомление потеряно молча и навсегда.
+ */
+export async function reclaimStuck(db: DB, now = new Date(), stuckMs = STUCK_MS): Promise<number> {
+  const rows = await db.update(notifications)
+    .set({ status: 'pending', lockedAt: null })
+    .where(and(
+      eq(notifications.status, 'sending'),
+      or(isNull(notifications.lockedAt), lt(notifications.lockedAt, new Date(now.getTime() - stuckMs))),
+    ))
+    .returning({ id: notifications.id });
+  return rows.length;
+}
+
+/**
+ * Один проход по очередь. Возвращает number of processed rows.
+ *
+ * A1 (2026-10-16): захват и пометка — ОДИН запрос. Earlier вариант делал
+ * `SELECT … FOR UPDATE SKIP LOCKED` отдельным запросом в autocommit: блокировка снималась,
+ * как только SELECT закончился, и второй проход (heartbeat и pg-boss работают в одном
+ * процессе и независимо) успевал забрать тот же ряд и отправить его дважды. Здесь строка
+ * становится `sending` в том же запросе, что её выбирает, — конкурентный подзапрос с
+ * `status = 'pending'` её уже не видит.
+ */
 export async function sendDue(db: DB, transport: NotifyTransport, now = new Date(), limit = 25): Promise<number> {
+  await reclaimStuck(db, now);
+  const at = now.toISOString();
   const rows = await db.execute(sql`
-    SELECT id, chat_id, user_id AS "userId", kind, attempts FROM notifications
-     WHERE status = 'pending' AND send_at <= ${now.toISOString()}::timestamptz
-     ORDER BY send_at LIMIT ${limit}
-     FOR UPDATE SKIP LOCKED`);
-  const list = (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows ?? []) as
-    { id: string; chat_id: string | null; userId: string | null; kind: string; attempts: number }[];
+    UPDATE notifications
+       SET status = 'sending', locked_at = ${at}::timestamptz
+     WHERE id IN (
+       SELECT id FROM notifications
+        WHERE status = 'pending' AND send_at <= ${at}::timestamptz
+        ORDER BY send_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED)
+    RETURNING id, chat_id, kind, attempts, send_at, starts_at, payload`);
+  const list = (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows ?? []) as {
+    id: string; chat_id: string | null; kind: string; attempts: number;
+    send_at: Date | string; starts_at: Date | string | null; payload: unknown;
+  }[];
   for (const r of list) {
+    // A2: свежесть раньше отправки. Два разных повода:
+    //  • ряд старше STALE_MS после send_at — это хвост простоя, а не новость;
+    //  • напоминание, у которого событие к моменту отправки уже началось (для «урок
+    //    начался» и остальных киндов starts_at либо совпадает с send_at, либо не является
+    //    напоминанием — проверка относится только к напоминаниям).
+    const sendAtMs = +new Date(r.send_at);
+    if (now.getTime() - sendAtMs > STALE_MS) { await finish(db, r.id, 'expired', 'stale'); continue; }
+    const startsMs = r.starts_at === null ? null : +new Date(r.starts_at);
+    if (startsMs !== null && REMINDER_KINDS.has(r.kind) && startsMs <= now.getTime()) {
+      await finish(db, r.id, 'expired', 'already started');
+      continue;
+    }
     if (!r.chat_id) { await finish(db, r.id, 'skipped', 'no chat'); continue; }
-    const [full] = await db.select().from(notifications).where(eq(notifications.id, r.id)).limit(1);
-    if (!full || full.status !== 'pending') continue;
-    const text = String((full.payload as { text?: string }).text ?? '');
+    const text = String((r.payload as { text?: string }).text ?? '');
     const res = await transport.send(r.chat_id, text);
     if (res.ok) { await finish(db, r.id, 'sent'); continue; }
     if (res.blocked) {
@@ -252,19 +339,24 @@ export async function sendDue(db: DB, transport: NotifyTransport, now = new Date
       await finish(db, r.id, 'blocked', '403');
       continue;
     }
+    const attempts = r.attempts + 1;
     if (res.retryAfterSec !== undefined) {
-      // 429: exponential-ish backoff driven by Telegram's own hint
+      // 429: экспоненциальная задержка берётся из подсказки самого Telegram, но попыток
+      // не может быть бесконечно (A3) — иначе бесконечный 429 держит ряд в очереди вечно.
+      if (attempts >= MAX_ATTEMPTS_429) { await finish(db, r.id, 'failed', '429'); continue; }
       await db.update(notifications).set({
         status: 'pending',
+        lockedAt: null,
         sendAt: new Date(now.getTime() + res.retryAfterSec * 1000),
-        attempts: full.attempts + 1,
+        attempts,
         lastError: '429',
       }).where(eq(notifications.id, r.id));
       continue;
     }
-    const attempts = full.attempts + 1;
-    if (attempts >= 6) { await finish(db, r.id, 'failed', res.error ?? 'error'); continue; }
+    if (attempts >= MAX_ATTEMPTS) { await finish(db, r.id, 'failed', res.error ?? 'error'); continue; }
     await db.update(notifications).set({
+      status: 'pending',
+      lockedAt: null,
       sendAt: new Date(now.getTime() + Math.min(2 ** attempts, 600) * 1000),
       attempts, lastError: res.error ?? 'error',
     }).where(eq(notifications.id, r.id));
@@ -272,8 +364,31 @@ export async function sendDue(db: DB, transport: NotifyTransport, now = new Date
   return list.length;
 }
 
-async function finish(db: DB, id: string, status: 'sent' | 'failed' | 'blocked' | 'skipped', error?: string) {
-  await db.update(notifications).set({ status, lastError: error ?? null }).where(eq(notifications.id, id));
+async function finish(
+  db: DB, id: string,
+  status: 'sent' | 'failed' | 'blocked' | 'skipped' | 'expired', error?: string,
+) {
+  await db.update(notifications)
+    .set({ status, lastError: error ?? null, lockedAt: null })
+    .where(eq(notifications.id, id));
+}
+
+/** A5: 30 дней — срок, после которого ряд очереди с финальным статусом уже ничего не объясняет. */
+export const NOTIFY_HISTORY_MS = 30 * 24 * 3600_000;
+
+/**
+ * A5 (2026-10-16): уборка истории очереди. Отправленное/упавшее/просроченное уведомление —
+ * это журнал доставки, а не данные пользователя, и держать их вечно незачем: таблица
+ * растёт на каждый урок и каждое напоминание каждого класса. Убираются ТОЛЬКО терминальные
+ * статусы (`sent`, `failed`, `expired`, `blocked`) и только по `created_at` — моменту, когда
+ * ряд вообще появился. `pending`/`sending` не трогаем никогда: это живая очередь.
+ */
+export async function sweepNotifications(db: DB, now = new Date(), maxAgeMs = NOTIFY_HISTORY_MS): Promise<number> {
+  const rows = await db.delete(notifications).where(and(
+    sql`status in ('sent', 'failed', 'expired', 'blocked')`,
+    lt(notifications.createdAt, new Date(now.getTime() - maxAgeMs)),
+  )).returning({ id: notifications.id });
+  return rows.length;
 }
 
 // ─── reminder scheduler tick (§3.5 reminders 24h/1h/10m) ─────────────────────
@@ -309,7 +424,7 @@ export async function scanReminders(db: DB, now = new Date()): Promise<number> {
           const local = new Intl.DateTimeFormat('en-GB', { timeZone: o.tz, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(startMs));
           const id = await tryInsertForUser(db, u.id, link.chatId, r.kind, o.classId, {
             title: o.title, class: o.className, time: local, url: `${siteUrl()}/calendar`,
-          }, `rem:${o.uid}:${r.minutes}`, new Date(trigger));
+          }, `rem:${o.uid}:${r.minutes}`, new Date(trigger), new Date(startMs));
           if (id) count++;
         }
       }
@@ -320,7 +435,7 @@ export async function scanReminders(db: DB, now = new Date()): Promise<number> {
 
 async function tryInsertForUser(
   db: DB, userId: string, chatId: string, kind: NotifyKind, classId: string,
-  params: Record<string, string>, key: string, sendAtRaw: Date,
+  params: Record<string, string>, key: string, sendAtRaw: Date, startsAt: Date,
 ): Promise<string | null> {
   const [u] = await db.select({ locale: users.locale, tz: users.tz }).from(users).where(eq(users.id, userId)).limit(1);
   if (!u) return null;
@@ -329,8 +444,9 @@ async function tryInsertForUser(
   const text = T[kind][u.locale]({ ...params, url: siteUrl(), lessonUrl: siteUrl() });
   const [row] = await db.insert(notifications).values({
     kind, classId, userId, chatId, payload: { text, params },
-    dedupeKey: `${key}|u:${userId}`, sendAt,
+    dedupeKey: `${key}|u:${userId}`, sendAt, startsAt,
   }).onConflictDoNothing().returning({ id: notifications.id });
+  if (row) scheduleFlush(sendAt);
   return row?.id ?? null;
 }
 
