@@ -7,6 +7,9 @@
  *  • без секретного заголовка и с неверным — один и тот же 403 с телом без подробностей, и
  *    обновление НЕ обрабатывается (ни строки в журнале, ни вызова API);
  *  • с верным секретом — 200 и строка в `bot_updates`;
+ *  • часть A4 (2026-10-16): 200 приходит СРАЗУ после записи в журнал, а действие делает фон;
+ *    фоновая ошибка не теряет обновление — его добирает переобработка при старте, и только
+ *    строки моложе десяти минут;
  *  • повторная доставка того же `update_id` не выполняет действие дважды;
  *  • тело без числового `update_id` — 200 и ноль побочных эффектов;
  *  • падение обработчика не превращается в 5xx для Telegram, и в журнал не попадает ни токен,
@@ -21,7 +24,9 @@ import { TEST_DATABASE_URL, preparedDb, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { botUpdates } from '../../src/db/schema.js';
 import { env } from '../../src/env.js';
-import { capturingApi } from '../../src/routes/telegram.js';
+import { botDeps, capturingApi, drainBotUpdates, pendingBotUpdates } from '../../src/routes/telegram.js';
+import { reprocessUnfinished } from '../../src/services/bot.js';
+import type { BotApi } from '../../src/services/botApi.js';
 import pino from 'pino';
 import type { FastifyInstance } from 'fastify';
 
@@ -79,12 +84,80 @@ suite('вебхук: приём обновлений (аудит п.2)', () => {
     expect(api().calls, 'отклонённое обновление не должно ничего отправить в Telegram').toHaveLength(before);
   });
 
-  it('верный секрет: 200 и запись в журнале доставок', async () => {
+  it('верный секрет: 200, запись в журнале доставок и завершённая обработка', async () => {
     const id = uid + 10;
     const r = await hook(upd(id));
     expect(r.statusCode).toBe(200);
     expect(r.json()).toEqual({ ok: true });
     expect(await ledger([id])).toBe(1);
+    // A4: фон-задача обязана дойти до отметки — иначе страница журнала «принято, но не
+    // сделано» копилась бы до следующего старта процесса.
+    await drainBotUpdates();
+    expect(pendingBotUpdates()).toBe(0);
+    const [row] = await t.db.select().from(botUpdates).where(eq(botUpdates.updateId, id));
+    expect(row!.processedAt, 'действие выполнено — строка закрыта').toBeTruthy();
+    expect((row!.payload as { update_id: number }).update_id, 'журнал хранит само обновление').toBe(id);
+  });
+
+  it('A4: 200 уходит ДО того, как обработка закончилась', async () => {
+    // Проверка ровно на том, что мерил аудит п.2: раньше ответ Telegram приходил после всего
+    // диспетчера, и на холодном Render это десятки секунд (Telegram отрывает соединение и
+    // доставляет update заново). Здесь транспорт зависает навсегда — если маршрут всё ещё
+    // ждёт его, `hook()` не вернётся вовсе и тест упадёт по таймауту.
+    const id = uid + 12;
+    const api = capturingApi(t.db, null);
+    const original = api.sendMessage.bind(api);
+    let gate: () => void = () => undefined;
+    const blocked = new Promise<void>((res) => { gate = res; });
+    api.sendMessage = async (...args: Parameters<BotApi['sendMessage']>) => {
+      await blocked;
+      return original(...args);
+    };
+    try {
+      const r = await hook(upd(id, 4_242_999));
+      expect(r.statusCode, 'ответ уже у Telegram, хотя действие ещё висит').toBe(200);
+      expect(pendingBotUpdates(), 'обработка идёт в фоне').toBe(1);
+      expect(await ledger([id]), 'в журнале строка появилась до ответа').toBe(1);
+      gate();
+      await drainBotUpdates();
+      expect(pendingBotUpdates()).toBe(0);
+      const [row] = await t.db.select().from(botUpdates).where(eq(botUpdates.updateId, id));
+      expect(row!.processedAt).toBeTruthy();
+    } finally {
+      api.sendMessage = original;
+    }
+  }, 30_000);
+
+  it('A4: падение фона не теряет обновление — его добирает старт процесса', async () => {
+    const id = uid + 13;
+    // «фон упал»: строка принята, а processed_at нет
+    await t.db.insert(botUpdates).values({ updateId: id, payload: upd(id, 4_242_888) as unknown as Record<string, unknown> });
+    const deps = botDeps(t.db, null);
+    const before = api().calls.length;
+    const r = await reprocessUnfinished(deps);
+    expect(r.attempted, 'строка попала в окно переобработки').toBeGreaterThanOrEqual(1);
+    expect(r.done, 'ошибок нет — действие доделано').toBeGreaterThanOrEqual(1);
+    expect(api().calls.length).toBeGreaterThan(before);
+    const [row] = await t.db.select().from(botUpdates).where(eq(botUpdates.updateId, id));
+    expect(row!.processedAt, 'после переобработки строка закрыта').toBeTruthy();
+
+    // повторный вызов ничего не делает: закрытые строки второй раз не выполняются
+    const calls = api().calls.length;
+    expect(await reprocessUnfinished(deps)).toMatchObject({ attempted: 0, done: 0, failed: 0 });
+    expect(api().calls.length).toBe(calls);
+  });
+
+  it('A4: старше десяти минут не переобрабатывается (окно и по возрасту, и по счётчику)', async () => {
+    const id = uid + 14;
+    await t.db.insert(botUpdates).values({
+      updateId: id, payload: upd(id, 4_242_777) as unknown as Record<string, unknown>,
+      seenAt: new Date(Date.now() - 11 * 60_000),
+    });
+    const before = api().calls.length;
+    expect(await reprocessUnfinished(botDeps(t.db, null))).toMatchObject({ attempted: 0, done: 0 });
+    expect(api().calls.length, 'окно 10 минут — жёсткое').toBe(before);
+    const [row] = await t.db.select().from(botUpdates).where(eq(botUpdates.updateId, id));
+    expect(row!.processedAt, 'старая строка остаётся незакрытой, но и не выполняется').toBeNull();
   });
 
   it('повторная доставка того же update_id выполняет действие ровно один раз', async () => {
@@ -92,11 +165,13 @@ suite('вебхук: приём обновлений (аудит п.2)', () => {
     const before = api().calls.length;
     const id = uid + 20;
     const first = await hook(upd(id, chat));
+    await drainBotUpdates();
     const sentOnce = api().calls.length - before;
     expect(first.statusCode).toBe(200);
     expect(sentOnce, 'первая доставка обязана что-то ответить').toBeGreaterThan(0);
     const again = await hook(upd(id, chat));
     expect(again.statusCode).toBe(200);
+    await drainBotUpdates();
     expect(api().calls.length - before, 'повтор не добавляет ни одного действия').toBe(sentOnce);
     expect(await ledger([id])).toBe(1);
   });
@@ -107,6 +182,7 @@ suite('вебхук: приём обновлений (аудит п.2)', () => {
     const id = uid + 30;
     const [r1, r2] = await Promise.all([hook(upd(id, chat)), hook(upd(id, chat))]);
     expect([r1.statusCode, r2.statusCode]).toEqual([200, 200]);
+    await drainBotUpdates();
     expect(api().calls.length - before, 'оба запроса могли прийти одновременно — действие одно').toBeLessThanOrEqual(1);
   });
 
@@ -129,6 +205,7 @@ suite('вебхук: приём обновлений (аудит п.2)', () => {
       const r = await hook(upd(uid + 40));
       expect(r.statusCode, 'ошибка внутри обработчика не должна возвращать Telegram 5xx').toBe(200);
       expect(r.body).not.toMatch(/postgres|telegram\.org|Error/);
+      await drainBotUpdates(); // причина пишется фоном — ждать её надо после 200, а не до
     } finally {
       a.sendMessage = original;
     }

@@ -10,7 +10,7 @@ import {
 import { notificationPrefs, classNotifyPrefs, classTelegramChats, classLinkTokens, users, telegramLinks } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
 import { createBot } from '../services/telegramBot.js';
-import { handleUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
+import { claimUpdate, processUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
 import { applyMenu, CapturingApi, grammyApi, removeMenu, type BotApi } from '../services/botApi.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { redactSecrets } from '../lib/redact.js';
@@ -51,6 +51,27 @@ export function botDeps(db: DB, bot: Bot | null): BotDeps {
   };
 }
 
+/**
+ * A4 (2026-10-16): фон-обработка одного обновления после того, как маршрут уже ответил
+ * Telegram. Счётчик нужен не для статистики: `pendingBotUpdates()` показывает, что работа
+ * ещё идёт, а `drainBotUpdates()` даёт тестам дождаться побочных эффектов — иначе проверка
+ * «что ушло в Telegram» читала бы пустоту сразу после ответа 200.
+ * Ошибка наружу не уходит никогда: она идёт в `warn` уже очищенной от секретов, а строка
+ * журнала остаётся без `processed_at` и добирается при следующем старте.
+ */
+let inFlight = 0;
+export function queueBotUpdate(deps: BotDeps, update: TgUpdate, warn: (line: string) => void): void {
+  inFlight++;
+  void processUpdate(deps, update)
+    .catch((e: Error) => warn(`telegram update failed: ${redactSecrets(e?.message ?? String(e))}`))
+    .finally(() => { inFlight--; });
+}
+export function pendingBotUpdates(): number { return inFlight; }
+export async function drainBotUpdates(timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (inFlight > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+}
+
 export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   const { db } = opts;
   const bot = createBot();
@@ -58,7 +79,7 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   const deps: BotDeps = botDeps(db, bot);
 
   // Webhook from Telegram (§6: answer fast, never throw, redeliveries are
-  // deduped by the bot_updates ledger inside handleUpdate).
+  // deduped by the bot_updates ledger).
   app.post('/webhook/telegram', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (req, reply) => {
     const secret = req.headers['x-telegram-bot-api-secret-token'];
     // Hardening (Phase 1и): constant-time compare of the webhook shared secret,
@@ -72,11 +93,19 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
     }
     const update = req.body as TgUpdate;
     if (typeof update?.update_id === 'number') {
-      // cold start / handler bugs must not 500 back into Telegram's face — and the reason that
-      // DOES reach the log goes through the redactor first: a grammY message can carry the Bot API
-      // URL, which is itself a token.
-      await Promise.resolve(handleUpdate(deps, update)).catch((e: Error) =>
-        req.log.warn(`telegram update failed: ${redactSecrets(e?.message ?? String(e))}`));
+      /*
+       * Аудит бота, п.2 мерил, что ответ Telegram приходит ПОСЛЕ всей обработки: на холодном
+       * Render это десятки секунд, а Telegram отрывает соединение и доставляет update заново.
+       * Часть A4 (2026-10-16): в этом запросе остаётся только запись в журнал (её уникальный
+       * ключ и есть защита от двойной доставки), действие уходит в фон. Фоновая задача не
+       * должна унести процесс: ошибка пишется в лог, `processed_at` не ставится, и строку
+       * добирает `reprocessUnfinished` при следующем старте.
+       */
+      const fresh = await claimUpdate(db, update).catch((e: Error) => {
+        req.log.warn(`telegram ledger failed: ${redactSecrets(e?.message ?? String(e))}`);
+        return false;
+      });
+      if (fresh) queueBotUpdate(deps, update, (m) => req.log.warn(m));
     }
     return reply.send({ ok: true });
   });

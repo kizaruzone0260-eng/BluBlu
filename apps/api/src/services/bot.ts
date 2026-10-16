@@ -279,17 +279,85 @@ const row = (...b: InlineButton[]): InlineButton[] => b;
 // ─── housekeeping (§6: cleanup by schedule) ──────────────────────────────────
 export async function sweepBotState(db: DB, now = new Date()): Promise<void> {
   await db.delete(botSessions).where(lt(botSessions.expiresAt, now));
-  await db.delete(botUpdates).where(lt(botUpdates.seenAt, new Date(now.getTime() - 7 * 86400_000)));
+  /*
+   * Часть A4 (2026-10-16): журнал доставок стал хранить сам update (нужно для переобработки
+   * после рестарта), а значит — текст, который кто-то написал боту. 7 дней его держать
+   * неправильно, а нужное окно намного короче: Telegram переотправляет недоставленное
+   * минутами, наш собственный повтор — 10 минут. 24 часа с запасом закрывают и то и другое.
+   */
+  await db.delete(botUpdates).where(lt(botUpdates.seenAt, new Date(now.getTime() - 86_400_000)));
   await db.delete(contactReports).where(lt(contactReports.expiresAt, now)); // report↔chat link lives 30 days
 }
 
-// ─── main entry ───────────────────────────────────────────────────────────────
-export async function handleUpdate(deps: BotDeps, update: TgUpdate): Promise<void> {
-  const { db, api } = deps;
-  // idempotency: a redelivered update_id is dropped (§6)
-  const fresh = await db.insert(botUpdates).values({ updateId: update.update_id }).onConflictDoNothing().returning({ x: botUpdates.updateId });
-  if (!fresh.length) return;
+/**
+ * A4: запись в журнал ДО ответа Telegram. `true` — строка свежая, её надо обработать;
+ * `false` — такой update_id уже виден (повторная доставка), действие повторя нельзя.
+ * Вставка одна и с уникальным ключом, поэтому два параллельных запроса с одним
+ * update_id пропускают обработку ровно в одном из них.
+ */
+export async function claimUpdate(db: DB, update: TgUpdate): Promise<boolean> {
+  const fresh = await db.insert(botUpdates).values({
+    updateId: update.update_id, payload: update as unknown as Record<string, unknown>,
+  }).onConflictDoNothing().returning({ x: botUpdates.updateId });
+  return fresh.length > 0;
+}
 
+/**
+ * A4: выполняет действие и отмечает строку выполненной. Если диспетчер бросил,
+ * `processed_at` остаётся NULL — строка переживёт рестарт и будет переобработана при старте
+ * (окно — REPROCESS_WINDOW_MS), а не потеряна вместе с ответом 200.
+ */
+export async function processUpdate(deps: BotDeps, update: TgUpdate): Promise<void> {
+  await dispatchUpdate(deps, update);
+  await deps.db.update(botUpdates).set({ processedAt: new Date() })
+    .where(eq(botUpdates.updateId, update.update_id));
+}
+
+/** Возраст строки журнала, который ещё имеет смысл переобрабатывать (A4). */
+export const REPROCESS_WINDOW_MS = 10 * 60_000;
+
+export interface ReprocessResult { attempted: number; done: number; failed: number }
+
+/**
+ * A4: вебхук отвечает Telegram сразу после записи в журнал и обрабатывает фоном. Фоновая
+ * задача могла упасть (или сервис мог уснуть/перезапуститься) — такие строки добираются при
+ * старте процесса. Только при старте: вызов из одного процесса, без параллельного вебхука.
+ * Ошибку наружу не бросает — счётчики возвращаются вызывающему (в журнале — только числа,
+ * ни текста обновления, ни сообщения ошибки).
+ */
+export async function reprocessUnfinished(
+  deps: BotDeps, now = new Date(), windowMs = REPROCESS_WINDOW_MS,
+): Promise<ReprocessResult> {
+  const rows = await deps.db.select({
+    updateId: botUpdates.updateId, payload: botUpdates.payload,
+  }).from(botUpdates).where(and(
+    isNull(botUpdates.processedAt),
+    gt(botUpdates.seenAt, new Date(now.getTime() - windowMs)),
+    sql`payload is not null`,
+  )).orderBy(asc(botUpdates.updateId));
+  const out: ReprocessResult = { attempted: rows.length, done: 0, failed: 0 };
+  for (const r of rows) {
+    try {
+      await processUpdate(deps, r.payload as unknown as TgUpdate);
+      out.done++;
+    } catch {
+      out.failed++; // строка остаётся NULL: следующий старт попробует снова, пока не выйдет окно
+    }
+  }
+  return out;
+}
+
+// ─── main entry ───────────────────────────────────────────────────────────────
+/** Полным циклом: журнал → действие → отметка. Так работает long-polling (server.ts). */
+export async function handleUpdate(deps: BotDeps, update: TgUpdate): Promise<void> {
+  // idempotency: a redelivered update_id is dropped (§6)
+  if (!(await claimUpdate(deps.db, update))) return;
+  await processUpdate(deps, update);
+}
+
+/** Диспетчер без книги журнала — вызывается после `claimUpdate`/до `processed_at`. */
+export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<void> {
+  const { db } = deps;
   if (update.callback_query) { await onCallback(deps, update.callback_query); return; }
   const m = update.message;
   if (!m || m.chat.id === undefined) return;
