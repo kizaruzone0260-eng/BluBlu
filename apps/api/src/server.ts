@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { LogTransport, TelegramTransport } from './services/notify.js';
 import { createBot } from './services/telegramBot.js';
+import { createEmailTransport } from './services/email.js';
 import { initNotifyWorker } from './services/notifyQueue.js';
 import { effectiveMigrationsFolder, webhookRegistration } from './lib/prodConfig.js';
 import { describeError, errorLine } from './lib/redact.js';
@@ -49,6 +50,13 @@ async function main() {
     import('./services/auth.js')
       .then((m) => m.sweepLoginAttempts(db))
       .then((n) => { if (n) console.log(`auth: удалено строк счётчика старше 24 ч — ${n}`); })
+      .catch(() => undefined);
+    // Часть F: строки неподтверждённой регистрации. Человек запросил письмо и не вернулся —
+    // его адрес держится в базе сутки после истечения кода, дальше нечего хранить: аккаунта нет,
+    // письмо не доставлено, а адрес заявителя — персональные данные.
+    import('./services/emailVerify.js')
+      .then((m) => m.sweepEmailVerifications(db))
+      .then((n) => { if (n) console.log(`email: удалено неподтверждённых кодов старше 24 ч — ${n}`); })
       .catch(() => undefined);
     // часть 4: срок хранения архива. 0 (по умолчанию) — функция выключена, и sweepArchive
     // возвращает 0, не трогая базу.
@@ -126,7 +134,14 @@ async function main() {
     void bot.start().catch((e: Error) => console.warn(errorLine('telegram polling stopped', e)));
   }
 
-  const app = await buildApp(db);
+  const app = await buildApp(db, { email: createEmailTransport(env) });
+  /*
+   * Часть F (2026-10-16): одна строка о том, ходят ли письма. Печатается ровно имя провайдера —
+   * ни адреса, ни ключей, ни `SMTP_USER`. При `none` (умолчание) строка тоже нужна: «почта
+   * выключена» — это состояние продакшена, о котором молчать нельзя, иначе неотправленное письмо
+   * выглядит как баг формы.
+   */
+  console.log(`email: провайдер ${env.EMAIL_PROVIDER}`);
 
   // Task 2г: say out loud which Origins the deployment will accept, and warn about the
   // configuration drift that caused the video-lesson outage. Origins are public host

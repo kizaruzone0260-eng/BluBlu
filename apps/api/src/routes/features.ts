@@ -2,15 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '../env.js';
 
 /**
- * Часть A (2026-10-16): включатели нового поведения, которыеSPA обязана узнать ДО того, как
+ * Часть A (2026-10-16): включатели нового поведения, которые SPA обязана узнать ДО того, как
  * смонтирует урок. Отдельный маршрут, а не развлечение `/api/health`: хелфинг проверяется
  * смук-тестами по точной форме ответа, и добавлять сюда что-либо значит дергать их все.
  *
  * Наружу уходят только булевы значения. Ни версии сборки, ни числа пользователей, ни строк из
  * `env` — тот же закон, что держит `/api/health` пустым.
+ *
+ * Часть F (2026-10-16): `emailVerification` — то же самое по форме и по той же причине: экран
+ * регистрации не должен догадываться о настроенной почте, он спрашивает. Значение приходит НЕ из
+ * `env` внутри обработчика, а из options, то есть из ТОГО ЖЕ транспорта, который зарегистрирован
+ * в маршрутах: расхождение «форма просит код, а маршруты его не требуют» стало бы невозможным
+ * по построению, а не благодаря внимательности.
  */
-export async function featureRoutes(app: FastifyInstance) {
+export async function featureRoutes(app: FastifyInstance, opts: { emailVerification: boolean }) {
   app.get('/api/features', async (_req, reply) => {
-    return reply.send({ lessonPersist: env.LESSON_PERSIST });
+    return reply.send({ lessonPersist: env.LESSON_PERSIST, emailVerification: opts.emailVerification });
   });
 }

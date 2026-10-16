@@ -16,6 +16,7 @@ import { redactSecrets, safeErrorMessage } from './lib/redact.js';
 import { effectiveCodeMax, effectiveCorsOrigins, effectiveLoginMax } from './lib/prodConfig.js';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
+import { createEmailTransport, type EmailTransport } from './services/email.js';
 import { classRoutes } from './routes/classes.js';
 import { rtcRoutes } from './routes/rtc.js';
 import { healthRoutes } from './routes/health.js';
@@ -97,8 +98,16 @@ export const accessLogOptions = {
 };
 
 export async function buildApp(
-  db: DB, opts: { logger?: FastifyBaseLogger } = {},
+  db: DB, opts: { logger?: FastifyBaseLogger; email?: EmailTransport } = {},
 ): Promise<FastifyInstance> {
+  /*
+   * Часть F (2026-10-16): транспорт писем входит в приложение, а не читается из модульного
+   * синглтона. Причина та же, из-за чего `TELEGRAM_TRANSPORT` выбирает log/telegram на старте:
+   * проверка «письмо отправилось» обязана исполнять НАСТОЯЩИЙ код отправки. Тест подставляет
+   * `ConsoleEmailTransport` (он пишет в память) и видит тот же тракт, что проходит живой
+   * процесс; по умолчанию — то, что настроено в env.
+   */
+  const email: EmailTransport = opts.email ?? createEmailTransport(env);
   // `loggerInstance` (a logger we were handed) and `logger` (options for Fastify's own pino)
   // are mutually exclusive in Fastify, hence the two branches rather than one spread.
   const app = opts.logger
@@ -278,7 +287,11 @@ export async function buildApp(
         rateLimit: { max: effectiveLoginMax(env.NODE_ENV, env.RATE_LOGIN_MAX), timeWindow: '1 minute' },
       };
     }
-    if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code') {
+    // Часть F (2026-10-16): /api/auth/email-code — под тот же строгий потолок, что и кодовые
+    // маршруты: это тоже перебор (теперь уже писем), и он должен упираться в лимит на минуту,
+    // а не в общий API-кап 300.
+    if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code'
+      || url === '/api/auth/email-code') {
       routeOptions.config = {
         ...routeOptions.config,
         rateLimit: { max: effectiveCodeMax(env.NODE_ENV, env.RATE_CODE_MAX), timeWindow: '1 minute' },
@@ -298,8 +311,9 @@ export async function buildApp(
   await app.register(authPlugin, { db });
 
   await app.register(healthRoutes, { db });
-  await app.register(featureRoutes); // часть A: включатель «урок не прерывается»
-  await app.register(authRoutes(db));
+  // часть A: включатель «урок не прерывается»; часть F: «регистрация требует код из письма»
+  await app.register(featureRoutes, { emailVerification: email.provider !== 'none' });
+  await app.register(authRoutes(db, email));
   await app.register(classRoutes, { db });
   await app.register(rtcRoutes, { db });
   await app.register(postRoutes, { db });

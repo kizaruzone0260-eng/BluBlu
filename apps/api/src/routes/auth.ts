@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and, isNull } from 'drizzle-orm';
 import {
-  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema, POLICY_VERSION,
+  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema,
+  emailCodeRequestSchema, normalizeEmailCode, POLICY_VERSION,
 } from '@klass/shared';
 import { users, refreshTokens, policyAcceptances } from '../db/schema.js';
 import type { DB } from '../db/index.js';
@@ -15,6 +16,8 @@ import { normalizeInviteCode } from '../lib/invite.js';
 import { requestOriginAllowed } from '../lib/origin.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
 import { cookieIsSecure } from '../lib/prodConfig.js';
+import type { EmailTransport } from '../services/email.js';
+import { requestEmailCode } from '../services/emailVerify.js';
 
 const REFRESH_COOKIE = 'klass_rt';
 
@@ -47,8 +50,53 @@ function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('f
   return false;
 }
 
-export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
+export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance) => Promise<void> {
   return async function routes(app) {
+    /*
+     * Часть F (2026-10-16): требовать код из письма или нет — СВОЙСТВО ВНЕДРЁННОГО транспорта, а не
+     * строки из env. Тест получает настоящий тракт (`ConsoleEmailTransport`) без подмены `process.env`
+     * и без mock'а самого себя, а живой процесс — ровно то, что настроил владелец.
+     */
+    const requireEmailCode = email.provider !== 'none';
+
+    /**
+     * POST /api/auth/email-code — письмо с шестизначным кодом на адрес.
+     *
+     * ОТВЕТ НИЧЕГО НЕ СООБЩАЕТ о том, занят ли адрес: `sent:true` (письмо ушло) и `sent:false`
+     * (аккаунт с таким адресом уже есть — письма нет) дают ОДНУ И ТУ ЖЕ форму 202 `{ok:true}`.
+     * Проверяющему нечем различить эти ветки, потому что письмо он не держит в руках.
+     *
+     * Единственные ответы, которые чем-то отличаются, — про скорость и про провайдера: они
+     * говорят о состоянии сервера, а не о наличии аккаунта.
+     */
+    app.post('/api/auth/email-code', async (req, reply) => {
+      if (!requireEmailCode) return reply.code(400).send({ error: 'invalidInput' });
+      const parsed = emailCodeRequestSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
+      const key = `ec:${req.ip}`;
+      const gate = throttleCheck(key);
+      if (!gate.allowed) {
+        return reply.code(429).header('retry-after', String(gate.retryAfterSec)).send({ error: 'codeRateLimited' });
+      }
+      throttleRecordAttempt(key);
+      const result = await requestEmailCode({
+        db, transport: email,
+        email: parsed.data.email, firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        locale: parsed.data.locale,
+      });
+      if (!result.ok) {
+        if (result.error === 'cooldown') {
+          return reply.code(429).header('retry-after', String(result.retryAfterSec)).send({ error: 'emailCooldown' });
+        }
+        // отказ провайдера: наружу — одно слово, причина — в лог уже вымытая (без письма, адреса
+        // и ключа: `reason` приходит из `safeErrorMessage`)
+        req.log.warn(`email send refused: ${result.reason}`);
+        return reply.code(503).send({ error: 'emailUnavailable' });
+      }
+      throttleReset(key);
+      return reply.code(202).send({ ok: true });
+    });
+
     // POST /api/auth/register — new student by one-time class code
     app.post('/api/auth/register', async (req, reply) => {
       const parsed = registerByCodeSchema.safeParse(req.body);
@@ -65,6 +113,10 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
         }
         return reply.code(400).send({ error: 'invalidInput' });
       }
+      // Часть F: при включённом подтверждении без кода регистрация не случается — и это
+      // отдельный ответ, а не «неверные поля»: человеку важно понять, что письмо не пришло.
+      const emailCode = parsed.data.emailCode ? normalizeEmailCode(parsed.data.emailCode) : undefined;
+      if (requireEmailCode && !emailCode) return reply.code(400).send({ error: 'emailCodeRequired' });
       const key = `code:${req.ip}`;
       const gate = throttleCheck(key);
       if (!gate.allowed) {
@@ -74,10 +126,14 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
       const result = await registerStudentByCode(db, {
         ...parsed.data,
         code: normalizeInviteCode(parsed.data.code),
+        emailCode: requireEmailCode ? emailCode : undefined,
       });
       if (!result.ok) {
         // Same generic message for wrong / used / expired code (§3.2)
         if (result.error === 'invalidCode') return reply.code(400).send({ error: 'invalidCode' });
+        // Код из письма: одна формулировка на «не тот», «истёк», «исчерпан потолок попыток» и
+        // «уже списан» — различать их наружу незачем, а перебор по ответу становится заметным.
+        if (result.error === 'emailCodeInvalid') return reply.code(400).send({ error: 'emailCodeInvalid' });
         if (result.error === 'emailTaken') return reply.code(409).send({ error: 'emailTaken' });
         return reply.code(400).send({ error: 'invalidInput' });
       }

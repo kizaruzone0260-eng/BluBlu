@@ -3,7 +3,7 @@ import {
   users, refreshTokens, wsTickets, chatWsTickets, chatMessages, chatReads, chatMutes,
   lessonComments, lessonCommentReads, lessonCommentMutes, lessonHands, lessonAttendance,
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
-  notifications, policyAcceptances, classMembers, loginAttempts,
+  notifications, policyAcceptances, classMembers, loginAttempts, emailVerifications,
   botSessions, contactReports, contactBlocklist, classTelegramChats, auditLog,
 } from '../db/schema.js';
 import type { DB } from '../db/index.js';
@@ -112,6 +112,10 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     await tx.delete(classMembers).where(eq(classMembers.userId, userId));
     // brute-force counter keyed by the (about to change) email
     if (priorEmail) await tx.delete(loginAttempts).where(eq(loginAttempts.email, priorEmail));
+    // Часть F: неподтверждённый код регистрации живёт ПО КЛЮЧУ-АДРЕСУ, а не по userId — строка
+    // не умрёт вместе с аккаунтом сама, и в ней остаётся адрес стёртого человека. Удаляется по
+    // прежнему адресу, пока он ещё не переписан в `deleted-…@invalid.local`.
+    if (priorEmail) await tx.delete(emailVerifications).where(eq(emailVerifications.email, priorEmail));
     // anonymize the identity — attributed content then reads as «Deleted user»
     await tx
       .update(users)

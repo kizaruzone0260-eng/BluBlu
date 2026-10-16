@@ -8,10 +8,11 @@ import {
   signAccessToken, generateRefreshToken, generateFamilyId, hashRefreshToken,
 } from '../lib/tokens.js';
 import { redeemInviteCode } from './invites.js';
+import { consumeEmailCode, precheckEmailCode } from './emailVerify.js';
 
 export type AuthResult =
   | { ok: true; accessToken: string; user: PublicUser }
-  | { ok: false; error: 'invalidCredentials' | 'invalidCode' | 'emailTaken' };
+  | { ok: false; error: 'invalidCredentials' | 'invalidCode' | 'emailTaken' | 'emailCodeInvalid' };
 
 export interface PublicUser {
   id: string;
@@ -44,16 +45,41 @@ function toPublic(u: typeof users.$inferSelect): PublicUser {
  * all inside ONE transaction. If the code is invalid/used or the email is
  * taken, everything rolls back; the race between two concurrent redemptions
  * of the same code is decided by the single UPDATE … WHERE used_at IS NULL.
+ *
+ * Часть F (2026-10-16): код из письма списывается ТЕМ ЖЕ транзакционным ходом. Причина не в
+ * аккуратности, а в двух обещаниях сразу: «списание атомарно» (два параллельных подтверждения
+ * одного кода не создадут двух аккаунтов) и «ошибка не сжигает письмо» (не тот код класса или
+ * занятый email откатывают и списание, и человек может попробовать снова тем же кодом).
  */
 class InvalidCodeError extends Error {}
+class EmailCodeError extends Error {}
 
 export async function registerStudentByCode(
   db: DB,
-  input: { firstName: string; lastName: string; email: string; password: string; code: string; locale?: Locale },
+  input: {
+    firstName: string; lastName: string; email: string; password: string; code: string;
+    locale?: Locale;
+    /** код из письма; `undefined` = подтверждение почты выключено (EMAIL_PROVIDER=none) */
+    emailCode?: string;
+  },
 ): Promise<AuthResult> {
   const passwordHash = await hashPassword(input.password);
+  /*
+   * Часть F: ПРОВЕРКА кода — до транзакции (чтобы засчитанная попытка пережила откат),
+   * СПИСАНИЕ — внутри (чтобы отказ по коду класса не сжёг письмо). Один шаг вместо двух так
+   * не делается: и то, и другое утверждения про разный отказ, и откатывает транзакция только
+   * одно из них.
+   */
+  if (input.emailCode !== undefined
+    && (await precheckEmailCode(db, input.email, input.emailCode)) !== 'live') {
+    return { ok: false, error: 'emailCodeInvalid' };
+  }
   try {
     const user = await db.transaction(async (tx) => {
+      if (input.emailCode !== undefined) {
+        const spent = await consumeEmailCode(tx as unknown as DB, input.email, input.emailCode);
+        if (!spent) throw new EmailCodeError();
+      }
       const [u] = await tx
         .insert(users)
         .values({
@@ -75,6 +101,7 @@ export async function registerStudentByCode(
     return { ok: true, accessToken, user: toPublic(user) };
   } catch (err) {
     if (err instanceof InvalidCodeError) return { ok: false, error: 'invalidCode' };
+    if (err instanceof EmailCodeError) return { ok: false, error: 'emailCodeInvalid' };
     if ((err as { code?: string }).code === '23505') return { ok: false, error: 'emailTaken' };
     throw err;
   }
