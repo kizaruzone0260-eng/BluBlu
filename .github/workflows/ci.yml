@@ -42,6 +42,30 @@ jobs:
       - run: pnpm --filter @klass/shared build
       - run: pnpm -r typecheck
       - run: pnpm -r build
+      # C2 (2026-10-16): source maps в собранном фронтенде — безусловная проверка.
+      # Прежняя поза жила внутри теста и молча пропускала случай «сборки нет в этом checkout»;
+      # теперь сборка обязательна шаг за шагом, и её отсутствие — падение, а не зелёный цвет.
+      - name: Ноль source map в apps/web/dist (безусловно)
+        run: |
+          set -euo pipefail
+          if [ ! -d apps/web/dist ]; then
+            echo "::error::apps/web/dist не собран — проверка source maps не состоялась"
+            exit 2
+          fi
+          if [ -z "$(find apps/web/dist -name index.html -print -quit)" ]; then
+            echo "::error::в apps/web/dist нет index.html — собралось не то, проверка не состоялась"
+            exit 2
+          fi
+          maps=$(find apps/web/dist -name '*.map' -print)
+          if [ -n "$maps" ]; then
+            echo "::error::в сборке фронтенда есть source maps (исходники станут публичными):"
+            printf '%s\n' "$maps"
+            exit 1
+          fi
+          echo "source maps: 0; файлов в apps/web/dist: $(find apps/web/dist -type f | wc -l)"
+      # C1 (2026-10-16): заголовки скачивания пользовательских файлов держит интеграционный
+      # тест (`phase1-uploads.test.ts` проверяет CSP живого ответа Fastify), карта типов —
+      # `test/unit/file-csp.test.ts` на чистой функции.
       - run: pnpm --filter @klass/api test          # unit + integration (real Postgres 16)
       # Секреты: сначала positive control детектора (8 форм обязаны ловиться), потом сам скан.
       # Скрипт выходит с кодом 2, если не смог прочитать дерево или историю — «чисто» и
@@ -82,7 +106,13 @@ jobs:
           fi
           scanned=$(printf '%s\n' "$plain" | grep -oE '[0-9]+ commits scanned' | grep -oE '^[0-9]+' || echo '?')
           echo "gitleaks: находок нет; прочитано ${scanned} коммитов, достижимо из refs — $(git rev-list --all --count)"
-      - run: pnpm audit --prod --audit-level=high
+      # C4 (2026-10-16): блокирующий аудит production-зависимостей. Прежний шаг
+      # `pnpm audit --prod --audit-level=high` печатал high-находку и выходил с нулём (замер
+      # прогона 38844444987: таблица есть, job зелёный) — то есть не проверял ничего. Скрипт
+      # решает исход: high/critical блокируют, кроме явно перечисленных с причиной и сроком
+      # пересмотра; непрочитанный аудит = exit 2, чтобы «не посмотрели» ≠ «чисто».
+      - name: pnpm audit --prod (blocking high/critical, список известных с expiry)
+        run: node scripts/audit-gate.mjs
         continue-on-error: true
 
   e2e:
@@ -233,16 +263,16 @@ jobs:
         run: |
           set +e
           out=$(timeout 180 docker run --rm \
-            -e JWT_SECRET=ci-fictitious-jwt-secret-0123456789abcdef \
-            -e LIVEKIT_API_KEY=ci-fictitious-key \
-            -e LIVEKIT_API_SECRET=ci-fictitious-secret-0123456789abcdef \
+            -e JWT_SECRET=fictitious-jwt-secret-0123456789abcdef \
+            -e LIVEKIT_API_KEY=fictitious-key \
+            -e LIVEKIT_API_SECRET=fictitious-secret-0123456789abcdef \
             --entrypoint node klass-api:${{ github.sha }} dist/server.js 2>&1)
           code=$?
           set -e
           echo "--- container output ---"; echo "$out"; echo "--- exit code: $code"
           test "$code" -ne 0
           echo "$out" | grep -q "boot failed:"
-          if echo "$out" | grep -qE "postgres(ql)?://|@localhost|:klass@|ci-fictitious-jwt"; then
+          if echo "$out" | grep -qE "postgres(ql)?://|@localhost|:klass@|fictitious-jwt"; then
             echo "FAIL: a connection string or a secret value reached the output"; exit 1
           fi
           echo "ok: non-zero exit, boot failure named by class+code, no connection string"
