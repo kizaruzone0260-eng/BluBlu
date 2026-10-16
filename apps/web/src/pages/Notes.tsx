@@ -7,11 +7,14 @@ import StarterKit from '@tiptap/starter-kit';
 import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
 import { editorIsAlive } from '../lib/tiptapSafe';
-import { useControlledEditor, type EditorHandle } from '../lib/controlledEditor';
+import { useDraftEditor, clearDraft, clearDraftIfSaved, moveDraft, type EditorHandle } from '../lib/uncontrolledEditor';
+import { DraftBar } from '../components/RichText';
 import { useAuth } from '../App';
 import { InkEditor, composeInk, extractInk, type InkData } from '../components/NoteInk';
 
 const DRAFT = '__draft__';
+/** Область локального черновика заметок: ключ = `klass.draft.note.<docId>`. */
+const SCOPE = 'note';
 
 /** Stable identity for `useEditor` — see components/RichText.tsx and lib/tiptapSafe.ts. */
 const EXTENSIONS = [StarterKit];
@@ -22,24 +25,29 @@ interface Note {
 }
 
 /**
- * Редактор заметки — тот же контролируемый редактор, что и в форме материала: значение
- * возвращается в документ только при смене заметки или когда фокус вне редактора
- * (см. lib/controlledEditor). `handle` даёт странице flush: отдать последние символы перед
- * переключением заметки, перед отправкой и при закрытии вкладки.
+ * Редактор заметки — тот же неконтролируемый редактор, что и в форме материала: значение
+ * возвращается в документ только при смене заметки (и по кнопке «вернуть черновик»), а
+ * набранное немедленно пишется в локальный черновик (см. lib/uncontrolledEditor). `handle`
+ * даёт странице flush: отдать последние символы перед переключением заметки, перед
+ * публикацией и при закрытии вкладки.
  */
-function Tiptap({ value, docId, onChange, handle }: {
-  value: string; docId: string; onChange: (html: string) => void;
+function Tiptap({ value, docId, draftId, serverRev, onChange, handle }: {
+  value: string; docId: string; draftId: string; serverRev?: number;
+  onChange: (html: string) => void;
   handle?: { current: EditorHandle | null };
 }) {
   // Stable options (see components/RichText.tsx): the notes editor is the other place that
   // used to call getHTML() on an instance @tiptap/react had already destroyed, which put the
   // whole page behind the 500 screen.
   const editorProps = useMemo(() => ({ attributes: { class: 'tiptap' } }), []);
-  const editor = useControlledEditor({ value, docId, extensions: EXTENSIONS, editorProps, onChange, handle });
+  const { editor, notice, applyKept } = useDraftEditor({
+    value, docId, draftId, scope: SCOPE, serverRev, extensions: EXTENSIONS, editorProps, onChange, handle,
+  });
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)' }}>
       <MenuBar editor={editor} />
       <EditorContent editor={editor} />
+      <DraftBar notice={notice} onApply={applyKept} />
     </div>
   );
 }
@@ -115,8 +123,12 @@ export default function Notes() {
   const activeIdRef = useRef<string | null>(activeId);
   activeIdRef.current = activeId;
   // редактор заметки: страница забирает у него последние символы перед сменой заметки,
-  // перед публикацией и при закрытии вкладки (дебаунс см. в lib/controlledEditor)
+  // перед публикацией и при закрытии вкладки (дебаунс см. в lib/uncontrolledEditor)
   const rtRef = useRef<EditorHandle | null>(null);
+  // какой ПРОСТОЙ html (без чернил) реально ушёл на сервер последним PATCH-ом: по нему и
+  // убирается черновик; сверять с ответом сервера нельзя — серверный санитайзер вправе
+  // изменить разметку, и равенство перестало бы означать «сохранено»
+  const sentHtmlRef = useRef<string | null>(null);
   // для какой заметки накоплен pendingRef: переключение не должно перелить текст в другую
   const pendingOwner = useRef<string | null>(null);
   const fireRef = useRef<(() => void) | null>(null);
@@ -131,6 +143,12 @@ export default function Notes() {
       skipLoadRef.current = n.id; // the note we just made — do not clobber the in-progress editor
       if (pendingOwner.current === DRAFT) pendingOwner.current = n.id;
       setActiveId(n.id);
+      // черновик лежит под ключом «ещё не созданной» заметки, а с этого момента редактор
+      // пишет его под настоящим id. ПЕРЕНОСИМ, а не стираем: нажатия, сделанные пока шёл
+      // POST, ещё не на сервере, и этот перенос — их единственная копия на диске.
+      // Лишним он не останется: при следующем открытии decideOnOpen видит равенство с
+      // сервером и убирает ключ сам, а PATCH-дочистка делает это сразу.
+      moveDraft(SCOPE, DRAFT, n.id);
       // the POST itself IS a save — without this a draft written in one burst
       // (title+body together) would never show «Сохранено»
       setSavedAt(new Date().toLocaleTimeString());
@@ -147,11 +165,17 @@ export default function Notes() {
   const patchNote = useMutation({
     mutationFn: (p: { id: string; patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> }) =>
       api<Note>(`/api/notes/${p.id}`, { method: 'PATCH', body: JSON.stringify(p.patch) }),
-    onSuccess: () => { setSavedAt(new Date().toLocaleTimeString()); void qc.invalidateQueries({ queryKey: ['notes'] }); },
+    onSuccess: (_n, p) => {
+      setSavedAt(new Date().toLocaleTimeString());
+      // черновик убираем только когда на сервер легло ровно то, что в нём лежит: если человек
+      // печатал, пока шёл PATCH, стирать было бы потерей тех самых последних символов
+      if (sentHtmlRef.current !== null) clearDraftIfSaved(SCOPE, p.id, sentHtmlRef.current);
+      void qc.invalidateQueries({ queryKey: ['notes'] });
+    },
   });
   const del = useMutation({
     mutationFn: (id: string) => api(`/api/notes/${id}`, { method: 'DELETE' }),
-    onSuccess: () => { setActiveId(null); void qc.invalidateQueries({ queryKey: ['notes'] }); },
+    onSuccess: (_r, id) => { clearDraft(SCOPE, id); setActiveId(null); void qc.invalidateQueries({ queryKey: ['notes'] }); },
   });
   const publish = useMutation({
     mutationFn: (id: string) => api(`/api/notes/${id}/publish`, { method: 'POST' }),
@@ -170,6 +194,21 @@ export default function Notes() {
   }, [notes.data, filter, search]);
 
   const realActive = (notes.data ?? []).find((n) => n.id === activeId) ?? null;
+  /*
+   * Чем редактор ОТКРЫВАЕТСЯ. `value` и `serverRev` берутся из строки списка по идентификатору
+   * открытого документа, а НЕ из локального `body`: неконтролируемый редактор читает `value`
+   * ровно в том рендере, где поменялся `docId`, а эффект загрузки заметки догоняет состояние
+   * уже ПОСЛЕ этого рендера — открывать из `body` значило бы «заметка открылась текстом
+   * предыдущей». Локальное `body` остаётся рабочей копией страницы (автосейв, признак
+   * «есть что публиковать»), но редактор её не слушает.
+   *
+   * Строки нет в двух случаях: ещё не созданная заметка (тогда серверного текста и правда нет,
+   * rev = 0) и окно сразу после POST, когда `editorSeed` ещё черновиковый, а строка уже под
+   * настоящим id. Во втором случае документ не меняется, поэтому `value` редактором игнорируется.
+   */
+  const seedRow = editorSeed === DRAFT ? null : (notes.data ?? []).find((n) => n.id === editorSeed) ?? null;
+  const serverBody = seedRow ? extractInk(seedRow.body).rest : '';
+  const serverRev = seedRow ? (Date.parse(seedRow.updatedAt) || 0) : 0;
   const draftOrReal: Note | null = activeId === DRAFT
     ? { id: DRAFT, classId: noteClass || null, eventId: noteEvent || null, pinned: false, title, body: composeInk(body, ink), sharedPostId: null, updatedAt: new Date().toISOString() }
     : realActive;
@@ -192,7 +231,11 @@ export default function Notes() {
     dirtyRef.current = false;
     pendingRef.current = {};
     creatingRef.current = false;
-    setActiveId(DRAFT); setEditorSeed('draft-' + Date.now());
+    setActiveId(DRAFT);
+    // идентичность «ещё не созданной» заметки постоянна: именно поэтому её ненабранный текст
+    // переживает перезагрузку вкладки (ключ черновика = note.__draft__) и приходит обратно
+    // с подсказкой. Меняется только активный документ, а не ключ.
+    setEditorSeed(DRAFT);
     setTitle(''); setBody(''); setInk(null);
     setNoteClass(classId ?? ''); setNoteEvent(eventId ?? '');
     setSavedAt(null);
@@ -200,6 +243,7 @@ export default function Notes() {
   function discardDraft() {
     dirtyRef.current = false;
     pendingRef.current = {};
+    clearDraft(SCOPE, DRAFT);
     setActiveId(null);
   }
 
@@ -265,6 +309,8 @@ export default function Notes() {
       dirtyRef.current = false;
       pendingRef.current = {};
       pendingOwner.current = null;
+      // запоминаем ОТДАННЫЙ простой html: по нему убирается черновик после успеха
+      sentHtmlRef.current = extractInk(mergedBody).rest;
       if (id) patchNote.mutate({ id, patch: patch as Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'classId' | 'eventId'>> });
     };
     fireRef.current = fire;
@@ -282,7 +328,8 @@ export default function Notes() {
   // save on unmount/switch too (real api() helper → keeps the Authorization header)
   useEffect(() => () => {
     if (!dirtyRef.current) return;
-    const fullBody = composeInk(rtRef.current?.flush() || bodyRef.current, inkRef.current);
+    const plain = rtRef.current?.flush() || bodyRef.current;
+    const fullBody = composeInk(plain, inkRef.current);
     // Идентикатор берём СВЕЖИЙ. React запускает этот cleanup на каждый рендер, и его замыкание
     // могло остаться на черновике, который к этому моменту уже стал реальной заметкой, — такой
     // cleanup повторно ПОСТИЛ заметку и удваивал её (это и поймал redesign: две «Заметка
@@ -304,12 +351,16 @@ export default function Notes() {
             classId: metaRef.current.cls || null, eventId: metaRef.current.ev || null,
           }),
           keepalive: true,
-        } as RequestInit).catch(() => undefined);
+        } as RequestInit)
+          // ключ ещё не созданной заметки: черновик с тем же текстом больше не нужен
+          .then(() => clearDraftIfSaved(SCOPE, DRAFT, plain))
+          .catch(() => undefined);
       }
       return;
     }
     if (id) {
       void api(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify({ title: titleRef.current, body: fullBody }), keepalive: true } as RequestInit)
+        .then(() => clearDraftIfSaved(SCOPE, id, plain))
         .catch(() => undefined);
     }
   }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -404,7 +455,8 @@ export default function Notes() {
                 </select>
               </div>
               <div style={{ marginTop: 8 }}>
-                <Tiptap key={editorSeed} value={body} docId={editorSeed} handle={rtRef}
+                <Tiptap key={editorSeed} value={serverBody} docId={editorSeed} draftId={activeId ?? editorSeed}
+                  serverRev={serverRev} handle={rtRef}
                   onChange={(html) => { setBody(html); queueSave({ body: composeInk(html, inkRef.current) }); }} />
                 {/* item 3 — drawing (pen/eraser/colors/thickness/undo/redo/clear), stored in the body */}
                 <InkEditor ink={ink} onChange={(next) => {

@@ -675,6 +675,11 @@
     "ytWatch": "Ko‘rish",
     "driveHint": "Faylga kirishni Google sozlamalarida tekshiring"
   },
+  "editor": {
+    "draftRestored": "Matn mahalliy qoralamadan tiklandi",
+    "draftKept": "Server nusxasi yangiroq — mahalliy qoralama saqlab qolindi",
+    "draftApply": "Mahalliy qoralamani tiklash"
+  },
   "terms": {
     "title": "Foydalanish shartlari",
     "version": "Hujjatlar versiyasi: 2026-10-14",

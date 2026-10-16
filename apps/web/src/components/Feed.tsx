@@ -8,7 +8,7 @@ import { classifyAttachmentUrl, safeExternalUrl, youtubeVideoId } from '../lib/a
 import { fmtDateTime } from '../lib/format';
 import { NoteBodyView } from './NoteInk';
 import RichText from './RichText';
-import type { EditorHandle } from '../lib/controlledEditor';
+import { clearDraftIfSaved, type EditorHandle } from '../lib/uncontrolledEditor';
 import { useAuth } from '../App';
 
 /**
@@ -313,22 +313,33 @@ function MaterialEdit({ classId, post, onDone }: { classId: string; post: FeedPo
   const [err, setErr] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
   const rtRef = useRef<EditorHandle | null>(null);
+  // что реально ушло на сервер этим PATCH — по этому значию и убираем черновик
+  const sentRef = useRef<string | null>(null);
 
   const topicsQ = useQuery({ queryKey: ['topics', classId], queryFn: () => api<TopicRow[]>(`/api/classes/${classId}/topics`) });
   const membersQ = useQuery({ queryKey: ['members', classId], queryFn: () => api<MemberRow[]>(`/api/classes/${classId}/members`) });
 
   const save = useMutation({
-    mutationFn: () => api(`/api/posts/${post.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        title: title.trim() || post.title,
-        // последние символы могли ещё не дойти до состояния (дебаунс редактора)
-        body: rtRef.current?.flush() || body,
-        topicId: topicId || null,
-        audience: allAudience ? [] : [...audience],
-      }),
-    }),
-    onSuccess: () => onDone(),
+    mutationFn: () => {
+      // последние символы могли ещё не дойти до состояния (дебаунс редактора)
+      const html = rtRef.current?.flush() || body;
+      sentRef.current = html;
+      return api(`/api/posts/${post.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title: title.trim() || post.title,
+          body: html,
+          topicId: topicId || null,
+          audience: allAudience ? [] : [...audience],
+        }),
+      });
+    },
+    onSuccess: () => {
+      // черновик убирается только если на сервер легло ровно то, что в нём: печатали во время
+      // PATCH — значит есть ненабранное, и стирать его нельзя
+      if (sentRef.current !== null) clearDraftIfSaved('post', post.id, sentRef.current);
+      onDone();
+    },
   });
   const addLink = useMutation({
     mutationFn: (u: string) => api(`/api/posts/${post.id}/attachments`, { method: 'POST', body: JSON.stringify({ url: u, title: '' }) }),
@@ -352,7 +363,10 @@ function MaterialEdit({ classId, post, onDone }: { classId: string; post: FeedPo
       <label>{t('common.name')}</label>
       <input data-testid="edit-title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
       <label>{t('material.description')}</label>
-      <RichText value={body} docId={post.id} onChange={setBody} minHeight={90} handle={rtRef} />
+      {/* scope='post' — черновик этого материала. serverRev не передаём: лента отдаёт только
+          createdAt, а «версия неизвестна» по правилу decideOnOpen означает «локальный черновик
+          важнее» — серверная копия никогда не затирает ненабранное молча. */}
+      <RichText value={body} docId={post.id} scope="post" onChange={setBody} minHeight={90} handle={rtRef} />
       <label>{t('material.topic')}</label>
       <select data-testid="edit-topic" value={topicId} onChange={(e) => setTopicId(e.target.value)}>
         <option value="">{t('material.noTopic')}</option>

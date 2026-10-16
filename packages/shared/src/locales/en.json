@@ -675,6 +675,11 @@
     "ytWatch": "Watch",
     "driveHint": "Check file access in your Google settings"
   },
+  "editor": {
+    "draftRestored": "Text restored from your local draft",
+    "draftKept": "The server copy is newer — your local draft was kept",
+    "draftApply": "Restore my local draft"
+  },
   "terms": {
     "title": "Terms of Service",
     "version": "Document version: 2026-10-14",

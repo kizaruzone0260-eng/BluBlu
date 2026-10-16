@@ -7,7 +7,8 @@ import { classifyAttachmentUrl, safeExternalUrl, type AttachmentKind } from '../
 import RichText from '../components/RichText';
 import { useAuth } from '../App';
 import { usePopover } from '../lib/popover';
-import type { EditorHandle } from '../lib/controlledEditor';
+import type { EditorHandle } from '../lib/uncontrolledEditor';
+import { clearDraftIfSaved } from '../lib/uncontrolledEditor';
 
 /**
  * Material task A — «Создать материал» as a separate page (fullscreen on
@@ -98,6 +99,10 @@ export default function MaterialNew() {
         for (const f of files) form.append('file', f);
         await api(`/api/classes/${cid}/materials`, { method: 'POST', body: form });
       }
+      // все POST-ы прошли (иначе сюда не дойти) ⇒ черновик этого класса больше не нужен,
+      // НО только если в нём лежат ровно опубликованные символы: нажатия во время публикации
+      // остаются в черновике и вернутся подсказкой
+      clearDraftIfSaved('material', id, description);
     },
   });
 
@@ -161,7 +166,7 @@ export default function MaterialNew() {
         {titleErr && <p className="error" data-testid="material-title-err" style={{ marginTop: 4 }}>{titleErr}</p>}
 
         <label>{t('material.description')}</label>
-        <RichText value={body} docId={id} onChange={setBody} handle={rtRef} />
+        <RichText value={body} docId={id} scope="material" onChange={setBody} handle={rtRef} />
 
         {/* ── Прикрепить ── */}
         <label style={{ marginTop: 12 }}>{t('material.attach')}</label>
