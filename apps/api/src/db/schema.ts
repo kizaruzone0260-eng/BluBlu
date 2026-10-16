@@ -122,6 +122,29 @@ export const loginAttempts = pgTable('login_attempts', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Часть F (2026-10-16): код подтверждения почты при регистрации.
+ *
+ * Одна активная строка на адрес: повторный запрос ЗАМЕЩАЕТ код (attempt-счётчик и срок
+ * обнуляются), а не плодит их — иначе «пять попыток» превращаются в «пять попыток на каждый
+ * из шести отправленных писем». Ключ — нормализованный email, ровно как в `login_attempts`.
+ *
+ * Хранится ТОЛЬКО соль+SHA-256 кода, не сам код: шестизначный код живёт 15 минут и у него есть
+ * потолок угадываний, но дамп базы (а дамп всей школы делают каждую ночь, см. docs/BACKUP.md) не
+ * должен отдавать кому-то рабочий набор кодов для чужой регистрации.
+ *
+ * `usedAt` вместо удаления: списанный код обязан остаться различимым, чтобы второй прогон
+ * того же кода дал «уже использован», а не «не найдено» — то же решение, что у invite-кодов.
+ */
+export const emailVerifications = pgTable('email_verifications', {
+  email: text('email').primaryKey(),
+  codeHash: text('code_hash').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+});
+
 export const auditLog = pgTable('audit_log', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   actorId: uuid('actor_id').references(() => users.id),

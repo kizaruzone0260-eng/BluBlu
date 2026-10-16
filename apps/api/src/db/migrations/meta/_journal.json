@@ -225,6 +225,13 @@
       "when": 1792123104938,
       "tag": "0031_daily_captain_universe",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792166945386,
+      "tag": "0032_email_verification",
+      "breakpoints": true
     }
   ]
 }

@@ -34,7 +34,7 @@ export const DEFAULT_LOCALE: Locale = 'en';
  * the texts) whenever the legal documents change; every user is then asked to
  * re-accept ONCE on next login because their stored version differs.
  */
-export const POLICY_VERSION = '2026-10-14';
+export const POLICY_VERSION = '2026-10-16';
 
 /**
  * Product name shown to users. NOT translated (BluBlu in all three languages)

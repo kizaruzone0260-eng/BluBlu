@@ -9,3 +9,5 @@ export * from './localePick.js';
 export * from './lessonKeep.js';
 export * from './caps.js';
 export * from './editorDraft.js';
+export * from './emailCode.js';
+export * from './emailTemplates.js';

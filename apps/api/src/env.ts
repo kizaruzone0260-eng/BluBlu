@@ -81,10 +81,60 @@ const envSchema = z
   BOARD_ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
   RATE_LOGIN_MAX: z.coerce.number().default(10),
   RATE_CODE_MAX: z.coerce.number().default(8),
+  /*
+   * Часть F (2026-10-16): подтверждение почты при регистрации.
+   *
+   * `none` — ВЫКЛЮЧАТЕЛЬ ПО УМОЛЧанию, и это не лень, а свойство отката: при `none` маршруты
+   * регистрации остаются байт-в-байт прежними (ни письма, ни кода, ни нового поля в форме),
+   * поэтому включение части F не может сломать ни живой деплой без настроенной почты, ни
+   * существующие тесты. Владелец включает провайдер одной переменной.
+   */
+  EMAIL_PROVIDER: z.enum(['none', 'console', 'brevo', 'resend', 'smtp']).default('none'),
+  /** От кого: «support@школа.уз» — обязателен для любого провайдера кроме `none`. */
+  EMAIL_FROM: z.string().default(''),
+  EMAIL_FROM_NAME: z.string().default('BluBlu'),
+  EMAIL_REPLY_TO: z.string().default(''),
+  /** Потолок одного HTTP-шага к провайдеру: зависший Brevo не должен держать процесс. */
+  EMAIL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60_000).default(10_000),
+  BREVO_API_KEY: z.string().default(''),
+  RESEND_API_KEY: z.string().default(''),
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  SMTP_SECURITY: z.enum(['starttls', 'tls', 'plain']).default('starttls'),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASS: z.string().default(''),
+  /** Имя в EHLO/HELO: почтовые серверы требуют FQDN, а не «localhost». */
+  SMTP_HELO_NAME: z.string().default('blublu.local'),
 })
   .superRefine((v, ctx) => {
     if (v.SEED_TEACHER_EMAIL && !v.SEED_TEACHER_PASSWORD) {
       ctx.addIssue({ code: 'custom', message: 'SEED_TEACHER_PASSWORD is required when SEED_TEACHER_EMAIL is set', path: ['SEED_TEACHER_PASSWORD'] });
+    }
+    /*
+     * Часть F: наполовину настроенная почта — это не «выключено», а «учитель жмёт „получить
+     * код“, и ничего не приходит». Поэтому связка «провайдер ⇔ его обязательные ключи»
+     * проверяется на старте процесса, а не в момент регистрации, когда человек уже потратил
+     * минуту на форму.
+     */
+    if (v.EMAIL_PROVIDER !== 'none') {
+      if (!v.EMAIL_FROM) {
+        ctx.addIssue({ code: 'custom', message: 'EMAIL_FROM is required when EMAIL_PROVIDER is not none', path: ['EMAIL_FROM'] });
+      }
+      if (v.EMAIL_PROVIDER === 'brevo' && !v.BREVO_API_KEY) {
+        ctx.addIssue({ code: 'custom', message: 'BREVO_API_KEY is required for EMAIL_PROVIDER=brevo', path: ['BREVO_API_KEY'] });
+      }
+      if (v.EMAIL_PROVIDER === 'resend' && !v.RESEND_API_KEY) {
+        ctx.addIssue({ code: 'custom', message: 'RESEND_API_KEY is required for EMAIL_PROVIDER=resend', path: ['RESEND_API_KEY'] });
+      }
+      if (v.EMAIL_PROVIDER === 'smtp') {
+        if (!v.SMTP_HOST) {
+          ctx.addIssue({ code: 'custom', message: 'SMTP_HOST is required for EMAIL_PROVIDER=smtp', path: ['SMTP_HOST'] });
+        }
+        // половина пары логин+пароль невозможна: AUTH не состоится, а отказ молчаливый
+        if ((v.SMTP_USER && !v.SMTP_PASS) || (!v.SMTP_USER && v.SMTP_PASS)) {
+          ctx.addIssue({ code: 'custom', message: 'SMTP_USER and SMTP_PASS must be set together', path: ['SMTP_PASS'] });
+        }
+      }
     }
     // The rule itself is lib/prodConfig.productionSecretProblems (unit-tested in both shapes)
     for (const p of productionSecretProblems({

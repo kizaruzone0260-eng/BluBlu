@@ -62,7 +62,16 @@
     "changePasswordGateHint": "Sizga vaqtinchalik parol berildi. Davom etish uchun o'z parolingizni belgilang.",
     "passwordChangeRequired": "Davom etishdan oldin vaqtinchalik parolni o‘zgartiring.",
     "logoutAll": "Barcha qurilmalardan chiqish",
-    "logoutAllConfirm": "Barcha qurilmalardan akkauntdan chiqasizmi?"
+    "logoutAllConfirm": "Barcha qurilmalardan akkauntdan chiqasizmi?",
+    "sendCode": "Kod olish",
+    "codeSent": "Kod koʻrsatilgan pochtaga yuborildi. U 15 daqiqa amal qiladi.",
+    "resend": "Yangi kod soʻrash",
+    "emailCode": "Xatdagi kod",
+    "emailCodeRequired": "Avval xatdagi kodni oling",
+    "emailCodeInvalid": "Kod toʻgʻri emas: olti raqamni, 15 daqiqalik muddatni va urinishlar sonini tekshiring",
+    "emailUnavailable": "Xat yuborilmadi. Bir daqiqadan soʻng qayta urinib koʻring",
+    "emailCooldown": "Kod endigina yuborildi. Yangi urinish bir daqiqadan soʻng",
+    "emailStepHint": "Pochtani tasdiqlang: kiritilgan manzilga olti xonali kod yuboramiz."
   },
   "classes": {
     "title": "Mening sinflarim",
@@ -483,7 +492,7 @@
   },
   "privacy": {
     "title": "Maxfiylik siyosati",
-    "version": "Hujjatlar versiyasi: 2026-10-14",
+    "version": "Hujjatlar versiyasi: 2026-10-16",
     "intro": "BluBlu — egasi (o‘quv muassasasi yoki o‘qituvchi) o‘rnatadigan va boshqaradigan o‘quv platformasi. Ushbu matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
     "sections": [
       {
@@ -499,7 +508,8 @@
           "Foydalanuvchilar yaratadigan o‘quv kontenti: sinflar, material va fayllar, eslatmalar, chat xabarlari, calendar voqealari, doskalar va o‘quvchi varaqalari.",
           "Ixtiyoriy — xabarnomalar uchun Telegram chat identifikatori (chat_id).",
           "Build raqami va texnik identifikatorlar (uuid) o‘z-o‘ziga shaxsiy ma‘lumot hisoblanmaydi.",
-          "Darslardagi qatnash: har tugallangan dars uchun server kim kelganini va qachon ketganini saqlaydi (foydalanuvchi identifikatori va ikkita vaqt belgisi). Oʻquvchilar bu roʻyxatni koʻrmaydi — u sinf oʻqituvchisiga darslar arxivida ochiq."
+          "Darslardagi qatnash: har tugallangan dars uchun server kim kelganini va qachon ketganini saqlaydi (foydalanuvchi identifikatori va ikkita vaqt belgisi). Oʻquvchilar bu roʻyxatni koʻrmaydi — u sinf oʻqituvchisiga darslar arxivida ochiq.",
+          "Elektron pochta manzilini tasdiqlash: roʻyxatdan oʻtayotganda manzilga olti xonali kod yuboriladi; kodning ozi faqat qaytarib boʻlmaydigan hash koʻrinishida saqlanadi va u 15 daqiqa amal qiladi. Roʻyxat yakunlanmasa, manzil yozuvi bir kundan soʻng avtomatik oʻchiriladi."
         ]
       },
       {
@@ -682,7 +692,7 @@
   },
   "terms": {
     "title": "Foydalanish shartlari",
-    "version": "Hujjatlar versiyasi: 2026-10-14",
+    "version": "Hujjatlar versiyasi: 2026-10-16",
     "intro": "BluBlu platformasidan foydalanish shartlari. Matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
     "sections": [
       {

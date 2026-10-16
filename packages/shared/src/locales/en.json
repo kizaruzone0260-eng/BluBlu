@@ -62,7 +62,16 @@
     "changePasswordGateHint": "A temporary password was issued to you. Set your own password to continue.",
     "passwordChangeRequired": "Change the temporary password before continuing.",
     "logoutAll": "Sign out of all devices",
-    "logoutAllConfirm": "Sign out of your account on all devices?"
+    "logoutAllConfirm": "Sign out of your account on all devices?",
+    "sendCode": "Get a code",
+    "codeSent": "We sent the code to that address. It is valid for 15 minutes.",
+    "resend": "Request a new code",
+    "emailCode": "Code from the email",
+    "emailCodeRequired": "Get the code from your email first",
+    "emailCodeInvalid": "That code does not fit: check the six digits, the 15-minute window and the number of tries",
+    "emailUnavailable": "The message could not be sent. Please try again in a minute",
+    "emailCooldown": "A code was just sent. A new attempt is possible in a minute",
+    "emailStepHint": "Confirm the email: we will send a six-digit code to the address you typed."
   },
   "classes": {
     "title": "My classes",
@@ -483,7 +492,7 @@
   },
   "privacy": {
     "title": "Privacy Policy",
-    "version": "Document version: 2026-10-14",
+    "version": "Document version: 2026-10-16",
     "intro": "BluBlu is a learning platform installed and administered by its owner (a school or a teacher). This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {
@@ -499,7 +508,8 @@
           "Learning content users create: classes, materials and files, notes, chat messages, calendar events, boards and student sheets.",
           "Optionally — your Telegram chat identifier (chat_id) for notifications.",
           "The build number and technical identifiers (uuid) are not personal data by themselves.",
-          "Lesson attendance: for every finished lesson the server keeps who joined and when they left (a user id and two timestamps). Students never see this list — it is open to the teacher of that class in the lesson archive."
+          "Lesson attendance: for every finished lesson the server keeps who joined and when they left (a user id and two timestamps). Students never see this list — it is open to the teacher of that class in the lesson archive.",
+          "Email address confirmation: at registration a six-digit code is sent to the address; the code itself is stored only as an irreversible hash and is valid for 15 minutes. If registration is not completed, the address record is deleted automatically after one day."
         ]
       },
       {
@@ -682,7 +692,7 @@
   },
   "terms": {
     "title": "Terms of Service",
-    "version": "Document version: 2026-10-14",
+    "version": "Document version: 2026-10-16",
     "intro": "Terms for using the BluBlu platform. This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {

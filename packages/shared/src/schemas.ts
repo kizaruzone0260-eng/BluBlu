@@ -42,10 +42,29 @@ export const registerByCodeSchema = z.object({
   password: passwordPolicy,
   code: z.string().trim().toUpperCase(),
   /**
+   * Часть F (2026-10-16): код из письма. ПОЛЕ ОБЯЗАТЕЛЬНО, когда включено подтверждение, — и это
+   * решает маршрут, а не схема: при `EMAIL_PROVIDER=none` его не существует, и прежний клиент
+   * (и прежний тест) регистрирует аккаунт ровно тем же запросом, что раньше.
+   */
+  emailCode: z.string().trim().regex(/^\d{6}$/, 'emailCodeRequired').optional(),
+  /**
    * Language (task 1): the register screen has a language switch too, and a choice made BEFORE
    * the account exists used to be thrown away — the INSERT took the column default instead.
    * Optional, so an older client still registers.
    */
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
+});
+
+/**
+ * Часть F: запрос кода на подтверждение почты. Имя и фамилия здесь не для аккаунта (его ещё нет),
+ * а для самого письма — человек должен получить «Здравствуйте, Алия», а не безликую машинную
+ * строку. Поля те же и с той же length-политикой, что у регистрации, чтобы письмо и аккаунт не
+ * разошлись в написании имени.
+ */
+export const emailCodeRequestSchema = z.object({
+  firstName: z.string().trim().min(2, 'name2').max(80),
+  lastName: z.string().trim().min(2, 'name2').max(80),
+  email,
   locale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
