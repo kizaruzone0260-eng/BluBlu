@@ -772,11 +772,14 @@ button.danger-text { color: var(--danger); }
 .bar-btn.bar-active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .bar-btn.bar-leave { background: var(--danger); border-color: var(--danger); color: #fff; }
 .bar-btn:disabled { opacity: .5; }
-/* стрелка выбора устройства — часть кнопки, но отдельная область нажатия */
+/* стрелка выбора устройства — часть кнопки, но отдельная область нажатия
+   `.bar-btn` держит 44 px, и этот элемент обязан держать их тоже: `m-phone-screens` требует 44 px
+   от ВСЕХ кнопок полосы урока, а на телефоне промах был именно здесь (красный прогон: 28 px).
+   Скрывать стрелку или «сливать» её с кнопкой нельзя — на ней выбор микрофона/камеры. */
 .bar-split { display: inline-flex; align-items: stretch; gap: 0; }
 .bar-split .bar-btn { border-radius: var(--r-full) 0 0 var(--r-full); padding-right: 6px; }
 .bar-split .bar-arrow {
-  min-width: 28px; padding: 0 6px; border: 1px solid var(--border-strong); border-left: 0;
+  min-width: var(--tap); padding: 0 6px; border: 1px solid var(--border-strong); border-left: 0;
   border-radius: 0 var(--r-full) var(--r-full) 0; background: var(--surface-2); color: var(--text-muted);
   margin: 0; font-size: .7rem;
 }
@@ -873,7 +876,16 @@ button.danger-text { color: var(--danger); }
 /* на странице урока плавающая кнопка «Мои заметки» не имеет права садиться на панель управления */
 .lesson-shell ~ .sheet-fab, .lesson-shell .sheet-fab { bottom: calc(var(--bar-h) + 14px); }
 @media (max-width: 767px) {
-  .lesson-bar { bottom: var(--tab-h); }
+  /*
+   * Телефон: полоса уроков умещает восемь целей по 44 px (микрофон, его стрелка, камера, её
+   * стрелка, рука, комментарии, «Ещё», выход) = 352 px. Экран 393 px, у полосы отступы 8+8
+   * (правило `max-width: none; left: 8; right: 8` выше), значит в коробку влезает 377 px.
+   * С прежними зазорами (gap 4 × 5 + padding 10 × 2 + границы 2 = 42) выходило 394 — кнопки
+   * залезали бы за край, а стрелка микрофона как раз оказывалась крайней справа. Поэтому на
+   * узком экране зазоры и внутренние отступы полосы ужимаются до 2 и 4: 352 + 10 + 8 + 2 = 372,
+   * и 5 px остаются на случай более широких подписей.
+   */
+  .lesson-bar { bottom: var(--tab-h); gap: 2px; padding: 6px 4px; }
   .lesson-shell ~ .sheet-fab, .lesson-shell .sheet-fab { bottom: calc(var(--bar-h) + var(--tab-h) + 14px); }
   .lesson-shell .toast { bottom: calc(var(--bar-h) + var(--tab-h) + var(--sp-4)); }
 }
