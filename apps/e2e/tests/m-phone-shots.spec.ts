@@ -98,9 +98,14 @@ test.describe('телефон: скриншоты экранов (Pixel 7) @shot
 
         for (const [name, path] of SCREENS) {
           await page.goto(path(classId));
-          // экран обязан что-то показать: `.main .container` есть на всех аутентифицированных
-          // маршрутах (App.tsx: Shell), включая урок
-          await expect(page.locator('.main .container')).toBeVisible({ timeout: 25_000 });
+          /*
+           * Экран обязан что-то показать: `.container` внутри `.main` есть на всех
+           * аутентифицированных маршрутах (App.tsx: Shell), включая урок. `.first()` — не косметика:
+           * прогон 38941834886 дал `strict mode violation … resolved to 2 elements`, потому что
+           * внутри контента есть и второй `.container.muted` (служебная строка страницы), и
+           * строгий локатор на двух совпадениях падает, не досняв ни одного кадра.
+           */
+          await expect(page.locator('.main .container').first()).toBeVisible({ timeout: 25_000 });
           await expect
             .poll(() => page.evaluate(() => document.documentElement.lang),
               { message: `${locale}: язык не применился на «${name}»` })

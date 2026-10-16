@@ -89,8 +89,12 @@ echo "   до: [$SRC_COUNTS] rls=$SRC_RLS grants(anon/authenticated)=$SRC_GRANTS
 [ "$SRC_GRANTS" = "0" ] || fail "у anon/authenticated уже есть привилегии ($SRC_GRANTS) — база не в проде-позе"
 
 echo "== 3. backup.sh БЕЗ пароля обязан отказать и не оставить открытого дампа"
+# PGDATABASE везде ниже обязателен: `backup.sh` по умолчанию дампит базу `klass` (это имя inside
+# compose). В CI такая база существует и пуста — без явного PGDATABASE скрипт делал «бэкап» пустой
+# базы, `restore.sh` на пустом дампе говорит «db OK», и краснел только подсчёт строк сырой ошибкой
+# psql. Первый же прогон этого цикла (38941834886) показал это дословно.
 A="$WORK/noenc"; mkdir -p "$A"
-if BACKUP_DIR="$A" ALLOW_UNENCRYPTED_BACKUP="" bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/a.log" 2>&1; then
+if BACKUP_DIR="$A" ALLOW_UNENCRYPTED_BACKUP="" PGDATABASE="$SRC" bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/a.log" 2>&1; then
   cat "$WORK/a.log" >&2; fail "backup.sh без BACKUP_PASSPHRASE завершился успешно"
 fi
 grep -q "ОТКАЗ" "$WORK/a.log" || fail "в отказе нет внятной причины: $(tail -3 "$WORK/a.log")"
@@ -98,14 +102,19 @@ grep -q "ОТКАЗ" "$WORK/a.log" || fail "в отказе нет внятно�
 
 echo "== 4. backup.sh с ALLOW_UNENCRYPTED_BACKUP=1 (открытый формат) и с паролем"
 B="$WORK/plain"; mkdir -p "$B"
-ALLOW_UNENCRYPTED_BACKUP=1 BACKUP_DIR="$B" bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/b.log" 2>&1 \
+ALLOW_UNENCRYPTED_BACKUP=1 PGDATABASE="$SRC" BACKUP_DIR="$B" \
+  bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/b.log" 2>&1 \
   || { cat "$WORK/b.log" >&2; fail "backup.sh (открытый режим) упал"; }
 ls "$B" | grep -q '\.sql\.gz$' || { ls -l "$B" >&2; fail "открытый дамп не создан"; }
+# сам дамп обязан быть содержательным: пустая база даёт валидный gzip без единой таблицы
+DUMP_PLAIN="$(ls "$B" | grep '\.sql\.gz$' | head -1)"
+gunzip -c "$B/$DUMP_PLAIN" | grep -q '^CREATE TABLE' \
+  || { gunzip -c "$B/$DUMP_PLAIN" | head -20 >&2; fail "в дампе нет ни одной CREATE TABLE — дампится не та база?"; }
 if ls "$B" | grep -q '\.enc$'; then fail "в открытом режиме появился .enc"; fi
 rm -rf "$B"/*
 
 C="$WORK/enc"; mkdir -p "$C"
-BACKUP_PASSPHRASE="$PASS" BACKUP_DIR="$C" bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/c.log" 2>&1 \
+BACKUP_PASSPHRASE="$PASS" PGDATABASE="$SRC" BACKUP_DIR="$C" bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/c.log" 2>&1 \
   || { cat "$WORK/c.log" >&2; fail "backup.sh (шифрование) упал"; }
 DUMP_ENC="$(ls "$C" | grep 'sql\.gz\.enc$' | head -1 || true)"
 FILES_ENC="$(ls "$C" | grep 'files-.*\.tar\.gz\.enc$' | head -1 || true)"
@@ -122,6 +131,11 @@ BACKUP_PASSPHRASE="$PASS" PGDATABASE="$DST" \
   bash "$ROOT/deploy/scripts/restore.sh" >"$WORK/r.log" 2>&1 \
   || { cat "$WORK/r.log" >&2; fail "restore.sh упал"; }
 grep -q "db OK" "$WORK/r.log" || fail "restore.sh не сказал 'db OK'"
+# «db OK» на пустом дампе — не проверка: сначала схема, потом счётчики (иначе psql падает
+# сырой ошибкой `relation "users" does not exist`, из которой не видно, что восстанавливать было нечем)
+DST_TABLES="$(q "$DST" "select count(*) from information_schema.tables where table_schema='public'")"
+[ "${DST_TABLES:-0}" -ge 30 ] \
+  || { cat "$WORK/r.log" >&2; fail "в восстановленной базе $DST таблиц $DST_TABLES — схема не применилась"; }
 
 DST_COUNTS="$(q "$DST" "$COUNTS_SQL" | sort | tr '\n' ' ')"
 DST_RLS="$(q "$DST" "$RLS_SQL")"
@@ -137,7 +151,7 @@ echo "   после: [$DST_COUNTS] rls=$DST_RLS grants=$DST_GRANTS"
 echo "== 6. файлы хранилища: записанный байт обязан вернуться байтом"
 FDIR="$WORK/store-src"; mkdir -p "$FDIR/files-store"; echo "klass-file-content-0123456789" > "$FDIR/files-store/probe.txt"
 F2="$WORK/enc2"; mkdir -p "$F2"
-STORAGE_DIR="$FDIR/files-store" BACKUP_PASSPHRASE="$PASS" BACKUP_DIR="$F2" \
+STORAGE_DIR="$FDIR/files-store" BACKUP_PASSPHRASE="$PASS" PGDATABASE="$SRC" BACKUP_DIR="$F2" \
   bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/f.log" 2>&1 || { cat "$WORK/f.log" >&2; fail "backup.sh с files не собрался"; }
 FB="$(ls "$F2" | grep 'files-.*\.tar\.gz\.enc$' | head -1 || true)"
 [ -n "$FB" ] || fail "нет шифрованного архива файлов"
