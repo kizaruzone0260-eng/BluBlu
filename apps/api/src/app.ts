@@ -19,6 +19,7 @@ import { authRoutes } from './routes/auth.js';
 import { classRoutes } from './routes/classes.js';
 import { rtcRoutes } from './routes/rtc.js';
 import { healthRoutes } from './routes/health.js';
+import { featureRoutes } from './routes/features.js';
 import { postRoutes } from './routes/posts.js';
 import { noteRoutes } from './routes/notes.js';
 import { eventRoutes } from './routes/events.js';
@@ -297,6 +298,7 @@ export async function buildApp(
   await app.register(authPlugin, { db });
 
   await app.register(healthRoutes, { db });
+  await app.register(featureRoutes); // часть A: включатель «урок не прерывается»
   await app.register(authRoutes(db));
   await app.register(classRoutes, { db });
   await app.register(rtcRoutes, { db });

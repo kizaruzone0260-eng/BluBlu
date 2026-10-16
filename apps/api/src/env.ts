@@ -50,6 +50,15 @@ const envSchema = z
     .union([z.enum(['0', '1', 'true', 'false']), z.boolean()])
     .default('0')
     .transform((v) => v === true || v === '1' || v === 'true'),
+  // Часть A (2026-10-16): «урок не прерывается при переходах». Комната и сокет урока живут над
+  // роутером, поэтому страница «Чат» или «Заметки» больше не рвёт соединение, а на других
+  // экранах урок виден в мини-окне. Выключатель дан намеренно: это новое поведение всего
+  // медиа-тракта, и владелец может вернуть прежнее (урок живёт ровно на своей странице)
+  // одной переменной в Render, без пересборки. По умолчанию ВКЛ.
+  LESSON_PERSIST: z
+    .union([z.enum(['0', '1', 'true', 'false']), z.boolean()])
+    .default('1')
+    .transform((v) => v === true || v === '1' || v === 'true'),
   TELEGRAM_BOT_TOKEN: z.string().default(''),
   // item 5: NO default bot name — without TELEGRAM_BOT_NAME the app must not
   // invent t.me/… links; the UI then shows «Telegram notifications not configured».

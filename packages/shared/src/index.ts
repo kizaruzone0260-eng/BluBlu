@@ -6,3 +6,4 @@ export * from './inkView.js';
 export * from './stageModel.js';
 export * from './chatReply.js';
 export * from './localePick.js';
+export * from './lessonKeep.js';
