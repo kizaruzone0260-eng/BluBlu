@@ -449,8 +449,12 @@ export const classNotifyPrefs = pgTable('class_notify_prefs', {
   channel: notifyChannelEnum('channel').notNull().default('private'),
 });
 
+/**
+ * Часть A (2026-10-16). `sending` — ряд захвачен одним проходом и больше никому не виден;
+ * `expired` — просрочен и не отправляется (свежесть, см. `sendDue`).
+ */
 export const notificationStatusEnum = pgEnum('notification_status',
-  ['pending', 'sent', 'failed', 'blocked', 'skipped']);
+  ['pending', 'sending', 'sent', 'failed', 'blocked', 'skipped', 'expired']);
 
 // ─── Telegram bot dialogs (bot task §6) ──────────────────────────────────────
 
@@ -468,10 +472,23 @@ export const botSessions = pgTable('bot_sessions', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-/** Idempotency ledger: a redelivered update_id must never repeat an action. */
+/**
+ * Idempotency ledger: a redelivered update_id must never repeat an action.
+ *
+ * Часть A4 (2026-10-16): маршрут `/webhook/telegram` отвечает Telegram сразу после записи
+ * сюда, а обработку делает фоном. Поэтому строка знает не только «я такое видела», но и
+ * что именно: `payload` — сам update, `processed_at` — NULL, пока действие не выполнено.
+ * При старте процесса незавершённые строки моложе 10 минут переобрабатываются (иначе
+ * падение в фоне или рестарт сервиса на холодном Render теряли обновление навсегда).
+ * `payload` — текст, который кто-то написал боту: `sweepBotState` держит журнал 24 ч,
+ * этого с запасом хватает и на повторные доставки Telegram, и на 10-минутное окно
+ * переобработки.
+ */
 export const botUpdates = pgTable('bot_updates', {
   updateId: bigint('update_id', { mode: 'number' }).primaryKey(),
   seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  payload: jsonb('payload').$type<Record<string, unknown>>(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
 });
 
 /** /contact reports: what the sender typed + delivery/reply bookkeeping. */
@@ -522,6 +539,18 @@ export const notifications = pgTable('notifications', {
   dedupeKey: text('dedupe_key').notNull().unique(),
   sendAt: timestamp('send_at', { withTimezone: true }).notNull().defaultNow(),
   status: notificationStatusEnum('status').notNull().default('pending'),
+  /**
+   * Часть A1 (2026-10-16): момент атомарного захвата ряда проходом `sendDue`. Пока
+   * `status = 'sending'`, строку никто другой не берёт; зависший захват (процесс умер
+   * между отправкой и записью итога) старше 5 минут возвращается в `pending`.
+   */
+  lockedAt: timestamp('locked_at', { withTimezone: true }),
+  /**
+   * Часть A2: начало того события, ради которого это напоминание (`EnqueueArgs.when` для
+   * очередей из `enqueueNotification`, время вхождения для `scanReminders`). NULL у рядов,
+   * поставленных до миграции 0031, — для них проверка свежести сводится к возрасту `send_at`.
+   */
+  startsAt: timestamp('starts_at', { withTimezone: true }),
   attempts: integer('attempts').notNull().default(0),
   lastError: text('last_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

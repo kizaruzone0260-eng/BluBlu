@@ -173,6 +173,40 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
           : (Array.isArray(archiveSwitch[0].relacl) ? archiveSwitch[0].relacl.join(',') : String(archiveSwitch[0].relacl));
         expect(swAcl).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
 
+        // 5г. Часть A (2026-10-16) добавляет ДВЕ Метки в enum очереди и по КОЛОНКЕ в две
+        //     существующие таблицы. Это тот самый случай, где поза не «по аналогии», а
+        //     проверенная по столбцам: `locked_at`/`starts_at` говорят, кто и когда забрал
+        //     уведомление, `payload` хранит текст, который человек написал боту.
+        const nstatus = await sql`
+          select e.enumlabel from pg_type t
+            join pg_enum e on e.enumtypid = t.oid
+           where t.typname = 'notification_status' order by e.enumsortorder`;
+        expect(nstatus.map((r) => r.enumlabel)).toEqual(
+          ['pending', 'sending', 'sent', 'failed', 'blocked', 'skipped', 'expired'],
+        );
+
+        const queueCols = await sql`
+          select (c.relname || '.' || a.attname) as col, c.relrowsecurity as rls, c.relacl as acl,
+                 a.attnotnull as not_null, a.atttypid::regtype::text as typ
+            from pg_attribute a
+            join pg_class c on c.oid = a.attrelid
+           where (a.attrelid = 'notifications'::regclass and a.attname in ('locked_at', 'starts_at'))
+              or (a.attrelid = 'bot_updates'::regclass and a.attname in ('payload', 'processed_at'))
+           order by c.relname, a.attname`;
+        expect(queueCols.map((r) => (r as { col: string }).col)).toEqual(
+          ['bot_updates.payload', 'bot_updates.processed_at', 'notifications.locked_at', 'notifications.starts_at'],
+        );
+        for (const rowQ of queueCols) {
+          const r = rowQ as { col: string; rls: boolean; acl: unknown; not_null: boolean; typ: string };
+          expect(r.rls, `${r.col}: таблица осталась под ROW LEVEL SECURITY`).toBe(true);
+          expect(r.not_null, `${r.col}: колонка nullable — ряды до миграции не ломаются`).toBe(false);
+          const a = r.acl == null ? '' : (Array.isArray(r.acl) ? r.acl.join(',') : String(r.acl));
+          expect(a, `${r.col}: ни одной выдачи не-владельцу`).not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+        }
+        expect((queueCols as { typ: string }[]).map((r) => r.typ)).toEqual(
+          ['jsonb', 'timestamp with time zone', 'timestamp with time zone', 'timestamp with time zone'],
+        );
+
         // has_column_privilege ERRORS on a missing role, and only Supabase creates these two
         const roles = await sql`select rolname from pg_roles where rolname in ('anon', 'authenticated')`;
         const have = new Set(roles.map((r) => String((r as { rolname: string }).rolname)));
@@ -188,7 +222,13 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
                    pg_catalog.has_column_privilege(${role}, 'classes', 'board_archive_public', 'select') as arch_s,
                    pg_catalog.has_column_privilege(${role}, 'classes', 'board_archive_public', 'update') as arch_u,
                    pg_catalog.has_column_privilege(${role}, 'lesson_attendance', 'joined_at', 'select') as att_s,
-                   pg_catalog.has_column_privilege(${role}, 'lesson_attendance', 'user_id', 'insert') as att_i`;
+                   pg_catalog.has_column_privilege(${role}, 'lesson_attendance', 'user_id', 'insert') as att_i,
+                   pg_catalog.has_column_privilege(${role}, 'notifications', 'locked_at', 'select') as lock_s,
+                   pg_catalog.has_column_privilege(${role}, 'notifications', 'locked_at', 'update') as lock_u,
+                   pg_catalog.has_column_privilege(${role}, 'notifications', 'starts_at', 'select') as st_s,
+                   pg_catalog.has_column_privilege(${role}, 'bot_updates', 'payload', 'select') as pay_s,
+                   pg_catalog.has_column_privilege(${role}, 'bot_updates', 'payload', 'insert') as pay_i,
+                   pg_catalog.has_column_privilege(${role}, 'bot_updates', 'processed_at', 'update') as proc_u`;
           const q = (p[0] ?? {}) as Record<string, boolean>;
           for (const [key, label] of Object.entries({
             snap_s: 'the device snapshot, select', snap_u: 'the device snapshot, update',
@@ -196,6 +236,10 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
             auth_s: 'the author map, select', auth_u: 'the author map, update',
             arch_s: 'переключатель архива, select', arch_u: 'переключатель архива, update',
             att_s: 'присутствие, select', att_i: 'присутствие, insert',
+            lock_s: 'захват ряда очереди, select', lock_u: 'захват ряда очереди, update',
+            st_s: 'время события у напоминания, select',
+            pay_s: 'текст обновления бота, select', pay_i: 'текст обновления бота, insert',
+            proc_u: 'отметка обработки, update',
           }) as [string, string][]) {
             expect(q[key], `${role} cannot touch ${label}`).toBe(false);
           }

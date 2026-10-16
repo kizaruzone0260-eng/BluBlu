@@ -218,6 +218,13 @@
       "when": 1791919360682,
       "tag": "0030_lesson_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792123104938,
+      "tag": "0031_daily_captain_universe",
+      "breakpoints": true
     }
   ]
 }
