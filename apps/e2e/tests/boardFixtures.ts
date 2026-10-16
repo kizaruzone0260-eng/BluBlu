@@ -214,10 +214,27 @@ export async function paintStable(page: Page, slot: keyof typeof SLOTS): Promise
   const surface = page.locator('[data-testid=board] canvas.excalidraw__canvas:not(.static)').first();
   const { from, to } = SLOTS[slot];
   const stroke = async () => {
+    await surface.scrollIntoViewIfNeeded();
     await surface.click({ position: { x: from[0], y: from[1] } });   // фокус на полотне
     await page.keyboard.press('r');                                   // инструмент «прямоугольник»
     await surface.hover({ position: { x: from[0], y: from[1] } });     // полотно стоит на месте
-    const box = (await surface.boundingBox())!;
+    let box = (await surface.boundingBox())!;
+    const vh = page.viewportSize()?.height ?? 800;
+    const lowest = Math.max(from[1], to[1]);
+    /*
+     * Конец штриха обязан быть В ОКНЕ. `page.mouse` работает в координатах вьюпорта и страницу не
+     * прокручивает: если полотно лежит ниже сгиба (ученическая карточка доски на 1280×800 — это
+     * y≈646 при высоте окна 800), то `box.y + to[1]` уходит за нижний край, перетаскивание
+     * происходит мимо холста, и элемент не создаётся вовсе. Прогон 38962787990 упал именно так:
+     * счётчик пикселей не сдвинулся (2032 → 2032), а `MEASURE paintStable: штрих не лёг с трёх
+     * попыток` появился в логе дважды — то есть все три попытки того же штриха рисовали в одно и то
+     * же мёртвое место, и повтор без прокрутки помочь не мог.
+     */
+    if (box.y + lowest > vh - 4) {
+      await page.evaluate((dy) => window.scrollBy(0, dy), Math.ceil(box.y + lowest - vh / 2));
+      await surface.hover({ position: { x: from[0], y: from[1] } });
+      box = (await surface.boundingBox())!;
+    }
     await page.mouse.down();
     await page.mouse.move(box.x + to[0], box.y + to[1], { steps: 6 });
     await page.mouse.up();
