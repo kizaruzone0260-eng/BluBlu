@@ -915,3 +915,47 @@ button.danger-text { color: var(--danger); }
   .archive-boards { grid-template-columns: 1fr; }
   .archive-thumb { max-width: 100%; }
 }
+
+/* ══ часть A (2026-10-16): мини-окно урока и возврат после перезагрузки ══
+ * Контейнер-портал сам по себе ничего не занимает: окно внутри него `position: fixed`, поэтому
+ * появление мини-окна не сдвигает страницу (то же правило, что у плашки чернил на доске).
+ * Размеры дублируют MINI_W/MINI_H из packages/shared/src/lessonKeep.ts — держите их вместе.
+ */
+.lesson-mini-host { position: static; }
+.lesson-mini {
+  position: fixed; z-index: 40; width: 268px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+}
+.lesson-mini.mini-min { width: 268px; gap: 0; padding: 6px 8px; }
+.mini-bar { display: flex; align-items: center; gap: 6px; touch-action: none; cursor: grab; }
+.mini-bar .mini-title { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-timer { font-variant-numeric: tabular-nums; font-size: .8rem; color: var(--text-muted); }
+.mini-live { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.mini-count { font-size: .78rem; color: var(--text-muted); }
+.mini-media { height: 108px; border-radius: var(--r-sm); overflow: hidden; background: var(--surface-2); }
+.mini-media .video-tile, .mini-media video { width: 100%; height: 100%; object-fit: cover; }
+.mini-empty { display: grid; place-items: center; height: 100%; font-size: .82rem; }
+.mini-actions { display: flex; align-items: center; gap: 6px; }
+.mini-btn { min-height: var(--tap); min-width: 32px; font-size: .82rem; }
+/* телефон: закреплённая полоса сверху, тянуть её некуда (см. miniDown в pages/Lesson.tsx) */
+@media (max-width: 899px) {
+  .lesson-mini, .lesson-mini.mini-min {
+    left: 0 !important; top: 0 !important; width: 100%;
+    border-radius: 0; border-left: 0; border-right: 0; border-top: 0;
+    padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+  }
+  .mini-bar { cursor: default; }
+  .mini-media { display: none; }
+  .lesson-mini.mini-min .mini-actions { display: none; }
+}
+
+.rejoin-box {
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+  padding: 12px; margin-bottom: 12px;
+  border: 1px solid var(--accent); border-radius: var(--r-md); background: var(--surface-2);
+}
+.rejoin-box p { margin: 0; }
+.rejoin-btn { min-height: 48px; font-size: 1.05rem; font-weight: 600; }

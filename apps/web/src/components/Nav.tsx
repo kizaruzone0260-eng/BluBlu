@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePopover } from '../lib/popover';
-import { NavLink, Link } from 'react-router-dom';
+import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, type Me } from '../lib/api';
 import { APP_NAME } from '../lib/brand';
@@ -106,6 +106,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('klass_sidebar') === '1');
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggedOut, setLoggedOut] = useState(false);
+  const nav = useNavigate();
   const unreadQ = useChatUnread();
   const unread = (unreadQ.data ?? []).reduce((n, s) => n + s.unread, 0);
   const initials = (me?.name ?? '?').trim().split(/\s+/).map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('') || '?';
@@ -161,7 +162,10 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
                 <ThemeToggle />
                 <button className="ghost" onClick={() => {
                   setMenuOpen(false);
-                  void doLogout().then(() => { setLoggedOut(true); window.location.href = '/login'; });
+                  // часть A (шаг A4): выход идёт через роутер. Документальная перезагрузка раньше
+                  // рвала комнату «как бы сама», теперь это видно: `me` становится null, хост
+                  // размонтируется, и урок закрывается своим cleanup'ом.
+                  void doLogout().then(() => { setLoggedOut(true); nav('/login', { replace: true }); });
                 }}>
                   <Icon d={icons.logout} size={18} /> {t('common.logout')}
                 </button>

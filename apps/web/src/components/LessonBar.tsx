@@ -39,6 +39,8 @@ export interface BarActions {
   lecture: () => void; devices: () => void; hideSelf: () => void;
   stopVideo: () => void; fullscreenToggle: () => void; leave: () => void; endForAll: () => void;
   pickCam: (deviceId: string) => void; pickMic: (deviceId: string) => void;
+  /** часть A (шаг A4): «новая заметка» — переход через роутер, адрес считает родитель */
+  note: () => void;
 }
 
 export interface BarDevices {
@@ -49,10 +51,8 @@ export interface BarDevices {
 
 type Menu = '' | 'mic' | 'cam' | 'more' | 'leave';
 
-export default function LessonBar({ state, actions, devices, noteHref }: {
+export default function LessonBar({ state, actions, devices }: {
   state: BarState; actions: BarActions; devices: BarDevices;
-  /** ссылка на новую заметку привязана к уроку, поэтому её даёт родитель */
-  noteHref: string;
 }) {
   const { t } = useTranslation();
   const [menu, setMenu] = useState<Menu>('');
@@ -339,7 +339,10 @@ export default function LessonBar({ state, actions, devices, noteHref }: {
                 🎓 {state.lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
               </button>
             )}
-            <a className="bar-item" role="menuitem" href={noteHref} data-testid="lesson-new-note">📝 {t('home.newNote')}</a>
+            {/* часть A (шаг A4): переход через роутер, а не `<a href>` — документальная перезагрузка
+                обрывала урок, теперь она и вовсе не нужна */}
+            <button type="button" className="bar-item" role="menuitem" data-testid="lesson-new-note"
+              onClick={() => { close(); actions.note(); }}>📝 {t('home.newNote')}</button>
             <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.fullscreen}
               data-testid="fullscreen-btn" disabled={!state.connected}
               onClick={() => { close(); actions.fullscreenToggle(); }}>

@@ -1,5 +1,6 @@
-import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Room, RoomEvent, Track, VideoPresets, type Track as LkTrack } from 'livekit-client';
@@ -11,6 +12,13 @@ import { useHandFrames, useHands } from '../components/LessonHands';
 import LessonBar, { type BarActions, type BarDevices, type BarState } from '../components/LessonBar';
 import type { PanelTab } from '../components/LessonPanel';
 import { DeviceSettings, speakerPickSupported, useMicMeter } from '../components/DeviceSettings';
+import LessonMini, { useLessonHost, type LessonMode } from '../components/LessonLive';
+import VideoTile, { type Tile } from '../components/VideoTile';
+import {
+  MINI_H, MINI_W, REJOIN_TTL_MS, SS_MINI, SS_REJOIN, clampMiniPos, formatElapsed,
+  isDuplicateIdentityError, isRejoinFresh, lessonElapsedMs, parseMiniPos, parseRejoin, sameLesson,
+  type MiniPos, type RejoinMark,
+} from '@klass/shared';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
 
@@ -45,11 +53,6 @@ interface Session {
 
 interface PeerView {
   identity: string; name: string; micOn: boolean; camOn: boolean; screenOn: boolean;
-}
-
-interface Tile {
-  key: string; kind: 'video' | 'audio'; name: string; local: boolean; screen: boolean;
-  sid: string;
 }
 
 const LS_CAM = 'blublu.camDevice';
@@ -96,6 +99,22 @@ const writeFlag = (key: string, on: boolean) => {
   try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* приватный режим — просто не запомним */ }
 };
 
+/*
+ * Часть A (2026-10-16): `sessionStorage`, а не `localStorage` — метка возврата и положение
+ * мини-окна относятся к ЭТОМУ окну браузера. Приватный режим и sandbox-фрейм умеют бросать
+ * исключение даже на чтение, поэтому каждый доступ обёрнут: пропавшая метка означает «обычный
+ * вход», а не сломанный урок.
+ */
+const readSS = (key: string): string | null => {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+};
+const writeSS = (key: string, value: string) => {
+  try { sessionStorage.setItem(key, value); } catch { /* не запомним — и ладно */ }
+};
+const clearSS = (key: string) => {
+  try { sessionStorage.removeItem(key); } catch { /* уже чисто */ }
+};
+
 // livekit-client keeps its capture-option types internal — derive them from the
 // method signatures so the constraint chain below type-checks without casts to any
 type CamOpts = NonNullable<Parameters<Room['localParticipant']['setCameraEnabled']>[1]>;
@@ -122,48 +141,33 @@ function useMediaErrorText() {
   };
 }
 
-function VideoTileBase({ tile, track, big = false, hideName = false }: {
-  tile: Tile; track?: LkTrack; big?: boolean;
-  /** the screen stage paints its own caption band, so the tile must not add a second one */
-  hideName?: boolean;
-}) {
-  const { t } = useTranslation();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  useEffect(() => {
-    const el = tile.kind === 'video' ? videoRef.current : audioRef.current;
-    if (!el || !track) return;
-    track.attach(el);
-    return () => { track.detach(el); };
-  }, [track, tile.key, tile.kind]);
-  return (
-    <div className={big ? 'video-tile tile-big' : 'video-tile'} data-testid={tile.local ? 'tile-local' : 'tile-peer'}
-      data-local={tile.local ? '1' : '0'} data-screen={tile.screen ? '1' : undefined}
-      // remote audio must NOT take a grid slot — it plays silently in the background
-      style={tile.kind === 'audio' ? { display: 'none' } : undefined}>
-      {!hideName && <div className="muted">{tile.name}{tile.screen ? ` · ${t('lesson.stageScreen')}` : ''}</div>}
-      {tile.kind === 'video'
-        ? <video ref={videoRef} autoPlay playsInline muted={tile.local} />
-        : <audio ref={audioRef} autoPlay />}
-    </div>
-  );
-}
-
 /**
- * Часть 2: тайл мемоизирован. Без этого каждая смена состояния страницы (счётчик непрочитанных,
- * тост, раскладка) перерисовывала все <video>, а `track.attach(el)` привязан к ref'у и при
- * перемонтировании тайла отдирал и снова вешал медиаэлемент.
+ * Часть A (2026-10-16). Урок монтирует `LessonHostProvider` (см. components/LessonLive.tsx), а не
+ * маршрут, поэтому у компонента два окна: `full` — своя страница, `mini` — мини-окно на любом
+ * другом экране. `target` — DOM-узел, куда переезжает разметка; состояние (комната, сокет,
+ * участники, устройства) при этом НЕ пересоздаётся: портал меняет только дерево DOM.
  */
-const VideoTile = memo(VideoTileBase);
-
-export default function Lesson() {
+export default function Lesson({ mode = 'full', target = null }: {
+  mode?: LessonMode; target?: HTMLElement | null;
+} = {}) {
   const { t } = useTranslation();
   const mediaErrorText = useMediaErrorText();
   const { me } = useAuth();
   const qc = useQueryClient();
+  const nav = useNavigate();
+  const host = useLessonHost();
   const [params] = useSearchParams();
-  const eventId = params.get('eventId') ?? undefined;
-  const classIdParam = params.get('classId') ?? undefined;
+  const eventIdParam = params.get('eventId') ?? undefined;
+  const classIdParamRaw = params.get('classId') ?? undefined;
+  /*
+   * Как только человек в уроке, адрес перестаёт быть источником истины: на странице «Чат»
+   * параметров нет, а статус-запрос, снимок устройств и кнопки обязаны знать ТОТ же урок. Поэтому
+   * пара идентификаторов замораживается в ref при первом виде и живёт, пока живёт подключение.
+   */
+  const lessonRef = useRef<{ eventId?: string; classId?: string }>({});
+  if (eventIdParam || classIdParamRaw) lessonRef.current = { eventId: eventIdParam, classId: classIdParamRaw };
+  const eventId = eventIdParam ?? lessonRef.current.eventId;
+  const classIdParam = classIdParamRaw ?? lessonRef.current.classId;
 
   const [session, setSession] = useState<Session | null>(null);
   const [connected, setConnected] = useState(false);
@@ -473,6 +477,57 @@ export default function Lesson() {
     // объяснение (медиа-сервер или связь с комнатой) и отдельная подсказка
     else if (micNoRights || camNoRights) showToast(t('lesson.lectureRestoreNoRights'));
     else if (want.mic || want.cam) showToast(t('lesson.lectureRestoreBlocked'));
+  }
+
+  /* ══ часть A (2026-10-16): мини-окно и возврат после перезагрузки ══
+   * Ни одно из этих значений не про комнату и не про права: это то, что видит человек на ЧУЖОЙ
+   * странице урока (полоска с таймером) и то, что позволяет войти обратно ОДНИМ нажатием.
+   */
+  const [miniPos, setMiniPos] = useState<MiniPos>(() => parseMiniPos(readSS(SS_MINI), { x: 16, y: 80 }));
+  const [miniMin, setMiniMin] = useState<boolean>(() => {
+    try { return Boolean((JSON.parse(readSS(SS_MINI) || '{}') as { min?: boolean }).min); } catch { return false; }
+  });
+  const miniDragRef = useRef<{ x0: number; y0: number; px0: number; py0: number } | null>(null);
+  /** секундная стрелка мини-окна: тикает только пока мини действительно показано */
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  /** метка «только что был в комнате»: `{sessionId, eventId, classId, at}`, без секретов */
+  const [rejoin, setRejoin] = useState<RejoinMark | null>(() => parseRejoin(readSS(SS_REJOIN)));
+
+  // хост обязан знать, держать ли урок монтированным, когда человек уже ушёл на другую страницу
+  useEffect(() => { host.setLive(connected); }, [connected, host]);
+  useEffect(() => {
+    if (mode !== 'mini' || !connected) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, [mode, connected]);
+  // окно не имеет права уезжать за край: поворот телефона и смена вьюпорта возвращают его внутрь
+  useEffect(() => {
+    if (mode !== 'mini') return;
+    const onResize = () => setMiniPos((p) => clampMiniPos(p, window.innerWidth, window.innerHeight, MINI_W, MINI_H));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [mode]);
+  const saveMini = (pos: MiniPos, min: boolean) => writeSS(SS_MINI, JSON.stringify({ ...pos, min }));
+
+  function miniDown(e: React.PointerEvent) {
+    // на телефоне мини-окно — закреплённая полоса сверху: тянуть её некуда и незачем
+    if (window.matchMedia('(max-width: 899px)').matches) return;
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    miniDragRef.current = { x0: e.clientX, y0: e.clientY, px0: miniPos.x, py0: miniPos.y };
+  }
+  function miniMove(e: React.PointerEvent) {
+    const d = miniDragRef.current;
+    if (!d) return;
+    const next = clampMiniPos(
+      { x: d.px0 + (e.clientX - d.x0), y: d.py0 + (e.clientY - d.y0) },
+      window.innerWidth, window.innerHeight, MINI_W, MINI_H,
+    );
+    setMiniPos(next);
+  }
+  function miniUp() {
+    if (!miniDragRef.current) return;
+    miniDragRef.current = null;
+    setMiniPos((p) => { saveMini(p, miniMin); return p; });
   }
 
   const roomRef = useRef<Room | null>(null);
@@ -1053,13 +1108,32 @@ export default function Lesson() {
       refreshLocal(room);
       void refreshDevices();
       setConnected(true);
+      /*
+       * Часть A (шаг A3): метка возврата пишется ПОСЛЕ успешного входа, а не до — иначе
+       * неудачная попытка оставила бы «вернуться» там, где человека в комнате не было. В самой
+       * метке нет ни токена, ни имени: идентификатор урока и время.
+       */
+      writeSS(SS_REJOIN, JSON.stringify({
+        sessionId: s.id, eventId: s.eventId ?? null, classId: s.classId, at: Date.now(),
+      } satisfies RejoinMark));
+      setRejoin(null);
     } catch (e: unknown) {
+      /*
+       * Второе окно в том же уроке: LiveKit держит один identity на комнату и отвечает отказом.
+       * Сырое сообщение SDK человеку непонятно, а «медиа-сервер недоступен» — неправда, поэтому
+       * у этого случая отдельная фраза. Дубликата участника при этом не возникает: сервер не
+       * пускает второго носителя того же identity.
+       */
+      if (isDuplicateIdentityError(e)) { setError(t('lesson.dupIdentity')); return; }
       const code = (e as { code?: string }).code;
       setError(code ? t(`lesson.${code}`, { defaultValue: t('common.errorGeneric') }) : String((e as Error).message));
     }
   }
 
   async function leaveRoom() {
+    // часть A: человек вышел сам — возвращаться «в тот же урок» через минуту уже не нужно
+    clearSS(SS_REJOIN);
+    setRejoin(null);
     await roomRef.current?.disconnect().catch(() => undefined);
     roomRef.current = null;
     setConnected(false);
@@ -1344,6 +1418,8 @@ export default function Lesson() {
         if (typeof el.closest === 'function' && el.closest('.board-frame, .excalidraw, iframe')) return;
       }
       if (!session) return;
+      // часть A: в мини-окне горячих клавиш нет — человек в этот момент печатает в чате или заметке
+      if (mode !== 'full') return;
       const k = e.key.toLowerCase();
       if (k === 'm' && connected) void toggleMicInRoom();
       else if (k === 'v' && connected) void toggleCameraInRoom();
@@ -1356,7 +1432,7 @@ export default function Lesson() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, connected, localMicOn, localCamOn, myHand, panelOpen, panelTab, savedMic, lectureMode, muteAll, hasFloor]);
+  }, [session?.id, connected, localMicOn, localCamOn, myHand, panelOpen, panelTab, savedMic, lectureMode, muteAll, hasFloor, mode]);
 
   const noteHref = isTeacher
     ? `/notes?new=1&classId=${session?.classId ?? classIdParam ?? ''}&eventId=${eventId ?? session?.eventId ?? ''}`
@@ -1421,6 +1497,8 @@ export default function Lesson() {
     },
     pickCam: (id) => void pickCamera(id),
     pickMic: (id) => void pickMicrophone(id),
+    // часть A (шаг A4): тот же адрес, но через роутер — урок продолжает жить
+    note: () => nav(noteHref),
   };
 
   const mediaErrors = (
@@ -1465,7 +1543,49 @@ export default function Lesson() {
 
   if (!eventId && !classIdParam) return <p className="error">{t('common.errorGeneric')}</p>;
 
-  return (
+  /*
+   * Часть A (шаг A3): «Вернуться в урок» одним нажатием. Метка стоит в sessionStorage, живёт
+   * REJOIN_TTL_MS и принадлежит тому же уроку, который страница только что нашла у сервера.
+   * Просрочка или чужой урок → обычная карточка с проверкой устройств: никакого «само входа».
+   */
+  const rejoinFresh = !!rejoin && !connected && isRejoinFresh(rejoin, Date.now(), REJOIN_TTL_MS)
+    && sameLesson(rejoin, { eventId, classId: classIdParam })
+    && rejoin.sessionId === session?.id;
+
+  /*
+   * Часть A (шаг A2): что показать в мини-окне. Приоритет тот же, что у большой сцены: сначала
+   * показываютый экран, потом учитель, потом своя камера — человек должен видеть УРОК, а не себя.
+   */
+  const miniTile = screenTile ?? teacherTile ?? localTile;
+  const miniTrack = miniTile ? tracksRef.current.get(miniTile.key) ?? null : null;
+
+  if (mode === 'mini') {
+    if (!target) return null;
+    return createPortal(
+      <LessonMini
+        elapsed={formatElapsed(lessonElapsedMs(session?.startedAt, nowTick))}
+        tile={miniTile} track={miniTrack}
+        micOn={localMicOn} camOn={localCamOn}
+        comments={unread} hands={handsQ.q.data?.hands?.length ?? 0}
+        needConfirm={isTeacher}
+        pos={miniPos} min={miniMin}
+        onMic={() => void toggleMicInRoom()}
+        onCam={() => void toggleCameraInRoom()}
+        onBack={() => nav(`/lesson?${eventId ? `eventId=${eventId}` : `classId=${classIdParam ?? ''}`}`)}
+        onLeave={() => {
+          // мини-окно подтверждение уже показало (кнопка стала «Точно?»), здесь только действие
+          const s = session;
+          if (isTeacher && s) act.mutate({ path: `/api/lessons/${s.id}/end` });
+          void leaveRoom();
+        }}
+        onMin={() => setMiniMin((v) => { const nv = !v; saveMini(miniPos, nv); return nv; })}
+        onPointerDown={miniDown} onPointerMove={miniMove} onPointerUp={miniUp}
+      />,
+      target,
+    );
+  }
+
+  const fullView = (
     <div>
       <h1>{t('lesson.title')}</h1>
       {!session && (
@@ -1482,6 +1602,19 @@ export default function Lesson() {
             <div className="lesson-main">
               {!connected && (
                 <div className="card device-check" data-testid="device-check">
+                  {rejoinFresh && (
+                    /*
+                     * Шаг A3: страница перезагрузилась посреди урока, человек был в комнате меньше
+                     * двух минут назад, и это тот же урок — вход одним нажатием, с теми же
+                     * устройствами и БЕЗ повторной проверки. Если устройство недоступно, `joinRoom`
+                     * сам покажет обычную карточку с понятной причиной.
+                     */
+                    <div className="rejoin-box" data-testid="rejoin-box">
+                      <p className="muted">{t('lesson.rejoinHint')}</p>
+                      <button type="button" className="rejoin-btn" data-testid="rejoin-lesson"
+                        onClick={() => void joinRoom()}>▶ {t('lesson.rejoin')}</button>
+                    </div>
+                  )}
                   <div className="row">
                     <button data-testid="check-devices" onClick={() => void loadPreview()} disabled={previewBusy}>{t('lesson.checkDevices')}</button>
                     <div className="spacer" />
@@ -1744,7 +1877,7 @@ export default function Lesson() {
             </div>
           )}
 
-          <LessonBar state={barState} actions={barActions} devices={barDevices} noteHref={noteHref} />
+          <LessonBar state={barState} actions={barActions} devices={barDevices} />
         </div>
       )}
       {!isTeacher && session && (
@@ -1772,4 +1905,7 @@ export default function Lesson() {
       )}
     </div>
   );
+
+  // часть A: состояние урока не переезжает вместе с разметкой — портал меняет только дерево DOM
+  return target ? createPortal(fullView, target) : fullView;
 }

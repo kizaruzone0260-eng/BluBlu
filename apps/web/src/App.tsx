@@ -29,11 +29,12 @@ import ErrorBoundary from './components/ErrorBoundary';
 // Performance (Phase 4): the heavy, editor/media surfaces are lazy-loaded so
 // Excalidraw, FullCalendar, LiveKit and Tiptap stay OUT of the initial chunk.
 const ClassDetail = lazy(() => import('./pages/ClassDetail'));
+// часть A (2026-10-16): урок монтирует провайдер над роутером, поэтому он здесь не маршрут
+import { LessonHostProvider, LessonSlot } from './components/LessonLive';
 // часть 4: архив урока — своя ленивая страница, чтобы Excalidraw-миниатюры не ехали в начальный чанк
 const ClassArchive = lazy(() => import('./pages/ClassArchive'));
 const MaterialNew = lazy(() => import('./pages/MaterialNew'));
 const Calendar = lazy(() => import('./pages/Calendar'));
-const Lesson = lazy(() => import('./pages/Lesson'));
 const Notes = lazy(() => import('./pages/Notes'));
 const Sheets = lazy(() => import('./pages/Sheets'));
 
@@ -153,6 +154,7 @@ export default function App() {
             <ChangePasswordGate onDone={refresh} />
           </div>
         ) : (
+        <LessonHostProvider>
         <Shell me={me}>
           <Suspense fallback={<div className="container muted">…</div>}>
           <Routes>
@@ -167,7 +169,7 @@ export default function App() {
             {/* material task A — the create form is a separate page, teacher only */}
             <Route path="/classes/:id/material/new" element={me.role === 'teacher' ? <MaterialNew /> : <ErrorScreen kind="403" />} />
             <Route path="/calendar" element={<Calendar />} />
-            <Route path="/lesson" element={<Lesson />} />
+            <Route path="/lesson" element={<LessonSlot />} />
             <Route path="/sheets" element={me.role === 'student' ? <Sheets /> : <ErrorScreen kind="403" />} />
             <Route path="/chat" element={<ChatList />} />
             <Route path="/chat/:id" element={<ChatRoom />} />
@@ -182,6 +184,7 @@ export default function App() {
           </Routes>
           </Suspense>
         </Shell>
+        </LessonHostProvider>
         )
         ) : (
           <div className="container">
