@@ -16,15 +16,9 @@ import { classMembers } from '../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { audit } from '../services/audit.js';
 import { setTempPassword } from '../services/auth.js';
-import { randomBytes } from 'node:crypto';
-
-const TEMP_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-function tempPassword(len = 10): string {
-  const b = randomBytes(len);
-  let s = '';
-  for (let i = 0; i < len; i++) s += TEMP_ALPHABET[b[i] as number % TEMP_ALPHABET.length];
-  return s;
-}
+// B3 (2026-10-16): один генератор временного пароля на сервер и на скрипт владельца —
+// раньше их было два, и длины разошлись (10 против 12).
+import { tempPassword } from '../lib/password.js';
 
 const uuidParam = z.object({ id: z.string().uuid(), userId: z.string().uuid().optional(), inviteId: z.string().uuid().optional() });
 

@@ -20,7 +20,7 @@ import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { users, classes, classMembers, inviteCodes, refreshTokens, auditLog } from '../../src/db/schema.js';
-import { hashPassword } from '../../src/lib/password.js';
+import { hashPassword, TEMP_ALPHABET, TEMP_PASSWORD_LENGTH } from '../../src/lib/password.js';
 import { hashInviteCode } from '../../src/lib/invite.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -78,7 +78,12 @@ suite('Part 3: passwords & sessions', () => {
     expect(reset.statusCode).toBe(200);
     const temp = reset.json().tempPassword as string;
     expect(typeof temp).toBe('string');
-    expect(temp.length).toBeGreaterThanOrEqual(8);
+    // B3 (2026-10-16): длина перестала быть «не короче 8» — генератор теперь один
+    // (`lib/password.ts::tempPassword`, 12 знаков, алфавит без неоднозначных), и им пользуются
+    // и маршрут учителя, и скрипт владельца. Раньше это были две функции с разной длиной
+    // (10 и 12), и тест этого не замечал.
+    expect(temp).toHaveLength(TEMP_PASSWORD_LENGTH);
+    expect([...temp].every((c) => TEMP_ALPHABET.includes(c)), `неалфавитный знак в «${temp}»`).toBe(true);
 
     // the old password no longer works; the temp one does, and flags the gate
     const old = await loginAs(stuEmail, PW);

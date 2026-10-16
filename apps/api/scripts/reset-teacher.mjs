@@ -8,7 +8,6 @@
  *        (DATABASE_URL from env / .env)
  */
 import postgres from 'postgres';
-import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,14 +20,22 @@ if (!email) { console.error('usage: reset-teacher -- <email>'); process.exit(2);
 const url = process.env.DATABASE_URL;
 if (!url) { console.error('DATABASE_URL is required'); process.exit(2); }
 
-const { hashPassword } = await import(pathToFileURL(path.join(root, 'apps/api/dist/lib/password.js')).href);
-
-const TEMP_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-function tempPassword(len = 12) {
-  const b = randomBytes(len);
-  let s = '';
-  for (let i = 0; i < len; i++) s += TEMP_ALPHABET[b[i] % TEMP_ALPHABET.length];
-  return s;
+/*
+ * B3 (2026-10-16): генератор один — тот же, что у маршрута «учитель сбросил пароль ученика»
+ * (`src/lib/password.ts::tempPassword`, 12 знаков, алфавит без неоднозначных). Здесь был его
+ * второй, разошедшийся вариант (10 знаков против 12). Скрипт работает на собранном `dist`,
+ * поэтому при устаревшей сборке нужного экспорта может не быть — это ловится и объясняется
+ * владельцу, а не превращается в сырую ошибку линкинга ESM.
+ */
+let hashPassword, tempPassword;
+try {
+  const mod = await import(pathToFileURL(path.join(root, 'apps/api/dist/lib/password.js')).href);
+  hashPassword = mod.hashPassword;
+  tempPassword = mod.tempPassword;
+} catch { /* сообщение ниже */ }
+if (typeof hashPassword !== 'function' || typeof tempPassword !== 'function') {
+  console.error('apps/api/dist/lib/password.js не содержит нужных экспортов — соберите API: pnpm --filter @klass/api build');
+  process.exit(2);
 }
 
 const sql = postgres(url, { max: 1 });
