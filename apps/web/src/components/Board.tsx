@@ -60,6 +60,12 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   const [inkChip, setInkChip] = useState<{ userId: string; ids: string[] } | null>(null);
   // какие элементы уже лежат на полотне: приехавший id вне этого списка — новый штрих
   const knownRef = useRef<Set<string>>(new Set());
+  /**
+   * Право учителя внутри того же замыкания, что обрабатывает сообщения. Обработчик создаётся
+   * ОДИН раз (эффект зависит от `sessionId`/`me`), поэтому `canEdit` из состояния он видел бы
+   * навсегда замершим на `false` — и метка не появилась бы ни при каком рисунке.
+   */
+  const canEditRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const apiRef = useRef<Api | null>(null);
   const sentRef = useRef<Map<string, { version: number; versionNonce: number }>>(new Map());
@@ -88,6 +94,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
           };
           if (msg.type === 'init') {
             setInkChip(null);
+            canEditRef.current = !!msg.canEdit;
             setCanEdit(!!msg.canEdit);
             setCanDraw(!!msg.canDraw);
             setPages(msg.pages ?? [1]);
@@ -299,7 +306,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
    * целиком — тоже (см. 'edits' выше).
    */
   function noteIncomingInk(by: string, incoming: RawEl[] | null) {
-    if (!canEdit || !incoming?.length) return;
+    if (!canEditRef.current || !incoming?.length) return;
     const outside = incoming.filter((e) => !inView(e)).map((e) => e.id);
     if (outside.length) setInkChip({ userId: by, ids: outside });
   }
