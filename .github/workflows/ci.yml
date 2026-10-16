@@ -214,6 +214,42 @@ jobs:
   # says what SHOULD be installed; only `docker build` says what the deployed container actually
   # contains. Nothing here is a size threshold — the number is printed so the next change can be
   # compared against it.
+  # Часть D2 (2026-10-16): цикл восстановления на НАСТОЯЩИХ скриптах. Ни один прежний тест не
+  # звал deploy/scripts/backup.sh и restore.sh — проверялся только логический путь через драйвер,
+  # а «бэкап, из которого нельзя восстановиться», зелёным тестом не ловится. Вот он: Postgres
+  # как сервис, журнал миграций применяется psql'ом, затем backup.sh (отказ без пароля / открытый
+  # режим / шифрование), restore.sh в пустую базу, сверка счётчиков, позы RLS и байтов файла.
+  # Ни node, ни pnpm этому job'у не нужны — он про shell, psql и openssl.
+  backup-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: klass
+          POSTGRES_PASSWORD: klass
+          POSTGRES_DB: klass
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U klass" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5433'
+      PGUSER: klass
+      PGPASSWORD: klass
+    steps:
+      - uses: actions/checkout@v4
+      - name: backup.sh → шифрование → restore.sh → сверка (прямой режим, pg_dump)
+        run: bash deploy/scripts/test-backup-restore.sh
+      - name: pg_dump и версии клиента (чтобы вывод сверки читался без догадок)
+        if: always()
+        run: |
+          pg_dump --version
+          psql --version
+          openssl version
+
   docker-image:
     runs-on: ubuntu-latest
     timeout-minutes: 30

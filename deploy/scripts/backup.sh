@@ -49,9 +49,37 @@ else
   tar -czf "$DEST/klass-files-$STAMP.tar.gz" -C "$(dirname "$SD")" "$(basename "$SD")"
 fi
 
-# Encrypt with openssl (aes-256-cbc, pbkdf2) if a passphrase is provided.
-if [[ -n "${BACKUP_PASSPHRASE:-}" ]]; then
-  for f in "$DEST"/*-"$STAMP".*; do
+# Encrypt with openssl (aes-256-cbc, pbkdf2). Часть D1 (2026-10-16): шифрование обязательно.
+#
+# Раньше при незаданном BACKUP_PASSPHRASE скрипт молча оставлял открытые дампы: cron-строка из
+# docs/DEPLOY.md без переменной (или с опечаткой в ней) продолжала «успешно» работать неделю, а
+# на диске лежал полный слепок классов, переписки и адресов почты — и ротация их не трогала.
+# Теперь это отказ с объяснением; открыть формат можно только явно, ALLOW_UNENCRYPTED_BACKUP=1,
+# и тогда предупреждение печатается в оба потока, чтобы его увидел и cron, и человек.
+drop_plaintext() {
+  # всё, что создал этот прогон: sql-дамп (оба формата), архив файлов, временный каталог
+  rm -rf "$DEST"/*"$STAMP"* 2>/dev/null || true
+}
+
+if [[ -z "${BACKUP_PASSPHRASE:-}" ]]; then
+  if [[ "${ALLOW_UNENCRYPTED_BACKUP:-}" != "1" ]]; then
+    echo "[backup] ОТКАЗ: BACKUP_PASSPHRASE не задан — открытый дамп не оставляем." >&2
+    echo "[backup] Уже записанное удаляется из $DEST; задайте пароль (или, только осознанно," >&2
+    echo "[backup] для отладки восстановления, ALLOW_UNENCRYPTED_BACKUP=1)." >&2
+    drop_plaintext
+    exit 1
+  fi
+  echo "[backup] ВНИМАНИЕ: ALLOW_UNENCRYPTED_BACKUP=1 — дамп лежит ОТКРЫТЫМ в $DEST. Это формат" >&2
+  echo "[backup] для отладки восстановления, не для cron: доступ к каталогу = доступ ко всем данным." >&2
+  echo "[backup] WARNING: unencrypted backup written to $DEST" >&2
+else
+  # Шифруем ВСЁ, что создал этот прогон. Прежний glob `*-"$STAMP".*` требовал, чтобы сразу после
+  # метки стояла точка, и логический дамп `klass-<метка>-logical.tar.gz` (ветка без pg_dump)
+  # под него не попадал: скрипт печатал "[backup] encrypted", а полный слепок базы лежал
+  # открытым. Поймано тестом цикла восстановления 2026-10-16.
+  for f in "$DEST"/*"$STAMP"*; do
+    [[ -f "$f" ]] || continue
+    [[ "$f" == *.enc ]] && continue
     openssl enc -aes-256-cbc -pbkdf2 -salt -pass "pass:$BACKUP_PASSPHRASE" -in "$f" -out "$f.enc"
     rm -f "$f"
   done
