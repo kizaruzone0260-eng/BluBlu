@@ -161,7 +161,10 @@ jobs:
       - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
       # Спек с тегом @unstable в этом джобе не запускается: он уехал в `e2e-unstable` ниже,
       # где падение не блокирует деплой. Причина и ручная проверка — в docs/MANUAL_QA.md.
-      - run: pnpm --filter @klass/e2e exec playwright test --grep-invert @unstable
+      # @shots — второй исключённый тег: съёмка скриншотов (`phone-shots` ниже) ничего не
+      # утверждает, но стоит минут десять и десятки мегабайт PNG, поэтому в блокирующем наборе
+      # ей не место.
+      - run: pnpm --filter @klass/e2e exec playwright test --grep-invert "@unstable|@shots"
       # RTC-спеки умеют пропускать себя сами, когда медиа-сервер недоступен. Без этого гейта job с
       # мёртвым LiveKit-контейнером был бы зелёным — поэтому пропущенный тест = упавший CI.
       - run: node scripts/ci-no-skips.mjs apps/e2e/e2e-results.json
@@ -209,6 +212,40 @@ jobs:
             apps/e2e/e2e-results.json
           retention-days: 7
           if-no-files-found: warn
+
+  # Часть G (2026-10-16): съёмка основных экранов в профиле Pixel 7 (393×851, тач) — три языка и
+  # обе темы. Джоб НЕ блокирует деплой: он ничего не утверждает, кроме «экран отрисовался в этом
+  # языке и теме» (m-phone-screens ниже по списку спрашивает геометрией всё остальное). Смысл —
+  # артефакт, который человек открывает глазами: «две строки подписи сдвинули таблицу», «тёмная
+  # тема забыла фон карточки» линейкой не измеряются.
+  # Медиа-сервер не нужен: урок снимается как экран, вход в комнату спеком не делается.
+  phone-shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build-test
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      # мобильный проект — это chromium (устройства Playwright), Edge/`channel` тут не вариант
+      - run: pnpm --filter @klass/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @klass/e2e exec playwright test --project=pixel7 --grep @shots
+      - name: Кадры телефонов
+        # always(): сорванный на пятом экране прогон всё равно обязан отдать снятые кадры —
+        # именно они и показывают, на котором из экранов что-то сломалось
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-shots-${{ github.run_id }}
+          path: apps/e2e/test-results/phone-shots
+          retention-days: 14
+          if-no-files-found: error
 
   # Task 6 (2026-10-10): the runtime IMAGE, not just the runtime dependency list. `pnpm ls --prod`
   # says what SHOULD be installed; only `docker build` says what the deployed container actually
