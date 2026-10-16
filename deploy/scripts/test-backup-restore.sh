@@ -156,7 +156,7 @@ STORAGE_DIR="$FDIR/files-store" BACKUP_PASSPHRASE="$PASS" PGDATABASE="$SRC" BACK
 FB="$(ls "$F2" | grep 'files-.*\.tar\.gz\.enc$' | head -1 || true)"
 [ -n "$FB" ] || fail "нет шифрованного архива файлов"
 R2="$WORK/restored2"; mkdir -p "$R2"
-DSTDB2="${TARGET_DB}2"; quiet postgres "DROP DATABASE IF EXISTS $DSTDB2 WITH (FORCE)"; quiet postgres "CREATE DATABASE $DSTDB2"
+DSTDB2="${DST}2"; quiet postgres "DROP DATABASE IF EXISTS $DSTDB2 WITH (FORCE)"; quiet postgres "CREATE DATABASE $DSTDB2"
 STORAGE_DIR="$R2/files-store" FILES_BACKUP="$F2/$FB" BACKUP="$(ls "$F2"/*sql.gz.enc | head -1)" \
 BACKUP_PASSPHRASE="$PASS" PGDATABASE="$DSTDB2" bash "$ROOT/deploy/scripts/restore.sh" >"$WORK/f2.log" 2>&1 \
   || { cat "$WORK/f2.log" >&2; fail "restore.sh с FILES_BACKUP упал"; }
