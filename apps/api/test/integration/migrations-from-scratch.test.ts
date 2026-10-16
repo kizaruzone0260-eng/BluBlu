@@ -207,6 +207,46 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
           ['jsonb', 'timestamp with time zone', 'timestamp with time zone', 'timestamp with time zone'],
         );
 
+        // 5д. Часть F (2026-10-16): `email_verifications` — таблица, где лежат адреса людей,
+        //     ЕЩЁ не ставших пользователями, и хэш их кода подтверждения. Это персональные данные
+        //     с самого момента появления строки, и они не защищены ссылкой на `users` (аккаунта
+        //     ещё нет), поэтому RLS без политик обязателен ровно как у 0030: чужая роль не должна
+        //     увидеть ни одной строки, а приложение ходит владельцем.
+        const emailTable = await sql`
+          select c.relrowsecurity as rls, c.relacl as acl,
+                 (select count(*) from pg_policies p where p.tablename = c.relname) as policies
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+           where n.nspname = 'public' and c.relname = 'email_verifications'`;
+        expect(emailTable.length, 'email_verifications создана проигрыванием журнала с 0000').toBe(1);
+        expect(emailTable[0]?.rls, 'email_verifications: ROW LEVEL SECURITY включён').toBe(true);
+        expect(Number(emailTable[0]?.policies), 'email_verifications: политик нет ⇒ чужой роли не видно ни строки').toBe(0);
+        const mailAcl = emailTable[0]?.relacl == null ? ''
+          : (Array.isArray(emailTable[0].relacl) ? emailTable[0].relacl.join(',') : String(emailTable[0].relacl));
+        expect(mailAcl, 'email_verifications: ни одной выдачи не-владельцу').not.toMatch(/(^|,)\s*(\*|=|anon|authenticated)[=*]/);
+
+        const mailCols = await sql`
+          select a.attname as col, a.attnotnull as not_null, a.atttypid::regtype::text as typ,
+                 pg_get_expr(d.adbin, d.adrelid) as def
+            from pg_attribute a
+            left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+           where a.attrelid = 'email_verifications'::regclass and a.attnum > 0
+             and not a.attisdropped order by a.attnum`;
+        expect(mailCols.map((r) => (r as { col: string }).col)).toEqual(
+          ['email', 'code_hash', 'attempts', 'sent_at', 'expires_at', 'used_at'],
+        );
+        // email — PK, значит NOT NULL: одна активная строка на адрес, повторный запрос замещает
+        const byName = Object.fromEntries(mailCols.map((r) => {
+          const q = r as { col: string; not_null: boolean; typ: string; def: string };
+          return [q.col, q];
+        })) as Record<string, { not_null: boolean; typ: string; def: string }>;
+        expect(byName.email!.not_null, 'email обязателен: он ключ').toBe(true);
+        expect(byName.code_hash!.not_null, 'сам код не хранится, только хэш').toBe(true);
+        expect(byName.attempts!.typ).toBe('integer');
+        expect(Number(byName.attempts!.def), 'счётчик начинается с нуля').toBe(0);
+        expect(byName.used_at!.not_null, 'списанный/несписанный различаются нулем').toBe(false);
+        expect(byName.sent_at!.not_null, 'момент отправки нужен паузе между письмами').toBe(true);
+
         // has_column_privilege ERRORS on a missing role, and only Supabase creates these two
         const roles = await sql`select rolname from pg_roles where rolname in ('anon', 'authenticated')`;
         const have = new Set(roles.map((r) => String((r as { rolname: string }).rolname)));
@@ -228,7 +268,10 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
                    pg_catalog.has_column_privilege(${role}, 'notifications', 'starts_at', 'select') as st_s,
                    pg_catalog.has_column_privilege(${role}, 'bot_updates', 'payload', 'select') as pay_s,
                    pg_catalog.has_column_privilege(${role}, 'bot_updates', 'payload', 'insert') as pay_i,
-                   pg_catalog.has_column_privilege(${role}, 'bot_updates', 'processed_at', 'update') as proc_u`;
+                   pg_catalog.has_column_privilege(${role}, 'bot_updates', 'processed_at', 'update') as proc_u,
+                   pg_catalog.has_column_privilege(${role}, 'email_verifications', 'email', 'select') as mail_s,
+                   pg_catalog.has_column_privilege(${role}, 'email_verifications', 'code_hash', 'select') as mail_h,
+                   pg_catalog.has_column_privilege(${role}, 'email_verifications', 'attempts', 'update') as mail_a`;
           const q = (p[0] ?? {}) as Record<string, boolean>;
           for (const [key, label] of Object.entries({
             snap_s: 'the device snapshot, select', snap_u: 'the device snapshot, update',
@@ -240,6 +283,8 @@ describe('migrations from an empty database (fresh install / CI replay)', () => 
             st_s: 'время события у напоминания, select',
             pay_s: 'текст обновления бота, select', pay_i: 'текст обновления бота, insert',
             proc_u: 'отметка обработки, update',
+            mail_s: 'адрес в очереди подтверждений, select', mail_h: 'хэш кода, select',
+            mail_a: 'счётчик попыток, update',
           }) as [string, string][]) {
             expect(q[key], `${role} cannot touch ${label}`).toBe(false);
           }

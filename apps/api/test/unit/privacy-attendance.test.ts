@@ -21,17 +21,26 @@ const docs = { en, ru, uz } as const;
 const WHAT = 1;
 const KEEP = 6;
 
+/*
+ * Часть F (2026-10-16): в «какие данные» добавлено подтверждение адреса, и оно проверяется здесь
+ * же, а не новым тестом: политика и код разъезжаются именно тогда, когда за новое поле базы
+ * забывают дописать обещание человеку. Три метки на язык — сам факт (код), его срок и то, что
+ * незавершённая регистрация не оставляет адрес навечно.
+ */
 const MARKS: Record<keyof typeof docs, { what: string[]; keep: string[] }> = {
   en: {
-    what: ['lesson attendance', 'joined', 'left', 'teacher of that class'],
+    what: ['lesson attendance', 'joined', 'left', 'teacher of that class',
+      'six-digit code', '15 minutes', 'deleted automatically'],
     keep: ['lesson archive', 'board_archive_retention_days', 'default is 0'],
   },
   ru: {
-    what: ['присутствие на уроках', 'пришёл', 'ушёл', 'учителю этого класса'],
+    what: ['присутствие на уроках', 'пришёл', 'ушёл', 'учителю этого класса',
+      'шестизначный код', '15 минут', 'удаляется автоматически'],
     keep: ['архив уроков', 'board_archive_retention_days', 'по умолчанию 0'],
   },
   uz: {
-    what: ['darslardagi qatnash', 'kelgani', 'ketgani', 'sinf oʻqituvchisiga'],
+    what: ['darslardagi qatnash', 'kelgani', 'ketgani', 'sinf oʻqituvchisiga',
+      'olti xonali kod', '15 daqiqa', 'avtomatik oʻchiriladi'],
     keep: ['darslar arxivi', 'board_archive_retention_days', 'standart holat 0'],
   },
 };

@@ -105,6 +105,31 @@ suite('boot failure output (task 5)', () => {
   }, 40_000);
 
   /*
+   * Часть F (2026-10-16): половина конфигурации почты. Проверка та же, что у JWT: процесс обязан
+   * назвать ОТСУТСТВУЮЩИЕ ключи и не напечатать то, что для них дали. `BREVO_API_KEY` и
+   * `SMTP_PASS` — именно те значения, которые человек только что вставил в env и которые
+   * обычно и есть чужой пароль.
+   */
+  it('a half-configured email provider names the keys and prints no values', async () => {
+    const SMTP_USER = 'fictitious-smtp-user';
+    const { out, code } = await boot(FAKE_URL, { EMAIL_PROVIDER: 'smtp', SMTP_USER });
+    expect(code, 'такой конфиг не должен стартовать').not.toBe(0);
+    expect(out).toContain('config invalid');
+    for (const key of ['EMAIL_FROM', 'SMTP_HOST', 'SMTP_PASS']) {
+      expect(out, `ключ ${key} назван`).toContain(key);
+    }
+    expect(out, 'значение не печатается').not.toContain(SMTP_USER);
+    expect(out).not.toContain('fakepass');
+  }, 40_000);
+
+  it('brevo без ключа и resend без ключа — те же отказ и те же имена', async () => {
+    const BRE = await boot(FAKE_URL, { EMAIL_PROVIDER: 'brevo', EMAIL_FROM: 'noreply@x.io' });
+    expect(BRE.out).toContain('BREVO_API_KEY');
+    const RES = await boot(FAKE_URL, { EMAIL_PROVIDER: 'resend', EMAIL_FROM: 'noreply@x.io' });
+    expect(RES.out).toContain('RESEND_API_KEY');
+  }, 80_000);
+
+  /*
    * The crash guards themselves, in a real process: install them, reject with a message that holds
    * a fictitious connection string and a fictitious bot token, and read what the process prints.
    */
