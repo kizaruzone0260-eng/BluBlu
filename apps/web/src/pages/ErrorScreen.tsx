@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 
 type Kind = '404' | '403' | '500' | 'offline';
 
@@ -26,7 +27,7 @@ export default function ErrorScreen({ kind }: { kind: Kind }) {
       <h2 style={{ fontSize: '1.15rem', margin: '0 0 .4em' }}>{s.title}</h2>
       <p className="muted">{s.body}</p>
       <div className="row" style={{ justifyContent: 'center' }}>
-        <a href="/" style={{ marginTop: 0 }}>{t('errors.home')}</a>
+        <Link to="/" style={{ marginTop: 0 }}>{t('errors.home')}</Link>
         {s.retry && (
           <button type="button" className="ghost" style={{ marginTop: 0 }} onClick={() => location.reload()}>
             {t('errors.retry')}

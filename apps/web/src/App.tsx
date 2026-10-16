@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, Suspense, lazy } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api, fetchMe, onAuthChange, restoreSession, type Me } from './lib/api';
 import { resolveLocale, shouldCarryStoredChoice } from '@klass/shared';
@@ -223,10 +223,10 @@ function AuthHeader() {
   const { t } = useTranslation();
   return (
     <div className="topbar">
-      <a href="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text)' }}>
+      <Link to="/" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text)' }}>
         <span className="side-logo">B</span>
         <strong>{APP_NAME}</strong>
-      </a>
+      </Link>
       <span className="muted">{t('app.tagline')}</span>
       <div className="spacer" />
       <ThemeToggleCompact />
