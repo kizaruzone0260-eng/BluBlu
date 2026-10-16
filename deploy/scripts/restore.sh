@@ -16,11 +16,19 @@ ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 
 getenv() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- ; }
 
+# Расшифровка идёт в отдельный каталог и удаляется по exit. Прежний вариант писал
+# «klass-…sql.gz» РЯДОМ с «…sql.gz.enc» и не убирал: один восстановленный бэкап оставлял
+# на диске открытую копию всей базы (проверка «временных расшифровок не остаётся» в
+# test-backup-restore.sh поймала это дословно: четыре открытых файла в каталогах бэкапов).
+TMPR="$(mktemp -d)"
+cleanup() { rm -rf "$TMPR" "${TMPD:-}"; }
+trap cleanup EXIT
+
 maybe_decrypt() {
   local f="$1"
   if [[ "$f" == *.enc ]]; then
     [[ -n "${BACKUP_PASSPHRASE:-}" ]] || { echo "set BACKUP_PASSPHRASE for .enc file" >&2; exit 1; }
-    out="${f%.enc}"
+    local out="$TMPR/$(basename "${f%.enc}")"
     openssl enc -d -aes-256-cbc -pbkdf2 -pass "pass:$BACKUP_PASSPHRASE" -in "$f" -out "$out"
     echo "$out"
   else echo "$f"; fi
