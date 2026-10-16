@@ -39,6 +39,12 @@ async function main() {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
     import('./services/chat.js').then((m) => m.sweepChatTickets(db)).catch(() => undefined);
     import('./services/bot.js').then((m) => m.sweepBotState(db)).catch(() => undefined);
+    // часть A5 (2026-10-16): история очереди уведомлений. 30 дней — и ряд с финальным статусом
+    // больше ничего не объясняет; живые `pending`/`sending` уборка не трогает.
+    import('./services/notify.js')
+      .then((m) => m.sweepNotifications(db))
+      .then((n) => { if (n) console.log(`notify: удалено рядов старше 30 дн. — ${n}`); })
+      .catch(() => undefined);
     // часть 4: срок хранения архива. 0 (по умолчанию) — функция выключена, и sweepArchive
     // возвращает 0, не трогая базу.
     if (env.BOARD_ARCHIVE_RETENTION_DAYS > 0) {
@@ -69,6 +75,26 @@ async function main() {
     }
   } else if (bot && env.TELEGRAM_MODE === 'webhook') {
     console.warn('telegram webhook skipped: set PUBLIC_URL (or DOMAIN) and TELEGRAM_WEBHOOK_SECRET');
+  }
+  /*
+   * Часть A4 (2026-10-16): вебхук отвечает Telegram сразу после записи в `bot_updates`, а
+   * действие выполняет в фоне. Значит обновление может остаться незавершённым — фон упал, или
+   * сервис уснул/перезапустился посреди него. Здесь такие строки добираются: окно — 10 минут
+   * от `seen_at`, дальше повтор уже бессмыслен (пользователь давно получил бы другой ответ).
+   * В лог идут только счётчики: в тексте обновления есть то, что написал человек.
+   */
+  {
+    const [{ reprocessUnfinished }, { botDeps }] = await Promise.all([
+      import('./services/bot.js'), import('./routes/telegram.js'),
+    ]);
+    try {
+      const r = await reprocessUnfinished(botDeps(db, bot));
+      if (r.attempted) {
+        console.log(`telegram: добито незавершённых обновлений — ${r.done}/${r.attempted} (ошибок — ${r.failed})`);
+      }
+    } catch (e) {
+      console.warn(`telegram reprocess skipped: ${errorLine('telegram', e)}`);
+    }
   }
   // bot task §1: default-scope command menu (basic set) refreshed at every boot
   if (bot && env.TELEGRAM_TRANSPORT === 'telegram') {

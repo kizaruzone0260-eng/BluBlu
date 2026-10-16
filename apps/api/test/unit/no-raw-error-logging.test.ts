@@ -92,6 +92,10 @@ describe('console.* inventory in apps/api/src (task 7)', () => {
   it('keeps the count from growing silently (a new boot line is fine, a new error print is not)', () => {
     // 20 sites existed after task 5; the number is a tripwire, not a target — if a legitimate new
     // boot line is added, this test says so and the expectation moves with a review.
-    expect(total).toBeLessThanOrEqual(22);
+    // 22 → 25 (часть A4/A5, 2026-10-16): три строки в серверном проводе — `notify: удалено рядов
+    // старше 30 дн.`, `telegram: добито незавершённых обновлений` и `telegram reprocess skipped`.
+    // Все три — статус процесса, печатаются раз за цикл/при старте, причина падения идёт через
+    // errorLine(), ни одна не передаёт объект ошибки или строку запроса целиком.
+    expect(total).toBeLessThanOrEqual(25);
   });
 });
