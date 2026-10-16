@@ -295,6 +295,16 @@ test.describe('students drawing on the board (part 3)', () => {
 
     // 1. свой штрих учителя метку не зовёт
     await revealInk(t.page);
+    /*
+     * Сначала — почему штрих вообще обязан лечь. `Board.tsx:532` рисует `board-readonly` ровно
+     * тогда, когда `canDraw` false, а `viewModeEnabled={!canDraw}` (строка 563) в этом режиме
+     * отключает рисование целиком. Два прогона подряд (38949336521, 38952926396) этот тест падал
+     * на `inkAll` = 0 после `paintStable` у учителя — теперь вместо этого красным станет вот эта
+     * строка, и она назовёт причину: полотно учителя в этом состоянии только для просмотра
+     * (тогда редактируемая доска — панель, и тест должен сначала открыть её), а не «магия Excalidraw».
+     */
+    await expect(viewOnly(t.page), 'полотно учителя не в режиме просмотра — рисовать можно')
+      .toHaveCount(0, { timeout: 15_000 });
     m('own-ink control: teacher canvas', await boardGeom(t.page));
     await paintStable(t.page, 'A');
     await expect.poll(() => inkAll(t.page),
