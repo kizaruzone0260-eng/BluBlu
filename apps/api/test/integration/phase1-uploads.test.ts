@@ -72,6 +72,34 @@ suite('Part 1(г): uploads & delivery', () => {
     expect(String(dl.headers['content-disposition'])).toMatch(/^attachment; filename\*=UTF-8''/);
     expect(String(dl.headers['content-type'])).toBe('application/pdf');
     expect(String(dl.headers['cache-control'])).toContain('no-store');
+    // C1 (2026-10-16): загрузка файла = отдельный origin. Никакого скрипта, формы и
+    // доступа к cookie сайта, даже если MIME когда-нибудь начнёт исполняться браузером.
+    expect(String(dl.headers['content-security-policy'])).toBe("sandbox; default-src 'none'");
+  });
+
+  it('C1: inline-просмотр PDF остаётся исключением (без sandbox), но default-src всё равно none', async () => {
+    const cls = await newClass();
+    const up = await upload(cls, 'slide.pdf', PDF);
+    const fileId = await fileIdOf(up.json().id);
+    const inl = await app.inject({ method: 'GET', url: `/api/files/${fileId}/inline`, headers: bearer() });
+    expect(inl.statusCode).toBe(200);
+    expect(String(inl.headers['content-disposition'])).toMatch(/^inline;/);
+    // `sandbox` запретил бы плагин, и браузер СКАЧИВАЛ бы каждый PDF вместо просмотра.
+    expect(String(inl.headers['content-security-policy'])).toBe("default-src 'none'");
+    expect(String(inl.headers['content-security-policy'])).not.toContain('sandbox');
+    // и тот же файл как загрузка — снова в sandbox
+    const dl = await app.inject({ method: 'GET', url: `/api/files/${fileId}`, headers: bearer() });
+    expect(String(dl.headers['content-security-policy'])).toContain('sandbox');
+  });
+
+  it('C1: картинка инлайнится, но тоже в sandbox (исключение одно — PDF)', async () => {
+    const cls = await newClass();
+    const up = await upload(cls, 'pic.png', PNG);
+    const fileId = await fileIdOf(up.json().id);
+    const inl = await app.inject({ method: 'GET', url: `/api/files/${fileId}/inline`, headers: bearer() });
+    expect(inl.statusCode).toBe(200);
+    expect(String(inl.headers['content-disposition'])).toMatch(/^inline;/);
+    expect(String(inl.headers['content-security-policy'])).toBe("sandbox; default-src 'none'");
   });
 
   it('decides by MAGIC BYTES, not the extension: a PDF-named HTML is rejected', async () => {
@@ -98,6 +126,9 @@ suite('Part 1(г): uploads & delivery', () => {
     expect(dl.statusCode).toBe(200);
     expect(String(dl.headers['content-disposition'])).toMatch(/^attachment;/);
     expect(String(dl.headers['x-content-type-options'])).toBe('nosniff');
+    // C1: SVG — ровно тот случай, ради которого sandbox: внутри скрипт, а тип в белый
+    // список инлайна не пускают и вовсе (`isInlineSafe` знает его явно).
+    expect(String(dl.headers['content-security-policy'])).toBe("sandbox; default-src 'none'");
   });
 
   it('the storage key is a UUID — a hostile filename never reaches the disk path', async () => {

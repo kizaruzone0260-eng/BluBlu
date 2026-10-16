@@ -67,10 +67,43 @@ export function detectFileType(head: Buffer, filename: string): Detected {
   return { group: 'unknown' };
 }
 
-/** Types safe for browser inline preview. SVG excluded: it can carry scripts. */
+/**
+ * Types safe for browser inline preview.
+ *
+ * C1 (2026-10-16): список закрывается явно, а не «по префиксу». `text/*` раньше пропускал
+ * бы и `text/html`, и `text/xml`: байт, который браузер исполняет как документ, отданный
+ * с того же origin, — это дыра независимо от CSP. Сегодня такой файл не существует: mime
+ * берётся из `detectFileType` (магические байты + белый список), и HTML/XHTML/XML туда не
+ * входят. Но инлайн-режим не должен полагаться на то, что белый список детектора никогда не
+ * расширят, — поэтому запрещённые типы перечислены здесь. SVG исключён по той же причине:
+ * внутри него бывает скрипт.
+ */
+const NEVER_INLINE = new Set([
+  'image/svg+xml', 'text/html', 'application/xhtml+xml', 'text/xml', 'text/javascript',
+]);
+
 export function isInlineSafe(mime: string): boolean {
-  if (mime === 'image/svg+xml') return false;
-  return mime.startsWith('image/') || mime === 'application/pdf'
-    || mime.startsWith('audio/') || mime.startsWith('video/')
-    || mime.startsWith('text/');
+  const lower = mime.toLowerCase();
+  if (NEVER_INLINE.has(lower)) return false;
+  return lower.startsWith('image/') || lower === 'application/pdf'
+    || lower.startsWith('audio/') || lower.startsWith('video/')
+    || lower.startsWith('text/');
+}
+
+/**
+ * C1 (2026-10-16): политика безопасности ответа с пользовательскими байтами.
+ *
+ * `sandbox` даёт документу отдельный opaque origin: в нём не исполняется скрипт, не
+ * отправляется форма, нет доступа к origin сайта и к его cookie. Это единственная защита
+ * случая «ученик загрузил файл, ссылку открыли в той же вкладке»: MIME у нас честный
+ * (магические байты), но полагаться на это в веке нельзя.
+ *
+ * Одно исключение и оно осознанно: встроенный просмотр PDF. Он рендерится плагином, а
+ * `sandbox` плагины запрещает — с sandbox браузер СКАЧИВАЛ бы каждый PDF вместо просмотра.
+ * Поэтому inline PDF получает `default-src 'none'` (сам документ ничего не подгружает и никуда
+ * не ходит), а всё остальное — и любая загрузка как файл — полный `sandbox`.
+ */
+export function fileCsp(mime: string, inline: boolean): string {
+  if (inline && mime.toLowerCase() === 'application/pdf') return "default-src 'none'";
+  return "sandbox; default-src 'none'";
 }

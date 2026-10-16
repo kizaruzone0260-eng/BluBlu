@@ -11,7 +11,7 @@ import {
   removeAttachment, publishPost, notifyMaterialPublished, setPostAudience,
 } from '../services/posts.js';
 import { getStorage } from '../storage/provider.js';
-import { isInlineSafe } from '../lib/magic.js';
+import { isInlineSafe, fileCsp } from '../lib/magic.js';
 import { enqueueNotification } from '../services/notify.js';
 import { classTitle, schedulePostPublish } from '../services/notifyQueue.js';
 
@@ -333,8 +333,11 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
 
     reply.header('content-type', row.file.mime);
     reply.header('x-content-type-options', 'nosniff');
+    // C1 (2026-10-16): пользовательский байт отдаётся в sandbox, кроме inline PDF — см. fileCsp.
+    const shownInline = inline && isInlineSafe(row.file.mime);
+    reply.header('content-security-policy', fileCsp(row.file.mime, shownInline));
     reply.header('content-disposition',
-      `${inline && isInlineSafe(row.file.mime) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.file.originalName)}`);
+      `${shownInline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.file.originalName)}`);
     reply.header('accept-ranges', 'bytes');
     if (range) {
       reply.code(206);
