@@ -246,9 +246,12 @@ export function authRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
     // class content stays but the author identity is anonymized. See services/account.
     app.delete('/api/me', { preHandler: app.authenticate }, async (req, reply) => {
       const { eraseAccount } = await import('../services/account.js');
+      const { auditAndWait } = await import('../services/audit.js');
+      // B4: запись об удалении пишется ДО стирания и дожидается — иначе `eraseAccount`
+      // обезличивает журнал, а эта строка успевает влететь после и навсегда оставляет
+      // идентификатор стёртого человека в `actor_id` и в цели.
+      await auditAndWait(db, req.user!.id, 'account_deleted', { userId: req.user!.id });
       await eraseAccount(db, req.user!.id);
-      const { audit } = await import('../services/audit.js');
-      audit(db, req.user!.id, 'account_deleted', { userId: req.user!.id });
       reply.clearCookie(REFRESH_COOKIE, { path: '/api/auth' });
       return { ok: true };
     });

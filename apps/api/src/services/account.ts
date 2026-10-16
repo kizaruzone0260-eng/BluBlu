@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   users, refreshTokens, wsTickets, chatWsTickets, chatMessages, chatReads, chatMutes,
   lessonComments, lessonCommentReads, lessonCommentMutes, lessonHands, lessonAttendance,
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
   notifications, policyAcceptances, classMembers, loginAttempts,
+  botSessions, contactReports, contactBlocklist, classTelegramChats, auditLog,
 } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 
@@ -18,6 +19,10 @@ export const DELETED_NAME = 'Deleted user';
  *    chat read/mute/ticket state, private notes and sheets, Telegram link + one-time
  *    login tokens, refresh/WS/ICS tokens, notification prefs + queued notifications,
  *    the privacy/Terms consent row, class memberships, and the brute-force counter.
+ *    С части B4 (2026-10-16) туда же входят: состояние диалогов бота (`bot_sessions`
+ *    по чатам человека), его отчёты /contact, его список заблокированных, привязки
+ *    групповых чатов класса и его идентификатор в `audit_log` (журнал обезличивается,
+ *    а не удаляется — см. комментарий в теле функции).
  *  • CLASS content the user authored (teaching materials, files, class ownership) is
  *    KEPT so classmates don't lose shared resources — but the author IDENTITY is
  *    anonymized on the users row (every read joins users.name/last_name), so those
@@ -35,6 +40,11 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     .where(eq(users.id, userId))
     .limit(1);
   const priorEmail = (u?.email ?? '').toLowerCase();
+  // B4: `bot_sessions` ключуется telegram-чатом, а не человеком — список чатов снимается
+  // ДО удаления привязки, иначе добраться до диалогов этого человека будет нечем.
+  const chatRows = await db.select({ chatId: telegramLinks.chatId })
+    .from(telegramLinks).where(eq(telegramLinks.userId, userId));
+  const chatIds = [...new Set(chatRows.map((c) => c.chatId))];
 
   await db.transaction(async (tx) => {
     // chat — the person's own messages vanish; read/mute/ticket state too
@@ -58,6 +68,35 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     // notes / sheets (private by design)
     await tx.delete(studentNotes).where(eq(studentNotes.userId, userId));
     await tx.delete(teacherNotes).where(eq(teacherNotes.teacherId, userId));
+    /*
+     * B4 (2026-10-16): то, что раньше переживало стирание аккаунта.
+     *  • `bot_sessions` — состояние диалогов бота (/announce, /contact) ключуется чатом, а не
+     *    человеком, поэтому берётся из привязок ДО их удаления; в `data` лежат текст объявления
+     *    и выбранный класс — это чужие слова, их держать на стёртом аккаунте незачем.
+     *  • `contact_reports`: отчёт, который человек написал, уходит вместе с ним (в нём его имя
+     *    и текст). Чужой отчёт, адресованный стёртому учителю, остаётся отправителю, но больше
+     *    ни на кого не указывает — `teacher_user_id` и `teacher_chat_id` обнуляются.
+     *  • `contact_blocklist` — «чат X заблокирован этим человеком»: факт про обе стороны.
+     *  • `class_telegram_chats.linked_by` NOT NULL и без каскада, поэтому привязки групп,
+     *    сделанные человеком, удаляются: chat_id — это адрес telegram-чата класса, и висящий
+     *    на стёртом аккаунт он держать нельзя. Класс без привязки перестаёт получать
+     *    уведомления в группу (личная рассылка участникам работает как раньше).
+     */
+    if (chatIds.length) await tx.delete(botSessions).where(inArray(botSessions.chatId, chatIds));
+    await tx.delete(contactReports).where(eq(contactReports.senderUserId, userId));
+    await tx.update(contactReports).set({ teacherUserId: null, teacherChatId: null })
+      .where(eq(contactReports.teacherUserId, userId));
+    await tx.delete(contactBlocklist).where(eq(contactBlocklist.blockedBy, userId));
+    await tx.delete(classTelegramChats).where(eq(classTelegramChats.linkedBy, userId));
+    /*
+     * `audit_log` — не удаляется, а обезличивается: убрать само действие было бы подделкой
+     * истории (право на забвение не отменяет, что действие совершалось). Остаются время и
+     * вид операции; `actor_id` гасится, а из `target` вырезается ключ `userId` — единственный
+     * ключ, под которым в целях когда-либо лежал идентификатор человека (список целей снят со
+     * всех вызовов `audit()` в коде).
+     */
+    await tx.update(auditLog).set({ actorId: null }).where(eq(auditLog.actorId, userId));
+    await tx.execute(sql`update audit_log set target = target - 'userId' where target ->> 'userId' = ${userId}`);
     // Telegram link + one-time login tokens
     await tx.delete(telegramLinks).where(eq(telegramLinks.userId, userId));
     await tx.delete(telegramTokens).where(eq(telegramTokens.userId, userId));
