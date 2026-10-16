@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { acceptPolicy, checkCode, registerByCode } from '../lib/api';
+import { acceptPolicy, checkCode, registerByCode, requestEmailCode } from '../lib/api';
 import { storedLocale } from '../i18n';
+import { useFeatures } from '../lib/features';
 import { POLICY_VERSION } from '@klass/shared';
 
 /**
@@ -11,15 +12,25 @@ import { POLICY_VERSION } from '@klass/shared';
  * consumed (wrong/used/expired all give the same message), so leaving now
  * costs the class nothing. Step 2: given name + family name (both required);
  * only submitting step 2 creates the account and atomically redeems the code.
+ *
+ * Часть F (2026-10-16): когда на сервере включено подтверждение почты (`EMAIL_PROVIDER` ≠ none),
+ * шаг 2 получает промежуточное состояние: сначала «Получить код» (письмо на адрес), потом поле на
+ * шесть цифр и обычная отправка. Порядок не случайный — код просится ТОГДА, когда имя и фамилия
+ * уже введены, чтобы письмо обращалось к человеку по имени, а не было машинной строкой.
+ * При выключателе по умолчанию (`none`) экран остаётся ровно прежним: ни поля, ни кнопки.
  */
 export default function Register({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
+  const { emailVerification } = useFeatures();
   const [step, setStep] = useState<1 | 2>(1);
   const [code, setCode] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  /** письмо запрошено: поле кода показано и кнопка сменилась с «получить» на «зарегистрировать» */
+  const [codeRequested, setCodeRequested] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,16 +50,37 @@ export default function Register({ onDone }: { onDone: () => void }) {
     }
   }
 
+  /** Запрос письма. Отдельный обработчик, а не часть отправки: человек должен видеть, что
+   *  код вот-вот придёт, и иметь возможность попросить его заново, не теряя введённого. */
+  async function sendCode(e: React.FormEvent) {
+    e.preventDefault();
+    setErr('');
+    setBusy(true);
+    try {
+      await requestEmailCode(firstName.trim(), lastName.trim(), email, storedLocale() ?? undefined);
+      setCodeRequested(true);
+    } catch (e: unknown) {
+      setErr((e as { code?: string }).code ?? 'emailUnavailable');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitStep2(e: React.FormEvent) {
     e.preventDefault();
     setErr('');
     // consent (Phase 2): the student must accept Privacy + Terms at step 2
     if (!accepted) { setErr('mustAccept'); return; }
+    if (emailVerification && !codeRequested) { await sendCode(e); return; }
+    if (emailVerification && !/^\d{6}$/.test(emailCode)) { setErr('emailCodeRequired'); return; }
     setBusy(true);
     try {
       // a language picked on this screen is a choice, so it belongs to the new account (task 1);
       // storedLocale() is only set by an actual click, never by the app's own default
-      await registerByCode(firstName.trim(), lastName.trim(), email, password, code, storedLocale() ?? undefined);
+      await registerByCode(
+        firstName.trim(), lastName.trim(), email, password, code, storedLocale() ?? undefined,
+        emailVerification ? emailCode : undefined,
+      );
       // record the acceptance for the freshly created account (already logged in)
       await acceptPolicy(POLICY_VERSION).catch(() => undefined);
       onDone();
@@ -97,13 +129,47 @@ export default function Register({ onDone }: { onDone: () => void }) {
               </span>
             </label>
           </p>
+          {/* Часть F: письмо с кодом просится один раз, потом поле кода. Оба живут ВНУТРИ шага 2,
+              чтобы имя и фамилия успели попасть в обращение письма. */}
+          {emailVerification && !codeRequested && (
+            <p className="muted" data-testid="reg-email-code-hint" style={{ fontSize: '.85rem' }}>
+              {t('auth.emailStepHint')}
+            </p>
+          )}
+          {emailVerification && codeRequested && (
+            <>
+              <p className="muted" data-testid="reg-code-sent" style={{ fontSize: '.85rem' }}>{t('auth.codeSent')}</p>
+              <label htmlFor="reg-email-code">{t('auth.emailCode')}</label>
+              <input id="reg-email-code" data-testid="reg-email-code" value={emailCode} inputMode="numeric"
+                autoComplete="one-time-code" maxLength={6}
+                onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 4 }} />
+            </>
+          )}
           {err && (
             <p className="error" data-testid="reg-error">
               {err === 'mustAccept' ? t('consent.mustAccept') : t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}
             </p>
           )}
           <div className="row">
-            <button data-testid="register-submit" type="submit" disabled={busy}>{t('common.register')}</button>
+            {emailVerification && !codeRequested ? (
+              /*
+               * `type="submit"`, а не кнопка со своим обработчиком: иначе браузерная проверка
+               * обязательных полей (имя, фамилия) не запускается, и человек получает письмо
+               * «введите имя» постфактум. Отправка формы эту проверку делает сама.
+               */
+              <button data-testid="register-send-code" type="submit" disabled={busy}>
+                {t('auth.sendCode')}
+              </button>
+            ) : (
+              <button data-testid="register-submit" type="submit" disabled={busy}>{t('common.register')}</button>
+            )}
+            {/* новый код доступен и после ошибки: пять попыток — это потолок на письмо, а не на
+                человека, и лишать его кнопки «попросить ещё» значило бы запереть форму */}
+            {emailVerification && codeRequested && (
+              <button className="ghost" type="button" style={{ marginTop: 0 }} data-testid="register-resend"
+                disabled={busy || !firstName.trim() || !lastName.trim()} onClick={sendCode}>{t('auth.resend')}</button>
+            )}
             <button className="ghost" type="button" style={{ marginTop: 0 }} onClick={() => { setStep(1); setErr(''); }}>
               {t('auth.back')}
             </button>

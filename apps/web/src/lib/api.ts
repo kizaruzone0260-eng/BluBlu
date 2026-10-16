@@ -161,13 +161,31 @@ export async function checkCode(code: string): Promise<void> {
   await api<{ ok: true }>('/api/auth/check-code', { method: 'POST', body: JSON.stringify({ code }) });
 }
 
-export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string, locale?: string) {
+export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string, locale?: string, emailCode?: string) {
   const j = await api<{ accessToken: string; user: Me }>('/api/auth/register', {
     // the language picked on the register screen travels with the account (task 1)
-    method: 'POST', body: JSON.stringify({ firstName, lastName, email, password, code, ...(locale ? { locale } : {}) }),
+    method: 'POST',
+    body: JSON.stringify({
+      firstName, lastName, email, password, code,
+      ...(locale ? { locale } : {}),
+      // часть F: код из письма; при выключенном подтверждении поля просто нет
+      ...(emailCode ? { emailCode } : {}),
+    }),
   });
   setAccessToken(j.accessToken);
   return j.user;
+}
+
+/**
+ * Часть F (2026-10-16): попросить шестизначный код на почту. Отдельная функция именно потому,
+ * что её ответ НИЧЕГО не сообщает о существовании аккаунта: и «письмо отправлено», и «адрес уже
+ * занят» приходят одним и тем же 202, и экран обязан держаться на том же тексте.
+ */
+export async function requestEmailCode(firstName: string, lastName: string, email: string, locale?: string): Promise<void> {
+  await api<{ ok: true }>('/api/auth/email-code', {
+    method: 'POST',
+    body: JSON.stringify({ firstName, lastName, email, ...(locale ? { locale } : {}) }),
+  });
 }
 
 export async function logout() {
