@@ -96,6 +96,8 @@ describe('console.* inventory in apps/api/src (task 7)', () => {
     // старше 30 дн.`, `telegram: добито незавершённых обновлений` и `telegram reprocess skipped`.
     // Все три — статус процесса, печатаются раз за цикл/при старте, причина падения идёт через
     // errorLine(), ни одна не передаёт объект ошибки или строку запроса целиком.
-    expect(total).toBeLessThanOrEqual(25);
+    // 25 → 26 (часть B2, 2026-10-16): четвёртая такая строка — `auth: удалено строк счётчика
+    // старше 24 ч`.
+    expect(total).toBeLessThanOrEqual(26);
   });
 });

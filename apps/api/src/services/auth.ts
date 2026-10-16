@@ -1,4 +1,4 @@
-import { eq, and, isNull } from 'drizzle-orm';
+import { eq, and, isNull, lt } from 'drizzle-orm';
 import type { Locale } from '@klass/shared';
 import { users, classMembers, refreshTokens, loginAttempts } from '../db/schema.js';
 import type { DB } from '../db/index.js';
@@ -109,13 +109,32 @@ async function recordFailure(db: DB, email: string): Promise<void> {
     .onConflictDoUpdate({ target: loginAttempts.email, set: { failCount, lockedUntil, updatedAt: new Date() } });
 }
 
+/** Одна задержка на «нет такого аккаунта» и «не тот пароль» — и на смене пароля тоже. */
+const DUMMY_HASH = '$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+/**
+ * B2 (2026-10-16): строка счётчика, у которой нет активной блокировки и которая не
+ * обновлялась сутки, ничего не защищает — она просто копит email'ы. Удаляется фоновой
+ * уборкой. Строки с наступившей блокировкой не трогаются намеренно: `failCount` у них и есть
+ * память о том, что окно следующего перебора должно быть длиннее.
+ */
+export const LOGIN_ATTEMPT_TTL_MS = 24 * 3600_000;
+
+export async function sweepLoginAttempts(db: DB, now = new Date(), maxAgeMs = LOGIN_ATTEMPT_TTL_MS): Promise<number> {
+  const rows = await db.delete(loginAttempts).where(and(
+    isNull(loginAttempts.lockedUntil),
+    lt(loginAttempts.updatedAt, new Date(now.getTime() - maxAgeMs)),
+  )).returning({ email: loginAttempts.email });
+  return rows.length;
+}
+
 export async function login(db: DB, email: string, password: string): Promise<AuthResult> {
   // Locked out? Record the attempt anyway (so continued hammering GROWS the
   // window, up to the cap) but return the SAME generic failure as a bad
   // password — the response never reveals whether the account exists or is
   // merely throttled. A dummy verify keeps the timing uniform.
   if ((await lockState(db, email)).locked) {
-    await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', password);
+    await verifyPassword(DUMMY_HASH, password);
     await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
@@ -123,7 +142,7 @@ export async function login(db: DB, email: string, password: string): Promise<Au
     .where(and(eq(users.email, email), isNull(users.deletedAt)))
     .limit(1);
   if (!user) {
-    await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', password); // constant-ish time on missing user
+    await verifyPassword(DUMMY_HASH, password); // constant-ish time on missing user
     await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
@@ -229,13 +248,31 @@ export async function changePassword(
 ): Promise<{ ok: true } | { ok: false; reason: 'wrongCurrent' | 'weak' }> {
   const [u] = await db.select().from(users)
     .where(and(eq(users.id, userId), isNull(users.deletedAt))).limit(1);
-  if (!u || !(await verifyPassword(u.passwordHash, current))) return { ok: false, reason: 'wrongCurrent' };
+  if (!u) return { ok: false, reason: 'wrongCurrent' };
+  /*
+   * B1 (2026-10-16): смена пароля — это тоже проверка текущего, и раньше она ничего
+   * не стоила: счётчик перебора стоял только на входе. Модель можно было подбирать здесь
+   * сколько угодно, обходя локаут, который держит `/api/auth/login`. Теперь тот же счётчик
+   * (ключ — нормализованный email аккаунта), та же задержка и тот же ответ: «wrongCurrent»
+   * не различает «не угадал» и «заблокирован на N минут», а успех сбрасывает счётчик.
+   */
+  if ((await lockState(db, u.email)).locked) {
+    await verifyPassword(DUMMY_HASH, current); // ровный тайминг и под блокировкой
+    await recordFailure(db, u.email);          // продолжение стука растит окно (до потолка)
+    return { ok: false, reason: 'wrongCurrent' };
+  }
+  if (!(await verifyPassword(u.passwordHash, current))) {
+    await recordFailure(db, u.email);
+    return { ok: false, reason: 'wrongCurrent' };
+  }
   // same policy as registration (≥10, letters, no spaces, not a common password)
   const { passwordPolicy } = await import('@klass/shared');
   if (!passwordPolicy.safeParse(next).success) return { ok: false, reason: 'weak' };
   await db.update(users)
     .set({ passwordHash: await hashPassword(next), mustChangePassword: false })
     .where(eq(users.id, userId));
+  // успех сбрасывает счётчик — как вход, иначе одна опечатка помнит аккаунту сутки
+  await db.delete(loginAttempts).where(eq(loginAttempts.email, u.email));
   await revokeAllSessions(db, userId);
   return { ok: true };
 }

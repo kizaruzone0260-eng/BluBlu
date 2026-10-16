@@ -45,6 +45,11 @@ async function main() {
       .then((m) => m.sweepNotifications(db))
       .then((n) => { if (n) console.log(`notify: удалено рядов старше 30 дн. — ${n}`); })
       .catch(() => undefined);
+    // B2: строки счётчика перебора без активной блокировки и суточной давности.
+    import('./services/auth.js')
+      .then((m) => m.sweepLoginAttempts(db))
+      .then((n) => { if (n) console.log(`auth: удалено строк счётчика старше 24 ч — ${n}`); })
+      .catch(() => undefined);
     // часть 4: срок хранения архива. 0 (по умолчанию) — функция выключена, и sweepArchive
     // возвращает 0, не трогая базу.
     if (env.BOARD_ARCHIVE_RETENTION_DAYS > 0) {
