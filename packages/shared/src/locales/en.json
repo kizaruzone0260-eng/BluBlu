@@ -60,6 +60,7 @@
     "passwordChanged": "Password changed",
     "changePasswordGateTitle": "Change your password",
     "changePasswordGateHint": "A temporary password was issued to you. Set your own password to continue.",
+    "passwordChangeRequired": "Change the temporary password before continuing.",
     "logoutAll": "Sign out of all devices",
     "logoutAllConfirm": "Sign out of your account on all devices?"
   },

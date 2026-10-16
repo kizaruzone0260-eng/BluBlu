@@ -60,6 +60,7 @@
     "passwordChanged": "Parol o'zgartirildi",
     "changePasswordGateTitle": "Parolni o'zgartiring",
     "changePasswordGateHint": "Sizga vaqtinchalik parol berildi. Davom etish uchun o'z parolingizni belgilang.",
+    "passwordChangeRequired": "Davom etishdan oldin vaqtinchalik parolni o‘zgartiring.",
     "logoutAll": "Barcha qurilmalardan chiqish",
     "logoutAllConfirm": "Barcha qurilmalardan akkauntdan chiqasizmi?"
   },

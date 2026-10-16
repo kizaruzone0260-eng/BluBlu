@@ -60,6 +60,7 @@
     "passwordChanged": "Пароль изменён",
     "changePasswordGateTitle": "Смените пароль",
     "changePasswordGateHint": "Вам выдали временный пароль. Задайте собственный, чтобы продолжить.",
+    "passwordChangeRequired": "Смените временный пароль, прежде чем продолжать.",
     "logoutAll": "Выйти со всех устройств",
     "logoutAllConfirm": "Выйти из аккаунта на всех устройствах?"
   },

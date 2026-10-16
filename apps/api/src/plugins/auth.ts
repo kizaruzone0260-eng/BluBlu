@@ -19,6 +19,24 @@ declare module 'fastify' {
 export const authPlugin = fp(async (app: FastifyInstance, opts: { db: DB }) => {
   app.decorateRequest('user', null);
 
+  /*
+   * Принудительная смена пароля обязана держаться СЕРВЕРОМ, а не экраном. До этого
+   * `must_change_password` только возвращался в профиле, и весь гейт жил в `App.tsx`: человек
+   * с временным паролем, который знает URL API (curl, другой клиент, старый скрипт), получал
+   * полноценный bearer и работал с классами, доской и чужими заметками, минуя смену пароля.
+   * Клиентский барьер — это удобство, а не право.
+   *
+   * Список короткий и закрытый: сменить пароль, прочитать СВОЙ профиль (экрану нужно показать,
+   * что происходит) и выйти. Всё остальное — 403, пока пароль не свой.
+   */
+  const TEMP_PW_ALLOWED = new Set([
+    '/api/me',
+    '/api/me/profile',   // SPA синхронизирует часовой пояс и язык при каждом входе: это не работа с уроком
+    '/api/me/change-password',
+    '/api/auth/logout',
+    '/api/auth/logout-all',
+  ]);
+
   app.addHook('onRequest', async (req) => {
     const header = req.headers.authorization;
     if (header?.startsWith('Bearer ')) {
@@ -41,6 +59,9 @@ export const authPlugin = fp(async (app: FastifyInstance, opts: { db: DB }) => {
     }
     if (role && u.role !== role) {
       return reply.code(role === 'teacher' ? 403 : 401).send({ error: 'forbidden' });
+    }
+    if (u.mustChangePassword && !TEMP_PW_ALLOWED.has((req.url ?? '').split('?')[0] ?? '')) {
+      return reply.code(403).send({ error: 'passwordChangeRequired' });
     }
     return undefined;
   }
