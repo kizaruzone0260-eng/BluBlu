@@ -213,13 +213,33 @@ export async function drawRect(page: Page, from: [number, number], to: [number, 
 export async function paintStable(page: Page, slot: keyof typeof SLOTS): Promise<void> {
   const surface = page.locator('[data-testid=board] canvas.excalidraw__canvas:not(.static)').first();
   const { from, to } = SLOTS[slot];
-  await surface.click({ position: { x: from[0], y: from[1] } });   // фокус на полотне
-  await page.keyboard.press('r');                                   // инструмент «прямоугольник»
-  await surface.hover({ position: { x: from[0], y: from[1] } });     // полотно стоит на месте
-  const box = (await surface.boundingBox())!;
-  await page.mouse.down();
-  await page.mouse.move(box.x + to[0], box.y + to[1], { steps: 6 });
-  await page.mouse.up();
+  const stroke = async () => {
+    await surface.click({ position: { x: from[0], y: from[1] } });   // фокус на полотне
+    await page.keyboard.press('r');                                   // инструмент «прямоугольник»
+    await surface.hover({ position: { x: from[0], y: from[1] } });     // полотно стоит на месте
+    const box = (await surface.boundingBox())!;
+    await page.mouse.down();
+    await page.mouse.move(box.x + to[0], box.y + to[1], { steps: 6 });
+    await page.mouse.up();
+  };
+  /*
+   * Штрих повторяется, пока полотно не изменится. Причина не в продукте, а в инструменте: `r`
+   * уходит тому, кто в фокусе, а фокус после прокрутки колеса, тоста или клика по чужой плитке
+   * иногда остаётся не на холсте — тогда перетаскивание становится рамкой выделения и на полотне
+   * НЕ ПОЯВЛЯЕТСЯ НИЧЕГО. Прогон 38956155368 упал именно так («третий штрих виден самой Анне»,
+   * счётчик пикселей 1706 → 1706), а тест под `@unstable` в zz20 не рисовал у учителя два прогона
+   * подряд. Это страховка инструмента, а не утверждения: проверяющий тест по-прежнему требует,
+   * чтобы чернила появились, и если с трёх попыток их нет — так и пишет, с числом до/после.
+   */
+  const ink0 = await inkAll(page);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await stroke();
+    for (let tick = 0; tick < 10; tick++) {
+      if (await inkAll(page) > ink0) return;
+      await page.waitForTimeout(250);
+    }
+  }
+  m('paintStable: штрих не лёг с трёх попыток', { slot, ink0, inkNow: await inkAll(page) });
 }
 
 /** A text element typed on the canvas — used by the font/rendering test (task 3). */

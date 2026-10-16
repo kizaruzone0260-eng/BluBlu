@@ -105,12 +105,15 @@ B="$WORK/plain"; mkdir -p "$B"
 ALLOW_UNENCRYPTED_BACKUP=1 PGDATABASE="$SRC" BACKUP_DIR="$B" \
   bash "$ROOT/deploy/scripts/backup.sh" >"$WORK/b.log" 2>&1 \
   || { cat "$WORK/b.log" >&2; fail "backup.sh (открытый режим) упал"; }
-ls "$B" | grep -q '\.sql\.gz$' || { ls -l "$B" >&2; fail "открытый дамп не создан"; }
-# сам дамп обязан быть содержательным: пустая база даёт валидный gzip без единой таблицы
+[ -n "$(find "$B" -maxdepth 1 -name '*.sql.gz' -print -quit)" ] || { ls -l "$B" >&2; fail "открытый дамп не создан"; }
+# сам дамп обязан быть содержательным: пустая база даёт валидный gzip без единой таблицы.
+# `grep -c`, а не `grep -q`: -q выходит на первом совпадении, gunzip ловит SIGPIPE, и под
+# `set -o pipefail` это смерть прогона (проверено на 38956155368: `gzip: stdout: Broken pipe`).
 DUMP_PLAIN="$(ls "$B" | grep '\.sql\.gz$' | head -1)"
-gunzip -c "$B/$DUMP_PLAIN" | grep -q '^CREATE TABLE' \
-  || { gunzip -c "$B/$DUMP_PLAIN" | head -20 >&2; fail "в дампе нет ни одной CREATE TABLE — дампится не та база?"; }
-if ls "$B" | grep -q '\.enc$'; then fail "в открытом режиме появился .enc"; fi
+CREATE_TABLES="$(gunzip -c "$B/$DUMP_PLAIN" | grep -c '^CREATE TABLE' || true)"
+[ "${CREATE_TABLES:-0}" -ge 30 ] \
+  || { gunzip -c "$B/$DUMP_PLAIN" | head -20 >&2; fail "в дампе таблиц $CREATE_TABLES — дампится не та база?"; }
+if [ -n "$(find "$B" -maxdepth 1 -name '*.enc' -print -quit)" ]; then fail "в открытом режиме появился .enc"; fi
 rm -rf "$B"/*
 
 C="$WORK/enc"; mkdir -p "$C"
@@ -119,7 +122,7 @@ BACKUP_PASSPHRASE="$PASS" PGDATABASE="$SRC" BACKUP_DIR="$C" bash "$ROOT/deploy/s
 DUMP_ENC="$(ls "$C" | grep 'sql\.gz\.enc$' | head -1 || true)"
 FILES_ENC="$(ls "$C" | grep 'files-.*\.tar\.gz\.enc$' | head -1 || true)"
 [ -n "$DUMP_ENC" ] && [ -n "$FILES_ENC" ] || { ls -l "$C" >&2; fail "нет шифрованных дампов (sql/files)"; }
-if ls "$C" | grep -qv '\.enc$'; then fail "рядом с .enc лежат открытые файлы"; fi
+if [ -n "$(find "$C" -maxdepth 1 -type f ! -name '*.enc' -print -quit)" ]; then fail "рядом с .enc лежат открытые файлы"; fi
 # содержимое зашифровано: gzip-заголовок наружу не торчит
 if head -c 2 "$C/$DUMP_ENC" | od -An -tx1 | grep -qi '1f 8b'; then fail "в .enc узнаётся gzip — шифрования нет"; fi
 
@@ -164,6 +167,9 @@ BACKUP_PASSPHRASE="$PASS" PGDATABASE="$DSTDB2" bash "$ROOT/deploy/scripts/restor
 cmp "$FDIR/files-store/probe.txt" "$R2/files-store/probe.txt" || fail "байты восстановленного файла не совпали"
 
 echo "== 7. временные расшифровки не остаются на диске"
-find "$C" "$F2" -name '*.gz' ! -name '*.enc' | grep . && fail "расшифрованный файл остался рядом с .enc" || true
+if [ -n "$(find "$C" "$F2" -name '*.gz' ! -name '*.enc' -print -quit)" ]; then
+  find "$C" "$F2" -name '*.gz' ! -name '*.enc' >&2
+  fail "расшифрованный файл остался рядом с .enc"
+fi
 
 echo "OK: цикл backup → шифрование → восстановление проходит, счётчики, RLS и файлы совпадают"
