@@ -14,9 +14,9 @@
  * перезагрузка документа, а livekit-клиент на выгрузке страницы разрывает комнату сам
  * («Page leave detected»), то есть тест разрушал бы собственное предусловие.
  */
-import { test, expect, request as pw, type Page } from '@playwright/test';
+import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import {
-  BASE, makeLesson, teacherLessonPage, teacherToken, type Ctx,
+  BASE, loginUi, makeLesson, openLesson, stack, teacherToken, type Ctx,
 } from './boardFixtures';
 
 async function mediaServerUp(): Promise<boolean> {
@@ -29,10 +29,41 @@ async function mediaServerUp(): Promise<boolean> {
   } catch { return false; }
 }
 
-/** Сколько сокетов урока открыла ЭТА страница (Performance API знает все её соединения). */
+/*
+ * Счётчик сокетов урока. Прежний измеритель — `performance.getEntriesByType('resource')` —
+ * рукопожатий WebSocket не показывает (в Chromium они живут в отдельной дорожке DevTools и в
+ * resource timing не попадают), поэтому единица здесь не появлялась НИКОГДА: первый же прогон
+ * этого спека в CI дал `Expected: 1, Received: 0` и в логе сервера в ту же секунду видно, что
+ * `GET /api/ws/lesson/<id>` состоялся. Меряем сам конструктор: хук ставится `addInitScript`-ом до
+ * первого скрипта приложения и пишет URL каждого соединения урока, включая переподключения.
+ * Утверждения при этом не меняются — их сила ровно та же, меняется только то, ЧЕМ они меряют.
+ */
+const LESSON_SOCKETS = '__lessonSockets';
+
+async function lessonPage(browser: Browser, classId: string): Promise<Page> {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.addInitScript((key) => {
+    const w = window as unknown as Record<string, string[]>;
+    w[key] = [];
+    const Real = window.WebSocket;
+    const Patched = function (url: string | URL, protocols?: string | string[]) {
+      const sock = new Real(String(url), protocols);
+      if (/\/api\/ws\/lesson\//.test(String(url))) w[key].push(String(url));
+      return sock;
+    } as unknown as typeof WebSocket;
+    Patched.prototype = Real.prototype;
+    window.WebSocket = Patched;
+  }, LESSON_SOCKETS);
+  const p = await ctx.newPage();
+  await loginUi(p, stack.teacherEmail, stack.teacherPassword);
+  await openLesson(p, classId);
+  return p;
+}
+
+/** Сколько сокетов урока открыла ЭТА страница (список наполняет хук из `lessonPage`). */
 function lessonSockets(page: Page): Promise<number> {
-  return page.evaluate(() => performance.getEntriesByType('resource')
-    .filter((e) => /\/api\/ws\/lesson\//.test(e.name)).length);
+  return page.evaluate((key) => ((window as unknown as Record<string, string[]>)[key] ?? []).length,
+    LESSON_SOCKETS);
 }
 
 async function joinRoom(page: Page) {
@@ -68,9 +99,17 @@ test.describe('урок переживает переход по сайту (A1,
 
   test('чат не рвёт комнату: соединение одно, мини-окно живёт, возврат одним нажатием', async ({ browser }) => {
     test.setTimeout(240_000);
-    const page = await teacherLessonPage(browser, classId);
+    const page = await lessonPage(browser, classId);
     try {
       await joinRoom(page);
+      /*
+       * Сокет урока открывается эффектом после того, как страница узнала сессию, поэтому снимок
+       * «в тот же момент» — это гонка измерителя, а не продукта: ждём, пока соединение появится,
+       * и только потом сверяем число.
+       */
+      await expect
+        .poll(() => lessonSockets(page), { timeout: 20_000, message: 'сокет урока не заводится после входа' })
+        .toBe(1);
       const one = await lessonSockets(page);
       expect(one, 'сокет урока заводится ровно один при входе').toBe(1);
 
@@ -99,7 +138,7 @@ test.describe('урок переживает переход по сайту (A1,
 
   test('мини-окно не появляется там, где урока нет', async ({ browser }) => {
     test.setTimeout(120_000);
-    const page = await teacherLessonPage(browser, classId);
+    const page = await lessonPage(browser, classId);
     try {
       // в комнату не входили: показывать полоску «идёт урок» на чужих экранах не за чем
       await leaveByRouter(page);
@@ -135,7 +174,7 @@ test.describe('возврат после перезагрузки страниц
 
   test('свежая метка: «Вернуться в урок» входит одним нажатием', async ({ browser }) => {
     test.setTimeout(240_000);
-    const page = await teacherLessonPage(browser, classId);
+    const page = await lessonPage(browser, classId);
     try {
       await joinRoom(page);
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -150,7 +189,7 @@ test.describe('возврат после перезагрузки страниц
 
   test('истёкшая метка: обычный вход с проверкой устройств', async ({ browser }) => {
     test.setTimeout(240_000);
-    const page = await teacherLessonPage(browser, classId);
+    const page = await lessonPage(browser, classId);
     try {
       await joinRoom(page);
       // та же метка, но время сдвинуто за предел срока: человек вернулся через полчаса

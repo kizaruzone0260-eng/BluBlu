@@ -13,8 +13,8 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, boardGeom, geomShift, inkAll, inkSeen, loginUi, makeLesson, openLesson, paintStable,
-  registerStudent, stack, teacherToken, waitBoard, type Ctx,
+  BASE, boardGeom, geomShift, inkAll, inkSeen, loginUi, makeLesson, m, openLesson, paintStable,
+  registerStudent, revealInk, stack, teacherToken, waitBoard, winOf, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
 
@@ -150,6 +150,23 @@ test.describe('students drawing on the board (part 3)', () => {
     // Считается ВСЁ полотно, а не окно слота (`inkSeen`): у Excalidraw собственный viewport, и в
     // живом уроке содержимое может оказаться не в верхнем левом углу элемента — «штриха нет» тогда
     // означает лишь «штрих не здесь». Смысл проверки от этого не меняется: чернила появились.
+    /*
+     * Отрицательная проверка «метки нет, когда рисунок уже в поле зрения» требует предусловия,
+     * которого здесь не было: метка ставится В МОМЕНТ прихода чернил, а `inkSeen` сам возвращает
+     * вид к содержимому (`.scroll-back-to-content`) — то есть измеритель успевал поправить то, что
+     * мерит, и падение выглядело как «продукт сам себе противоречит». Прогон 38844444987 это и
+     * показал: `метка не появляется, когда рисунок уже виден` → Expected 0, Received 1.
+     * Теперь предусловие устанавливается ДО рисования и называется числом: полотно учителя обязано
+     * быть не уже и не ниже окна слота A, иначе «не видно» законно и проверять нечего.
+     */
+    await revealInk(t.page);
+    const viewT = await boardGeom(t.page);
+    const winA = winOf('A');
+    m('teacher canvas vs slot A window', { viewT, winA });
+    expect(viewT.w, `полотно учителя (${viewT.w}×${viewT.h}) не шире окна слота A (${winA.w}×${winA.h})`)
+      .toBeGreaterThanOrEqual(winA.x + winA.w);
+    expect(viewT.h, `полотно учителя (${viewT.w}×${viewT.h}) не выше окна слота A (${winA.w}×${winA.h})`)
+      .toBeGreaterThanOrEqual(winA.y + winA.h);
     const before = await inkSeen(t.page);
     await paintStable(a.page, 'A');
     // сначала у неё самой: не лёг штрих — это рисование, а не распространение по WS
@@ -234,5 +251,29 @@ test.describe('students drawing on the board (part 3)', () => {
     expect(ids[bEmail], 'Борис существует (сверка identity в первом спеке)').toBeTruthy();
 
     for (const v of [t, c]) await v.ctx.close();
+  });
+
+  /*
+   * Отрицательный контроль к проверке «метки нет, когда рисунок уже виден» (шаг 3 первого теста).
+   * Без него красный zz20 было нечем отличить от «метка вообще не умеет молчать»: молчание на
+   * чужих чернилах в поле зрения и молчание по своему рисунку — два разных обещания продукта
+   * (`noteIncomingInk` вызывается только на ЧУЖИХ правках, а свои серверу и не рассылает
+   * отправителю). Здесь рисует сам учитель: если метка появится на его же штрихе, механизм
+   * сломан, и красным станет этот тест, а не первый.
+   */
+  test('собственный рисунок метку «показать» не зовёт', async ({ browser }) => {
+    test.setTimeout(240_000);
+    const t = await join(browser, stack.teacherEmail, stack.teacherPassword);
+    await waitBoard(t.page);
+    // вид к содержимому ДО рисования: иначе «метки нет» могло бы означать «полотно смотрит
+    // не туда, и метка появилась бы на любом штрихе»
+    await revealInk(t.page);
+    m('own-ink control: teacher canvas', await boardGeom(t.page));
+    await paintStable(t.page, 'A');
+    await expect.poll(() => inkAll(t.page),
+      { timeout: 20_000, message: 'собственный штрих виден учителю на полотне' }).toBeGreaterThan(0);
+    await expect(chip(t.page), 'своя рисовка метку не зовёт').toHaveCount(0, { timeout: 5_000 });
+
+    await t.ctx.close();
   });
 });

@@ -191,6 +191,30 @@ jobs:
     timeout-minutes: 20
     needs: build-test
     continue-on-error: true
+    services:
+      # Медиа-сервер здесь нужен: под тегом @unstable живут не только «долгие», но и RTC-спеки
+      # (zz19, порядок кадров с задержкой 8 с). Без LiveKit они умеют пропускать себя сами, и
+      # неблокирующий джоб молча стал бы «зелёным absent'ом» — проверка исчезла бы из CI совсем.
+      # Тот же test-only ключ, что в джобе e2e, и та же LIVEKIT_CONFIG вместо --config (у
+      # service-контейнера нет ключа args; замерено на прогоне 37968027051).
+      livekit:
+        image: livekit/livekit-server:v1.13.9
+        ports: ['7880:7880', '7881:7881', '50000-50019:50000-50019/udp']
+        env:
+          LIVEKIT_CONFIG: |
+            port: 7880
+            rtc:
+              tcp_port: 7881
+              port_range_start: 50000
+              port_range_end: 50019
+              use_external_ip: false
+            keys:
+              e2ekey: e2esecrete2esecrete2esecrete2esecret
+    env:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+      LIVEKIT_WS_URL: ws://127.0.0.1:7880
+      LIVEKIT_API_KEY: e2ekey
+      LIVEKIT_API_SECRET: e2esecrete2esecrete2esecrete2esecret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
