@@ -22,6 +22,7 @@ import {
 } from '@klass/shared';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
+import { useSceneBand } from '../lib/sceneBand';
 
 /*
  * Часть 2 задачи 2026-10-10 (измерено, а не «на глаз»): и Excalidraw, и панель вкладок жили в
@@ -204,6 +205,8 @@ export default function Lesson({ mode = 'full', target = null }: {
   const [pip, setPip] = useState<{ x: number; y: number; min: boolean; hidden: boolean }>(
     () => { try { return { x: 12, y: 12, min: false, hidden: false, ...JSON.parse(localStorage.getItem(LS_PIP) || '{}') }; } catch { return { x: 12, y: 12, min: false, hidden: false }; } });
   const stageRef = useRef<HTMLDivElement | null>(null);
+  /** часть D: ref контейнера сцены — относительно него центрируется нижняя панель */
+  const mainRef = useSceneBand();
   const dragRef = useRef<{ x0: number; y0: number; px0: number; py0: number } | null>(null);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<number | undefined>(undefined);
@@ -1604,7 +1607,7 @@ export default function Lesson({ mode = 'full', target = null }: {
       {session && (
         <div className="lesson-shell" data-testid="lesson-shell">
           <div className="lesson-body">
-            <div className="lesson-main">
+            <div className="lesson-main" ref={mainRef}>
               {!connected && (
                 <div className="card device-check" data-testid="device-check">
                   {rejoinFresh && (
