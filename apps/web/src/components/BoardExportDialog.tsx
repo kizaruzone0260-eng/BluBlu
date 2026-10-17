@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { exportToBlob } from '@excalidraw/excalidraw';
 import { useTranslation } from 'react-i18next';
+import { planWordBoard, placeWordBoard } from '@klass/shared';
 import { api } from '../lib/api';
 import {
   BoardExportCancelled, boardPdfFileName, buildBoardPdf, fitDimensions,
   type BoardImage, type BoardPageSize,
 } from '../lib/boardPdf';
-import { DocxCancelled, boardWordFileName, buildBoardDocx } from '../lib/boardDocx';
+import { boardWordFileName } from '../lib/boardDocx';
+import { DocxCancelled, buildWordDocx, type WordBoardSource, type WordMode } from '@klass/shared/boardDocxBuild';
 
-type ExportKind = 'pdf' | 'word';
+type ExportKind = 'pdf' | `word-${WordMode}`;
 
 type RawEl = { id: string; isDeleted?: boolean; [k: string]: unknown };
 
@@ -116,7 +118,7 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
     return () => { stop = true; };
   }, [boards]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function renderBoard(elements: RawEl[], forPdf: boolean) {
+  async function renderBoard(elements: RawEl[], forPdf: boolean, scale = PDF_SCALE) {
     const blob = await exportToBlob({
       elements: elements as never,
       appState: { exportBackground: true, viewBackgroundColor: '#ffffff', exportWithDarkMode: false } as never,
@@ -127,7 +129,7 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
       // (task 2в): thumbnails at ≤320 px, the PDF picture at 2× of the content, never more than
       // a browser can allocate.
       getDimensions: (w: number, h: number) =>
-        forPdf ? fitDimensions(w, h, PDF_SCALE) : fitDimensions(w, h, 1, THUMB_SIDE),
+        forPdf ? fitDimensions(w, h, scale) : fitDimensions(w, h, 1, THUMB_SIDE),
     });
     const png = new Uint8Array(await blob.arrayBuffer());
     return { blob, png, ...pngSize(png) };
@@ -146,9 +148,14 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
   }
 
   /**
-   * Одна и та же сборка картинок для обоих форматов: доска растеризуется ровно один раз и
-   * одинаково, поэтому PDF и Word показывают один и тот же рисунок (часть 5). Разница только в
-   * упаковке — и `docx`, и `pdf-lib` подгружаются внутри своих сборщиков.
+   * Одна и та же сборка картинок для всех форматов: доска растеризуется ровно один раз на файл,
+   * и в PDF, и в Word попадает один и тот же рисунок (часть 5). Разница только в упаковке — и
+   * `docx`, и `pdf-lib` подгружаются внутри своих сборщиков.
+   *
+   * Часть E: в «редактируемом» Word в подложку идут ВСЕ элементы, КРОМЕ тех текстов, которые
+   * станут редактируемыми, — иначе текст оказался бы в файле дважды. Пиксели подложки берутся с
+   * тем же масштабом, с каким `placeWordBoard` кладёт её на страницу (2× от нарисованного
+   * размера), поэтому строки садятся ровно в свои места.
    */
   async function download(kind: ExportKind) {
     if (!chosen.length || busy) return;
@@ -157,15 +164,23 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
     setError('');
     cancelled.current = false;
     setProgress({ done: 0, total: chosen.length });
-    const images: BoardImage[] = [];
+    const images: (BoardImage & { elements?: RawEl[] })[] = [];
     try {
       // fonts first: a board with text paints boxes instead of glyphs when Excalidraw runs too early
       await document.fonts.ready;
       for (let i = 0; i < chosen.length; i++) {
         if (cancelled.current) throw new BoardExportCancelled();
         const b = chosen[i]!;
-        const { png, width, height } = await renderBoard(liveOf(b.elements) as never, true);
-        images.push({ png, width, height });
+        const live = liveOf(b.elements);
+        if (kind === 'word-editable') {
+          const plan = planWordBoard(live);
+          const placed = placeWordBoard(plan);
+          const png = await renderBoard(plan.picture as RawEl[], true, 2 * placed.scale);
+          images.push({ png: png.png, width: png.width, height: png.height, elements: live });
+        } else {
+          const png = await renderBoard(live, true);
+          images.push({ png: png.png, width: png.width, height: png.height, elements: live });
+        }
         setProgress({ done: i + 1, total: chosen.length });
       }
       const file = kind === 'pdf'
@@ -175,8 +190,11 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
           onProgress: (done, total) => setProgress({ done, total }),
         })
         // Word всегда альбомный A4 с полями — это формат документа, а не выбора учителя
-        : await buildBoardDocx({
-          images,
+        : await buildWordDocx({
+          mode: kind.slice('word-'.length) as WordMode,
+          boards: images.map((img) => ({
+            png: img.png, width: img.width, height: img.height, elements: img.elements,
+          } satisfies WordBoardSource)),
           cancelled: () => cancelled.current,
           onProgress: (done, total) => setProgress({ done, total }),
         });
@@ -288,13 +306,25 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
                 disabled={busy || chosen.length === 0} onClick={() => void download('pdf')}>
                 {t('lesson.pdfDownload', { n: chosen.length })}
               </button>
-              {/* часть 5: тот же набор досок, другой контейнер. Word не имеет выбора размера
-                  страницы — у документа он фиксированный (альбомный A4 с полями). */}
-              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="word-download"
-                disabled={busy || chosen.length === 0} onClick={() => void download('word')}>
-                {t('lesson.wordDownload', { n: chosen.length })}
+              {/* часть E: у Word больше не один пункт, а три режима. Размер страницы Word не
+                  выбирается — он формат документа (альбомный A4 с полями), и относится только к PDF. */}
+              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="word-editable"
+                disabled={busy || chosen.length === 0} onClick={() => void download('word-editable')}>
+                {t('lesson.wordEditable')}
+              </button>
+              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="word-image"
+                disabled={busy || chosen.length === 0} onClick={() => void download('word-image')}>
+                {t('lesson.wordImage')}
+              </button>
+              <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="word-stacked"
+                disabled={busy || chosen.length === 0} onClick={() => void download('word-stacked')}>
+                {t('lesson.wordStacked')}
               </button>
             </div>
+            {/* ограничение одной строкой на трёх языках: что становится картинкой */}
+            <p className="muted" style={{ fontSize: '.85rem', margin: '4px 0 0' }} data-testid="word-hint">
+              {t('lesson.wordTextHint')}
+            </p>
             <p className="muted" style={{ fontSize: '.85rem' }} data-testid="pdf-hint">{t('lesson.pdfHint')}</p>
           </>
         )}

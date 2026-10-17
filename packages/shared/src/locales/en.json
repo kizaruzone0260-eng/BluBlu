@@ -427,6 +427,10 @@
     "hotkeysList": "M — microphone, V — camera, H — hand, C — comments, P — participants",
     "menuClose": "Close menu",
     "wordDownload": "Download Word ({{n}})",
+    "wordEditable": "Word: editable text",
+    "wordImage": "Word: picture",
+    "wordStacked": "Picture and text in order",
+    "wordTextHint": "Shapes and drawings become a picture; rotated text stays a picture and cannot be edited.",
     "wordWorking": "Building the Word file… {{done}}/{{total}}",
     "wordFailed": "Could not build the Word file: {{message}}"
   },

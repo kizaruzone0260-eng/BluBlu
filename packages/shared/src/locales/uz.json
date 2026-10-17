@@ -427,6 +427,10 @@
     "hotkeysList": "M — mikrofon, V — kamera, H — qoʻl, C — izohlar, P — ishtirokchilar",
     "menuClose": "Menyuni yopish",
     "wordDownload": "Word yuklab olish ({{n}})",
+    "wordEditable": "Word: tahrirlanadigan",
+    "wordImage": "Word: rasm",
+    "wordStacked": "Rasm va matn tartib bilan",
+    "wordTextHint": "Shakllar va chizmalar rasmga aylanadi; aylantirilgan matn ham rasm boʻlib qoladi va uni tahrirlab boʻlmaydi.",
     "wordWorking": "Word tayyorlanmoqda… {{done}}/{{total}}",
     "wordFailed": "Word yaratilmadi: {{message}}"
   },

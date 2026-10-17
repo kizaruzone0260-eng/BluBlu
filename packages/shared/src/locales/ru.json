@@ -427,6 +427,10 @@
     "hotkeysList": "M — микрофон, V — камера, H — рука, C — комментарии, P — участники",
     "menuClose": "Закрыть меню",
     "wordDownload": "Скачать Word ({{n}})",
+    "wordEditable": "Word: редактируемый",
+    "wordImage": "Word: картинка",
+    "wordStacked": "Картинка и текст по порядку",
+    "wordTextHint": "Фигуры и рисунки становятся картинкой; повёрнутый текст остаётся картинкой, его отредактировать нельзя.",
     "wordWorking": "Собираю Word… {{done}}/{{total}}",
     "wordFailed": "Не удалось собрать Word: {{message}}"
   },

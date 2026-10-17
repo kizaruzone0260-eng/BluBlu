@@ -6,6 +6,11 @@
  * столько, альбомная A4 с полями 10 мм, имя файла `BluBlu-<класс>-<дата>.docx` и ни одного
  * персонального данных в метаданных.
  *
+ * Часть E (2026-10-17): у Word стало три режима, и прежняя кнопка `word-download` — это теперь
+ * `word-image` (поведение не изменилось, поэтому и проверки те же). Добавлен тест на
+ * «Word: редактируемый»: текст в файле должен быть НАСТОЯЩИМ текстом (его видно в document.xml),
+ * а не пикселями картинки.
+ *
  * Кириллица и узбекские `oʻ/gʻ` рисуются на той же растеризованной картинке, что и в PDF: путь
  * один и тот же (`exportToBlob` после `document.fonts.ready`), и он уже доказан в zz12 («cyrillic
  * and Uzbek ʻgʻ text on a board really renders»). Здесь дополнительно проверяется, что именно эта
@@ -66,11 +71,11 @@ test.describe('board → Word (part 5)', () => {
     await expect(p.getByTestId('pdf-pick-1')).toBeVisible({ timeout: 30_000 });
     await expect(p.getByTestId('pdf-pick-2')).toBeChecked();
     // обе кнопки стоят рядом и не мешают друг другу: Word появляется рядом с PDF
-    await expect(p.getByTestId('word-download')).toBeVisible();
-    await expect(p.getByTestId('word-download')).toBeEnabled();
+    await expect(p.getByTestId('word-image')).toBeVisible();
+    await expect(p.getByTestId('word-image')).toBeEnabled();
 
     const dl = p.waitForEvent('download');
-    await p.getByTestId('word-download').click();
+    await p.getByTestId('word-image').click();
     const download = await dl;
     const name = download.suggestedFilename();
     m('word download name', name);
@@ -131,7 +136,7 @@ test.describe('board → Word (part 5)', () => {
     await p.getByTestId('board-pdf').click();
     await expect(p.getByTestId('pdf-pick-1')).toBeVisible({ timeout: 30_000 });
     const dl = p.waitForEvent('download');
-    await p.getByTestId('word-download').click();
+    await p.getByTestId('word-image').click();
     const entries = unzip(readFileSync((await (await dl).path())!));
     const png = entries.find((e) => /^word\/media\/.+\.png$/i.test(e.name))!;
     const s = pngSize(png.data);
@@ -155,6 +160,47 @@ test.describe('board → Word (part 5)', () => {
     expect(hPx, 'не выше текстовой области').toBeLessThanOrEqual(boxPx.h + 1);
     expect(wPx, 'но и не нулевой').toBeGreaterThan(0);
     expect(hPx, 'картинка сохранённых пропорций, а не сплющенная').toBeGreaterThan(0);
+    await p.context().close();
+  });
+
+  /*
+   * Часть E: «Word: редактируемый». Проверяется то, ради чего режим сделан: надпись с доски
+   * живёт в документе ТЕКСТОМ (её видно в document.xml, она в своей рамке и она набрана Arial),
+   * а не только пикселями подложки. Пиксели в файле тоже остаются — фигуры.
+   */
+  test('режим «редактируемый»: текст доски становится редактируемым текстом Word', async ({ browser }) => {
+    test.setTimeout(300_000);
+    const { classId, sessionId } = await makeLesson(api, token, 'E2E Word текст');
+    const p = await teacherLessonPage(browser, classId);
+
+    const phrase = 'Oʻzbekcha gʻoya и кириллица';
+    await paint(p, 'A');
+    await drawText(p, TEXT.at, phrase);
+    expect(await inkOf(p, 'text'), 'текст отрисован на холсте').toBeGreaterThan(200);
+    await waitInkPages(api, token, sessionId, 1);
+
+    await p.getByTestId('board-pdf').click();
+    await expect(p.getByTestId('pdf-pick-1')).toBeVisible({ timeout: 30_000 });
+    // ограничение одной строкой на языке интерфейса — оно обязано быть в окне
+    await expect(p.getByTestId('word-hint')).toContainText('повёрнутый');
+    const dl = p.waitForEvent('download');
+    await p.getByTestId('word-editable').click();
+    const download = await dl;
+    expect(download.suggestedFilename(), 'имя файла того же правила')
+      .toMatch(/^BluBlu-.*-\d{4}-\d{2}-\d{2}\.docx$/);
+
+    const entries = unzip(readFileSync((await download.path())!));
+    const doc = find(entries, 'word/document.xml').toString('utf8');
+    const media = entries.filter((e) => /^word\/media\/.+\.png$/i.test(e.name));
+    m('editable docx', { media: media.length, frames: (doc.match(/<w:framePr/g) ?? []).length });
+    expect(media.length, 'одна подложка на доску').toBe(1);
+    expect((doc.match(/<w:sectPr/g) ?? []).length, 'одна страница на доску').toBe(1);
+    expect(doc, 'надпись с доски стала текстом').toContain('кириллица');
+    expect(doc, 'узбекская буква oʻ (U+02BB) дошла без замены').toContain('Oʻzbekcha gʻoya');
+    expect((doc.match(/<w:framePr/g) ?? []).length, 'рамка у текста есть (плюс рамка подложки)')
+      .toBeGreaterThanOrEqual(2);
+    expect(doc, 'шрифт — Arial').toContain('w:ascii="Arial"');
+    expect(doc, 'страница альбомная').toContain('w:orient="landscape"');
     await p.context().close();
   });
 });

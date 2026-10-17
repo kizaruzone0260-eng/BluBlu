@@ -7,6 +7,10 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
+    "./boardDocxBuild": {
+      "types": "./dist/boardDocxBuild.d.ts",
+      "default": "./dist/boardDocxBuild.js"
+    },
     "./locales/ru.json": "./src/locales/ru.json",
     "./locales/uz.json": "./src/locales/uz.json",
     "./locales/en.json": "./src/locales/en.json"
@@ -16,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "docx": "^9.11.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
