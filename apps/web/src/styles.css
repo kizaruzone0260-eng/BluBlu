@@ -781,12 +781,15 @@ button.danger-text { color: var(--danger); }
 .lesson-bar {
   pointer-events: auto;
   /*
-   * Часть D: центр пояса — контейнер сцены, а не окно. `--scene-center` пишет
-   * `lib/sceneBand.ts` (ResizeObserver по `.lesson-main`); без переменной остаётся
-   * прежний центр окна.
+   * Часть D: центр пояса — контейнер сцены, а не окно. `--scene-left`/`--scene-right` пишет
+   * `lib/sceneBand.ts` (ResizeObserver по `.lesson-main`), а полоса центрируется внутри этого
+   * пояса прежним `margin-inline: auto`. `transform: translateX(-50%)` для того же не годится:
+   * трансформация делает `.lesson-bar` содержащим блоком для ЕГО ЖЕ `position: fixed` меню
+   * («Ещё», выбор устройств, выход), и они уезжают за нижний край экрана — клик до пункта не
+   * доходит. Это поймал CI на zz18/zz19/zz2 (прогон 38997323161).
    */
-  position: fixed; bottom: 0; left: var(--scene-center, 50vw); transform: translateX(-50%);
-  width: fit-content;
+  position: fixed; bottom: 0; left: var(--scene-left, 0px); right: var(--scene-right, 0px);
+  margin-inline: auto; width: fit-content;
   max-width: calc(100vw - 12px); z-index: 44;
   display: flex; align-items: center; justify-content: center; gap: 4px; flex-wrap: nowrap;
   padding: 6px 10px; overflow: visible;
@@ -794,8 +797,8 @@ button.danger-text { color: var(--danger); }
   border-radius: var(--r-full); box-shadow: var(--shadow-md);
   transition: transform var(--tr), opacity var(--tr);
 }
-/* автоскрытие: панель уезжает за нижний край, slot сохраняет высоту (сдвиг на −50% сохраняется) */
-.lesson-bar.bar-hidden { transform: translate(-50%, calc(100% + 10px)); opacity: 0; pointer-events: none; }
+/* автоскрытие: панель уезжает за нижний край, slot сохраняет высоту (меню к этому моменту закрыты) */
+.lesson-bar.bar-hidden { transform: translateY(calc(100% + 10px)); opacity: 0; pointer-events: none; }
 .bar-btn {
   position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-width: var(--tap); min-height: var(--tap); padding: 0 10px; margin: 0;
