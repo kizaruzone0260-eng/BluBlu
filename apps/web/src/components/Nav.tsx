@@ -60,7 +60,14 @@ export function LangDropdown({ me, onMeChanged, collapsed }: {
   }
   return (
     <div className="lang-wrap">
-      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={(e) => { setAnchor(e.currentTarget); setOpen((v) => !v); }}
+      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open"
+        onClick={(e) => {
+          const btn = e.currentTarget;
+          // в свёрнутом режиме меню должно открываться СПРАВА ОТ ПАНЕЛИ, а не от кнопки внутри неё:
+          // 4 px от правого края кнопки — это всё ещё рейка. Якорем становится сама рейка.
+          setAnchor(collapsed ? (btn.closest<HTMLElement>('[data-testid=sidebar]') ?? btn) : btn);
+          setOpen((v) => !v);
+        }}
         aria-label={t('common.language')} title={current.native}>
         <Icon d={icons.globe} size={18} /> <span className="lang-code">{current.code.toUpperCase()}</span>
       </button>

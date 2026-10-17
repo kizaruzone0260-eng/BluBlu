@@ -98,7 +98,7 @@ test.describe('свёрнутая боковая панель (часть C)', (
         // ── свёрнутое состояние
         await page.getByTestId('sidebar-collapse').click();
         await expect(rail).toHaveClass(/collapsed/);
-        await expect(page.getByTestId('lang-open')).toBeVisible();
+        await expect(rail.getByTestId('lang-open')).toBeVisible();
 
         const got = await railParts(page);
         expect(got.error, got.error ?? '').toBeNull();
@@ -117,7 +117,10 @@ test.describe('свёрнутая боковая панель (часть C)', (
         // ── меню языка: вылет вправо от рейки и целиком во вьюпорте
         const box = (await rail.boundingBox())!;
         const vp = page.viewportSize()!;
-        await page.getByTestId('lang-open').click();
+        // ВАЖНО: кнопка языка ищется ВНУТРИ рейки. На десктопе в DOM их три (в рейке, в меню
+        // пользователя и в мобильной шапке, которая скрыта, но никуда не делась) — глобальный
+        // getByTestId дал бы strict mode violation.
+        await rail.getByTestId('lang-open').click();
         const menu = page.locator('.lang-menu');
         await expect(menu, `меню языка не открылось (${locale}/${theme})`).toBeVisible();
         const mb = (await menu.boundingBox())!;
