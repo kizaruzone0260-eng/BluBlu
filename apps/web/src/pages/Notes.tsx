@@ -7,6 +7,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { noteHasContent } from '@klass/shared';
 import { api } from '../lib/api';
 import { editorIsAlive } from '../lib/tiptapSafe';
+import { keepFocus } from '../lib/keepFocus';
 import { useDraftEditor, clearDraft, clearDraftIfSaved, moveDraft, type EditorHandle } from '../lib/uncontrolledEditor';
 import { DraftBar } from '../components/RichText';
 import { useAuth } from '../App';
@@ -64,6 +65,7 @@ function MenuBar({ editor }: { editor: Editor | null }) {
       key={label} type="button" className="secondary" aria-label={title} title={title}
       data-testid={testid} aria-pressed={active}
       style={{ margin: 2, padding: '4px 8px', minWidth: 36, minHeight: 36, fontWeight: active ? 700 : 400, marginTop: 4 }}
+      onMouseDown={keepFocus}
       onClick={fn}
     >{label}</button>
   );

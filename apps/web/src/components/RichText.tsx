@@ -3,6 +3,7 @@ import { EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useTranslation } from 'react-i18next';
 import { editorIsAlive } from '../lib/tiptapSafe';
+import { keepFocus } from '../lib/keepFocus';
 import { useDraftEditor, type DraftNotice, type EditorHandle } from '../lib/uncontrolledEditor';
 
 /**
@@ -57,7 +58,7 @@ export function DraftBar({ notice, onApply }: { notice: DraftNotice; onApply: ()
         <>
           <span data-testid="draft-kept">{t('editor.draftKept')}</span>{' '}
           <button type="button" className="ghost" data-testid="draft-apply" style={{ marginTop: 0, minHeight: 36 }}
-            onClick={onApply}>{t('editor.draftApply')}</button>
+            onMouseDown={keepFocus} onClick={onApply}>{t('editor.draftApply')}</button>
         </>
       )}
     </div>
@@ -74,6 +75,7 @@ function MenuBar({ editor }: { editor: Editor | null }) {
       key={label} type="button" className="secondary" title={title}
       data-testid={testid} aria-label={title} aria-pressed={active}
       style={{ margin: 2, padding: '4px 8px', minWidth: 36, minHeight: 36, fontWeight: active ? 700 : 400, marginTop: 4 }}
+      onMouseDown={keepFocus}
       onClick={fn}
     >{label}</button>
   );
