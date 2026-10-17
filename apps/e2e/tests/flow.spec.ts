@@ -113,7 +113,9 @@ test.describe.serial('klass core flows', () => {
     await page.getByTestId('event-title').fill('Ежегодная контрольная');
     const d = new Date(Date.now() + 2 * 86400_000);
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T09:00`;
-    await page.locator('input[type="datetime-local"]').fill(iso);
+    // часть B: поля даты больше не нативные (`type="datetime-local"` рисовал формат браузера),
+    // поэтому цель — testid. Формат значения тот же (`ГГГГ-ММ-ДДЧЧ:ММ`), и разбор его принимает.
+    await page.getByTestId('event-start').fill(iso);
     await page.getByTestId('event-save').click();
     await expect(page.locator('.fc-event, .fc-list-event').first()).toBeVisible();
   });

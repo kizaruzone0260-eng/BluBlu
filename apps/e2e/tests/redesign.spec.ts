@@ -157,7 +157,8 @@ test.describe.serial('redesign (A/B/D/E)', () => {
     await page.getByTestId('event-title').fill(uniq);
     const d = new Date(Date.now() + 3 * 86400_000);
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T10:00`;
-    await page.locator('input[type="datetime-local"]').fill(iso);
+    // часть B: то же место ушло с `input[type="datetime-local"]` на testid — значение прежнее
+    await page.getByTestId('event-start').fill(iso);
     await page.getByTestId('event-save').click();
     await expect(page.locator('.fc-event', { hasText: uniq }).first()).toBeVisible({ timeout: 15_000 });
 

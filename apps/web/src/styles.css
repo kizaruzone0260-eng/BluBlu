@@ -112,6 +112,36 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 input[type=color] { width: 48px; height: 40px; padding: 2px; min-height: 0; }
 input[type=checkbox] { width: 18px; height: 18px; min-height: 0; accent-color: var(--accent); }
 
+/* ── поле даты и времени (часть B, 2026-10-17) ─────────────────────────────
+   Формат задаёт язык интерфейса, а не браузер; календарь — меню на общем
+   механизме размещения (lib/popover.ts), поэтому координаты приходят из `style`. */
+.dt-field { display: flex; flex-direction: column; gap: var(--sp-1); }
+.dt-row { display: flex; gap: var(--sp-1); align-items: stretch; }
+.dt-row input { flex: 1; min-width: 0; }
+.dt-open {
+  flex: none; width: var(--tap); min-width: var(--tap); padding: 0;
+  background: var(--surface); border: 1px solid var(--border-strong); color: var(--text);
+}
+.dt-open:hover { border-color: var(--accent); background: var(--surface-2); }
+.dt-hint { margin: 0; font-size: .78rem; }
+.dt-error { margin: 0; }
+.dt-pop { width: min(360px, 94vw); padding: var(--sp-2); margin: 0; }
+.dt-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-1); }
+.dt-head button { min-width: var(--tap); padding: 0; background: transparent; color: var(--text); font-size: 1.2rem; }
+.dt-title { font-weight: 600; }
+.dt-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.dt-dow { display: flex; align-items: center; justify-content: center; font-size: .72rem; color: var(--text-muted); }
+.dt-cell {
+  min-height: var(--tap); margin: 0; padding: 0; font: inherit; color: var(--text);
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-sm); cursor: pointer;
+}
+.dt-cell:hover { background: var(--accent-soft); }
+.dt-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dt-cell.is-today { border-color: var(--border-strong); }
+.dt-cell.is-sel { background: var(--accent); color: var(--accent-text); }
+.dt-cell.is-empty { pointer-events: none; }
+.dt-today { width: 100%; }
+
 /* ── buttons ────────────────────────────────────────────────────────────── */
 button {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);

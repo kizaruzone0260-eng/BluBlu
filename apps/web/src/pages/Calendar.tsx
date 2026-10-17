@@ -8,6 +8,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, getToken } from '../lib/api';
+import { DateTimeField } from '../components/DateTimeField';
 import { APP_NAME } from '../lib/brand';
 import { useAuth } from '../App';
 
@@ -282,11 +283,9 @@ export default function Calendar() {
           <textarea placeholder={t('classes.description')} rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           {/* item 6: time is the device timezone (auto-detected) — no tz in the label */}
           <div className="row" style={{ marginTop: 8, alignItems: 'flex-end' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ margin: 0 }} htmlFor="event-start">{t('cal.start')}</label>
-              <input id="event-start" type="datetime-local" value={form.startLocal} data-testid="event-start"
-                onChange={(e) => setForm({ ...form, startLocal: e.target.value })} style={{ width: 'auto' }} required />
-            </div>
+            <DateTimeField kind="datetime" id="event-start" testid="event-start" required
+              label={t('cal.start')} value={form.startLocal}
+              onChange={(v) => setForm({ ...form, startLocal: v })} style={{ minWidth: 230 }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label style={{ margin: 0 }} htmlFor="event-duration">{t('cal.duration')}</label>
               <input id="event-duration" type="number" min={1} max={480} value={form.durationMin} data-testid="event-duration"
@@ -300,14 +299,9 @@ export default function Calendar() {
               ))}
             </div>
           </div>
-          {/* item 6: native pickers follow the BROWSER locale — show a localized
-              reading + format hint so the app language always wins */}
-          {form.startLocal && (
-            <p className="muted" style={{ fontSize: 13, margin: '4px 0 0' }} data-testid="event-start-hint">
-              {t('cal.start')}: {new Intl.DateTimeFormat(i18n.language, { dateStyle: 'full', timeStyle: 'short' }).format(new Date(form.startLocal))}
-            </p>
-          )}
-          <p className="muted" style={{ fontSize: 12, margin: '2px 0 0' }}>{t('cal.dtFormatHint')}</p>
+          {/* часть B: раньше под полем стояла строка «формат поля — как в браузере» и локализованный
+              пересказ даты. Теперь само поле пишет дату на языке интерфейса, поэтому обеих строк
+              больше нет — повторять то же самое под полем нечего. */}
           <div className="row" style={{ marginTop: 8 }}>
             <span className="muted">{t('cal.repeatWeekly')}</span>
             {[1, 2, 3, 4, 5, 6, 7].map((d) => (
@@ -322,8 +316,8 @@ export default function Calendar() {
                 /> {t(`cal.wd${d}`)}
               </label>
             ))}
-            <input type="date" value={form.repeatUntil} title={t('cal.until')}
-              onChange={(e) => setForm({ ...form, repeatUntil: e.target.value })} style={{ width: 'auto' }} />
+            <DateTimeField kind="date" testid="event-until" label={t('cal.until')}
+              value={form.repeatUntil} onChange={(v) => setForm({ ...form, repeatUntil: v })} style={{ minWidth: 190 }} />
           </div>
           {save.isError && <p className="error">{t('common.errorGeneric')}</p>}
           <div className="row">

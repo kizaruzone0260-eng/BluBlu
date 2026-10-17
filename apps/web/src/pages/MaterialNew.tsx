@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { classifyAttachmentUrl, safeExternalUrl, type AttachmentKind } from '../lib/attachments';
 import RichText from '../components/RichText';
+import { DateTimeField } from '../components/DateTimeField';
 import { useAuth } from '../App';
 import { usePopover } from '../lib/popover';
 import type { EditorHandle } from '../lib/uncontrolledEditor';
@@ -287,9 +288,8 @@ export default function MaterialNew() {
 
         {publish === 'schedule' && (
           <div style={{ marginTop: 12 }}>
-            <label htmlFor="m-when">{t('material.scheduleFor')}</label>
-            <input id="m-when" type="datetime-local" data-testid="material-when" value={scheduledAt} style={{ width: '100%' }}
-              onChange={(e) => setScheduledAt(e.target.value)} />
+            <DateTimeField kind="datetime" id="m-when" testid="material-when" label={t('material.scheduleFor')}
+              value={scheduledAt} onChange={setScheduledAt} />
             <p className="muted" style={{ fontSize: '.8rem' }}>{t('material.tzDevice')}</p>
           </div>
         )}
