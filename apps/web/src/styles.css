@@ -394,6 +394,23 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .sidebar.collapsed .side-item { justify-content: center; padding: 0; }
 .sidebar.collapsed .side-item .lbl, .sidebar.collapsed .side-brand .lbl, .sidebar.collapsed .side-user .lbl { display: none; }
 .side-foot { border-top: 1px solid var(--border); padding-top: var(--sp-2); position: relative; }
+.side-lang { padding: 4px 8px; }
+.side-collapse { margin: 0; width: 100%; justify-content: flex-start; }
+/*
+ * Часть C (2026-10-17): в свёрнутой рейке шириной 64 px (48 px контента) подпись «EN» вместе с
+ * значком и отступами кнопки давала ~78 px — код языка вылезал за рамку. Здесь остаётся только
+ * значок, а код уменьшается до бейджа; подсказка (`title`) и ария-имя сохраняют смысл.
+ * Пункты «повторить то же» для остальных элементов рейки: кнопка раскрытия, аватар и счётчик
+ * непрочитанного тоже были шире 48 px (отступы 16+16 и `margin-left: auto` у бейджа).
+ */
+.sidebar.collapsed .side-lang { padding: 4px 0; }
+.sidebar.collapsed .lang-wrap button { width: 100%; min-width: 0; padding: 0 4px; gap: 2px; justify-content: center; }
+.sidebar.collapsed .lang-code { font-size: .58rem; font-weight: 700; opacity: .75; }
+.sidebar.collapsed .side-collapse { justify-content: center; padding: 0 4px; }
+.sidebar.collapsed .side-user { padding: 4px; justify-content: center; }
+.sidebar.collapsed .nav-badge { min-width: 8px; width: 8px; height: 8px; padding: 0; font-size: 0; margin-left: 0; }
+/* меню пользователя и меню языка в свёрнутом виде открываются ВПРАВО от рейки: внутрь 64 px они не помещаются */
+.sidebar.collapsed .menu-pop { left: 100%; right: auto; width: 240px; margin-left: 4px; }
 .side-user { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border-radius: var(--r-md); cursor: pointer; min-height: var(--tap); }
 .side-user:hover { background: var(--surface-2); }
 .avatar {

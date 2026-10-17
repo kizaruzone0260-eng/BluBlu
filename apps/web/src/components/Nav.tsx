@@ -32,11 +32,16 @@ export const icons = {
 };
 
 /** Compact language dropdown: shows CURRENT language, switches instantly (B.2). */
-export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?: () => void }) {
+export function LangDropdown({ me, onMeChanged, collapsed }: {
+  me: Me | null;
+  onMeChanged?: () => void;
+  /** часть C: в свёрнутой рейке помещается только значок, а меню открывается вылетом вправо */
+  collapsed?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const pop = usePopover({ open, anchor, align: 'end', onClose: () => setOpen(false) });
+  const pop = usePopover({ open, anchor, align: collapsed ? 'right' : 'end', onClose: () => setOpen(false) });
   const current = LANGUAGE_CHOICES.find((l) => l.code === i18n.language)
     ?? LANGUAGE_CHOICES.find((l) => l.code === DEFAULT_LOCALE)!;
   async function pick(code: string) {
@@ -55,8 +60,9 @@ export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?:
   }
   return (
     <div className="lang-wrap">
-      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={(e) => { setAnchor(e.currentTarget); setOpen((v) => !v); }} aria-label={t('common.language')}>
-        <Icon d={icons.globe} size={18} /> {current.code.toUpperCase()}
+      <button className="ghost" style={{ marginTop: 0 }} data-testid="lang-open" onClick={(e) => { setAnchor(e.currentTarget); setOpen((v) => !v); }}
+        aria-label={t('common.language')} title={current.native}>
+        <Icon d={icons.globe} size={18} /> <span className="lang-code">{current.code.toUpperCase()}</span>
       </button>
       {open && (
         <div className="lang-menu" role="menu" data-testid="lang-menu" ref={pop.ref} style={pop.style}>
@@ -120,7 +126,7 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
     <>
       {/* ≥768px — sidebar */}
       {me && !loggedOut && (
-        <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'}>
+        <aside className={collapsed ? 'sidebar collapsed' : 'sidebar'} data-testid="sidebar">
           <Link to="/" className="side-brand">
             <span className="side-logo">B</span>
             <span className="lbl">{APP_NAME}</span>
@@ -136,10 +142,10 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
             ))}
           </nav>
           <div className="side-foot">
-            <div className="side-lang" style={{ padding: '4px 8px' }}>
-              <LangDropdown me={me} onMeChanged={() => undefined} />
+            <div className="side-lang">
+              <LangDropdown me={me} onMeChanged={() => undefined} collapsed={collapsed} />
             </div>
-            <button className="ghost" style={{ margin: 0, width: '100%', justifyContent: 'flex-start' }}
+            <button className="ghost side-collapse" data-testid="sidebar-collapse"
               onClick={() => { const c = !collapsed; setCollapsed(c); localStorage.setItem('klass_sidebar', c ? '1' : '0'); }}
               title={t('nav.collapse')}>
               <span style={{ transform: collapsed ? 'rotate(180deg)' : undefined, display: 'inline-flex' }}><Icon d={icons.collapse} size={18} /></span>

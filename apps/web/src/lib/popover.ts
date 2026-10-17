@@ -25,7 +25,7 @@ const MARGIN = 8;
 /** Минимальная высота, которую ещё имеет смысл показывать вместо переворота. */
 const MIN_HEIGHT = 96;
 
-export type PopAlign = 'start' | 'end' | 'center';
+export type PopAlign = 'start' | 'end' | 'center' | 'right';
 export interface PopInset { top: number; bottom: number }
 
 export interface PopPos { top: number; left: number; maxHeight: number }
@@ -35,6 +35,10 @@ export interface PopPos { top: number; left: number; maxHeight: number }
  *
  * Чистая функция — её можно проверить без DOM, и тест геометрии меню (zz23) сверяется с ней же.
  * `inset` — сколько места у вьюпорта отнято прижатыми к крам полосами приложения.
+ *
+ * `right` — вылет СПРАВА от кнопки, прижатый нижним краем к нижнему краю кнопки: так открывается
+ * меню языка в свёрнутой боковой панели (часть C), где кнопка стоит в самом низу узкой рейки и
+ * меню, открытое вниз, уперлось бы в край экрана, а внутрь рейки — не помещается.
  */
 export function popPos(
   anchor: { top: number; bottom: number; left: number; width: number },
@@ -46,6 +50,14 @@ export function popPos(
   inset: PopInset = { top: 0, bottom: 0 },
 ): PopPos {
   const w = Math.min(box.w, vw - MARGIN * 2);
+  if (align === 'right') {
+    const left = Math.max(MARGIN, Math.min(anchor.left + anchor.width + gap, vw - w - MARGIN));
+    const yMin = MARGIN + inset.top;
+    const yMax = vh - MARGIN - inset.bottom;
+    const height = Math.min(box.h, Math.max(MIN_HEIGHT, yMax - yMin));
+    const top = Math.max(yMin, Math.min(anchor.bottom - height, yMax - height));
+    return { top, left, maxHeight: Math.max(MARGIN, height) };
+  }
   const anchorX = align === 'center' ? anchor.left + anchor.width / 2 - w / 2
     : align === 'end' ? anchor.left + anchor.width - w
       : anchor.left;
