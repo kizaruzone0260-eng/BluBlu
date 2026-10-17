@@ -12,6 +12,12 @@
  * Два окна: 1280×500 (низкий десктоп — полоса управления и карточки не оставляют места под
  * кнопкой) и 390×600 (телефон — меню крайней кнопки свешивалось за правый край). Никаких
  * `sleep`: открытие подтверждается `toBeVisible`, закрытие — `toHaveCount(0)`.
+ *
+ * Помимо прямоугольника проверяется и причина, по которой меню вообще способно уехать за экран:
+ * ни один предок меню не должен создавать containing block (`transform`, `filter`, `perspective`,
+ * `will-change: transform`, `contain: paint|layout|strict|content`) — иначе `position: fixed`
+ * считается не от окна. Полоса урока и её меню покрыты здесь же: `mic-menu`, `cam-menu`,
+ * `more-menu`, `leave-menu`.
  */
 import { test, expect, request as pw, type Page } from '@playwright/test';
 import { BASE, loginUi, makeLesson, stack, teacherToken, waitBoard, type Ctx } from './boardFixtures';
@@ -51,6 +57,33 @@ async function checkMenu(page: Page, trigger: string, testid: string, label: str
   expect(Math.min(gap.left, gap.top, gap.right, gap.bottom),
     `${label}: меню за краем вьюпорта ${JSON.stringify(gap)} при ${vp.width}×${vp.height}`)
     .toBeGreaterThanOrEqual(-0.5);
+
+  /*
+   * Тот же дефект, что унёс восемь спеков в прогоне 38997323161: полоса урока получила
+   * `transform: translateX(-50%)` для центрирования, и стала содержащим блоком для своих же
+   * `position: fixed` меню — координаты, посчитанные от окна, применились от её прямоугольника,
+   * и меню уехало за нижний край. Проверка прямо говорит про причину, а не про следствие: у
+   * предка фиксированного меню не может быть свойства, создающего containing block.
+   */
+  const hosts = await menu.evaluate((el) => {
+    const PROPS = ['transform', 'translate', 'rotate', 'scale', 'perspective', 'filter', 'backdrop-filter'];
+    const bad: string[] = [];
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const s = getComputedStyle(p);
+      const name = `${p.tagName.toLowerCase()}${p.className ? `.${String(p.className).split(' ')[0]}` : ''}`;
+      for (const prop of PROPS) {
+        const v = s.getPropertyValue(prop).trim();
+        if (v && v !== 'none') bad.push(`${name} { ${prop}: ${v} }`);
+      }
+      if (/transform|translate|rotate|scale|filter|perspective/.test(s.willChange)) {
+        bad.push(`${name} { will-change: ${s.willChange} }`);
+      }
+      if (/\b(paint|layout|strict|content)\b/.test(s.contain)) bad.push(`${name} { contain: ${s.contain} }`);
+    }
+    return bad;
+  });
+  expect(hosts, `${label}: предок fixed-меню создаёт containing block — координаты считаются не от окна`)
+    .toEqual([]);
 
   const items = menu.locator('[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]');
   const n = await items.count();
