@@ -98,6 +98,13 @@ test.describe('свёрнутая боковая панель (часть C)', (
         // ── свёрнутое состояние
         await page.getByTestId('sidebar-collapse').click();
         await expect(rail).toHaveClass(/collapsed/);
+        /*
+         * Класс меняется мгновенно, а ширина рейки анимируется (`transition: width 160ms`), и
+         * замер сразу после клика давал развёрнутые 232 px вместо 64 — на этом и краснел zz26 в
+         * прогоне 39034112298. `toHaveCSS` опрашивает значение, то есть дожидается конца перехода,
+         * и заодно проверяет сам факт: свёрнутая рейка обязана стать ровно 64 px.
+         */
+        await expect(rail, 'свёрнутая рейка обязана доехать до 64 px').toHaveCSS('width', '64px');
         await expect(rail.getByTestId('lang-open')).toBeVisible();
 
         const got = await railParts(page);
@@ -147,6 +154,7 @@ test.describe('свёрнутая боковая панель (часть C)', (
         // и в раскрытом виде панель возвращается к нормальной ширине
         await page.getByTestId('sidebar-collapse').click();
         await expect(rail).not.toHaveClass(/collapsed/);
+        await expect(rail, 'развёрнутая рейка возвращается к 232 px').toHaveCSS('width', '232px');
       });
     }
   }

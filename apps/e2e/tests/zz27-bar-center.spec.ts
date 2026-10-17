@@ -22,9 +22,33 @@ import { expect, test, request as pw, type Page } from '@playwright/test';
 import { BASE, loginUi, m, stack, teacherToken, type Ctx } from './boardFixtures';
 import { barClick, openTab, wakeBar } from './controlBar';
 
+/**
+ * Дождаться конца раскладки: и анимации (`transition: width 160ms` у боковой, у правой панели),
+ * и rAF-пересчёта пояса в `lib/sceneBand.ts`. Без этого замер снимает середину перехода — полоса
+ * ещё едет по старому поясу, сцена уже по новому, — и проверка центра превращается в лотерею.
+ * Критерий — два подряд одинаковых кадра прямоугольников, а не сон.
+ */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const sig = () => {
+      const b = document.querySelector<HTMLElement>('[data-testid=lesson-bar]')?.getBoundingClientRect();
+      const s = document.querySelector<HTMLElement>('.lesson-main')?.getBoundingClientRect();
+      return `${b?.x ?? -1}:${b?.width ?? -1}:${s?.x ?? -1}:${s?.width ?? -1}`;
+    };
+    let prev = '';
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      const now = sig();
+      if (now === prev) return;
+      prev = now;
+    }
+  });
+}
+
 /** ширина пояса сцены и центра панели/сцены в координатах окна */
 async function centers(page: Page) {
   await wakeBar(page);
+  await settle(page);
   return page.evaluate(() => {
     const bar = document.querySelector<HTMLElement>('[data-testid=lesson-bar]');
     const main = document.querySelector<HTMLElement>('.lesson-main');
