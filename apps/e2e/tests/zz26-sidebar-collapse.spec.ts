@@ -148,7 +148,13 @@ test.describe('свёрнутая боковая панель (часть C)', (
         const other = LOCALES.find((l) => l !== locale)!;
         await menu.locator(`[data-testid=lang-${other}]`).click();
         await expect(page.locator('html')).toHaveAttribute('lang', other, 'выбор из меню не поменял язык');
-        await expect(page.getByTestId('lang-open')).toContainText(other.toUpperCase());
+        /*
+         * Кнопка языка ищется ВНУТРИ рейки, как и клик по ней выше: на десктопе в DOM их две
+         * (в рейке и в скрытой мобильной шапке), и глобальный `getByTestId` даёт strict mode
+         * violation — на этом и краснели все шесть вариантов в прогоне 39040821563.
+         */
+        await expect(rail.getByTestId('lang-open'), 'выбор из меню не отразился на кнопке в рейке')
+          .toContainText(other.toUpperCase());
         await expect(menu).toHaveCount(0);
 
         // и в раскрытом виде панель возвращается к нормальной ширине
