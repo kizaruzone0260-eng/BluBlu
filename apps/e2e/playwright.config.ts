@@ -13,6 +13,15 @@ export default defineConfig({
   reporter: [['list'], ['json', { outputFile: 'e2e-results.json' }]],
   use: {
     baseURL: 'http://127.0.0.1:3123',
+    /*
+     * 2026-10-17 (прогон 38997323161): у действия таймаута не было вовсе, оно ограничено только
+     * таймаутом теста. Красный клик ждал 150–420 с и повторял попытку каждые 500 мс — восемь
+     * таких кликов съели 40-минутный лимит джобы, и Playwright не успел напечатать отчёт: без
+     * сообщений и трасс разбирать было нечего. Ожидание клика — секунды; минуты waits — это
+     * `expect(...)` со своим таймаутом или `test.setTimeout`.
+     */
+    actionTimeout: 20_000,
+    navigationTimeout: 30_000,
     // local dev box has no browser download → installed Edge; CI installs chromium
     channel: process.env.CI ? undefined : 'msedge',
     permissions: ['camera', 'microphone'],
