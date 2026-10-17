@@ -50,7 +50,7 @@ const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|
 
 /** Классы, чей предок обязан оставаться «плоским» для `position: fixed` потомков. */
 const CHAINS: { menu: string; hosts: string[] }[] = [
-  { menu: '.bar-menu (микрофон, камера, «Ещё», «Выйти»)', hosts: ['.lesson-bar', '.bar-slot', '.lesson-shell'] },
+  { menu: '.bar-menu (микрофон, камера, «Ещё», «Выйти»)', hosts: ['.bar-band', '.lesson-bar', '.bar-slot', '.lesson-shell'] },
   { menu: '.menu-pop (язык в рейке, вкладки доски)', hosts: ['.sidebar', '.lesson-shell'] },
 ];
 
@@ -124,19 +124,27 @@ describe('предок fixed-меню не имеет трансформации
     expect(findTraps(bad, CHAINS.flatMap((c) => c.hosts)).some((v) => v.includes('bar-hidden'))).toBe(false);
   });
 
-  it('полоса центрируется поясом сцены без трансформации', () => {
-    const bar = rules(css).find((r) => r.selector === '.lesson-bar' && r.body.includes('position: fixed'));
-    expect(bar, 'правило `.lesson-bar` с position: fixed').toBeTruthy();
-    expect(bar!.body).toContain('margin-inline: auto');
-    expect(bar!.body).toMatch(/left:\s*var\(--scene-left/);
-    expect(bar!.body).toMatch(/right:\s*var\(--scene-right/);
+  it('полосу центрирует пояс сцены, а сама полоса стоит на месте', () => {
+    const band = rules(css).find((r) => r.selector === '.bar-band');
+    expect(band, 'правило `.bar-band` — фиксированный пояс сцены').toBeTruthy();
+    expect(band!.body).toMatch(/position:\s*fixed/);
+    expect(band!.body).toMatch(/left:\s*var\(--scene-left/);
+    expect(band!.body).toMatch(/right:\s*var\(--scene-right/);
+    expect(band!.body).toMatch(/justify-content:\s*center/);
+
+    const bar = rules(css).find((r) => r.selector === '.lesson-bar');
+    expect(bar, 'правило `.lesson-bar`').toBeTruthy();
+    // полоса — flex-элемент пояса: у неё нет ни left/right, ни transform, ни margin-inline: auto
+    expect(bar!.body).not.toMatch(/(^|;)\s*(left|right)\s*:/);
     expect(bar!.body).not.toMatch(/(^|;)\s*transform\s*:/);
+    expect(bar!.body).not.toMatch(/margin-inline:\s*auto/);
+
     // хук пишет те же две величины: иначе CSS ссылается на то, чего никто не считает
     // (комментарии вырезаны: в них старое имя упомянуто намеренно, как объяснение ловушки)
-    const band = code(read(bandPath));
-    expect(band).toContain("'--scene-left'");
-    expect(band).toContain("'--scene-right'");
-    expect(band).not.toContain('--scene-center');
+    const band2 = code(read(bandPath));
+    expect(band2).toContain("'--scene-left'");
+    expect(band2).toContain("'--scene-right'");
+    expect(band2).not.toContain('--scene-center');
   });
 
   it('скрытие полосы возможно только при закрытом меню — обоснование исключения', () => {

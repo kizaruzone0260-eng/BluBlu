@@ -177,210 +177,213 @@ export default function LessonBar({ state, actions, devices }: {
 
   return (
     <div className="bar-slot">
-      <div
-        ref={rootRef}
-        className={`lesson-bar${hidden ? ' bar-hidden' : ''}`}
-        role="toolbar"
-        aria-label={t('lesson.barAria')}
-        data-testid="lesson-bar"
-        data-popover-chrome
-        data-hidden={hidden ? '1' : '0'}
-        onMouseEnter={() => setOverBar(true)}
-        onMouseLeave={() => setOverBar(false)}
-      >
-        {split('mic', t('lesson.toggleMic'), state.micOn, '🎙', 'mic-toggle', () => actions.mic())}
-        {split('cam', t('lesson.toggleCamera'), state.camOn, '📹', 'camera-toggle', () => actions.cam())}
+      {/* пояс сцены: он центрирует полосу по .lesson-main, поэтому у самой полосы transform нет */}
+      <div className="bar-band">
+        <div
+          ref={rootRef}
+          className={`lesson-bar${hidden ? ' bar-hidden' : ''}`}
+          role="toolbar"
+          aria-label={t('lesson.barAria')}
+          data-testid="lesson-bar"
+          data-popover-chrome
+          data-hidden={hidden ? '1' : '0'}
+          onMouseEnter={() => setOverBar(true)}
+          onMouseLeave={() => setOverBar(false)}
+        >
+          {split('mic', t('lesson.toggleMic'), state.micOn, '🎙', 'mic-toggle', () => actions.mic())}
+          {split('cam', t('lesson.toggleCamera'), state.camOn, '📹', 'camera-toggle', () => actions.cam())}
 
-        {/* показ экрана: на телефоне — внутри «Ещё» */}
-        <span className="bar-desk">
-          {btn(state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen'), state.screenOn,
-            () => actions.share(), 'share-toggle', '🖥',
-            { disabled: !state.connected, cap: state.screenOn ? t('lesson.capStopShare') : t('lesson.capShare') })}
-        </span>
+          {/* показ экрана: на телефоне — внутри «Ещё» */}
+          <span className="bar-desk">
+            {btn(state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen'), state.screenOn,
+              () => actions.share(), 'share-toggle', '🖥',
+              { disabled: !state.connected, cap: state.screenOn ? t('lesson.capStopShare') : t('lesson.capShare') })}
+          </span>
 
-        {btn(state.handRaised ? t('lesson.lowerHand') : t('lesson.raiseHand'), state.handRaised,
-          () => actions.hand(), 'raise-hand', '✋', { cap: t('lesson.capHand') })}
-        {/* доска: на телефоне уезжает в «Ещё» — там не больше пяти кнопок (задача 2026-10-10) */}
-        <span className="bar-desk">
-          {btn(state.boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen'), state.boardOpen,
-            () => actions.board(), 'board-toggle', '🧑‍🏫', { cap: t('lesson.capBoard') })}
-        </span>
-        <span className="bar-rel">
-          {btn(t('lesson.commentsTitle'), state.commentsOpen, () => actions.comments(), 'comments-open', '💬',
-            { cap: t('lesson.capComments') })}
-          {state.unread > 0 && !state.commentsOpen && (
-            <span className="bar-badge" data-testid="comments-unread" aria-hidden="true">{state.unread > 99 ? '99+' : state.unread}</span>
+          {btn(state.handRaised ? t('lesson.lowerHand') : t('lesson.raiseHand'), state.handRaised,
+            () => actions.hand(), 'raise-hand', '✋', { cap: t('lesson.capHand') })}
+          {/* доска: на телефоне уезжает в «Ещё» — там не больше пяти кнопок (задача 2026-10-10) */}
+          <span className="bar-desk">
+            {btn(state.boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen'), state.boardOpen,
+              () => actions.board(), 'board-toggle', '🧑‍🏫', { cap: t('lesson.capBoard') })}
+          </span>
+          <span className="bar-rel">
+            {btn(t('lesson.commentsTitle'), state.commentsOpen, () => actions.comments(), 'comments-open', '💬',
+              { cap: t('lesson.capComments') })}
+            {state.unread > 0 && !state.commentsOpen && (
+              <span className="bar-badge" data-testid="comments-unread" aria-hidden="true">{state.unread > 99 ? '99+' : state.unread}</span>
+            )}
+          </span>
+
+          {/* участники: на телефоне — внутри «Ещё» */}
+          <span className="bar-desk">
+            <button
+              type="button" className={`bar-btn${state.participantsOpen ? ' bar-active' : ''}`}
+              data-testid="participants-toggle"
+              aria-label={`${t('lesson.peersTitle')} · ${state.peers}`}
+              aria-pressed={state.participantsOpen} title={t('lesson.peersTitle')}
+              onClick={() => actions.participants()}
+            >
+              <span className="bar-ico" aria-hidden="true">👥</span>
+              <span className="bar-lbl">{t('lesson.peersTitle')}</span>
+              {state.hands > 0 && (
+                <span className="bar-badge" data-testid="participants-badge" aria-hidden="true">{state.hands}</span>
+              )}
+            </button>
+          </span>
+
+          <span className="bar-rel">
+            <button
+              type="button" className={`bar-btn${menu === 'more' ? ' bar-active' : ''}`}
+              data-testid="more-btn" aria-label={t('lesson.more')} aria-haspopup="menu"
+              aria-expanded={menu === 'more'} title={t('lesson.more')} onClick={(e) => toggle('more', e.currentTarget)}
+            >
+              <span className="bar-ico" aria-hidden="true">⋯</span>
+              <span className="bar-lbl">{t('lesson.more')}</span>
+            </button>
+          </span>
+
+          {state.isTeacher ? (
+            <button
+              type="button" className="bar-btn bar-leave" data-testid="leave-btn"
+              aria-label={t('lesson.leave')} title={t('lesson.leave')}
+              aria-haspopup="menu" aria-expanded={menu === 'leave'}
+              onClick={(e) => toggle('leave', e.currentTarget)}
+            >
+              <span className="bar-ico" aria-hidden="true">📴</span>
+              <span className="bar-lbl">{t('lesson.leave')}</span>
+            </button>
+          ) : (
+            <button
+              type="button" className="bar-btn bar-leave" data-testid="leave-btn"
+              aria-label={t('lesson.leave')} title={t('lesson.leave')} onClick={() => actions.leave()}
+            >
+              <span className="bar-ico" aria-hidden="true">📴</span>
+              <span className="bar-lbl">{t('lesson.leave')}</span>
+            </button>
           )}
-        </span>
 
-        {/* участники: на телефоне — внутри «Ещё» */}
-        <span className="bar-desk">
-          <button
-            type="button" className={`bar-btn${state.participantsOpen ? ' bar-active' : ''}`}
-            data-testid="participants-toggle"
-            aria-label={`${t('lesson.peersTitle')} · ${state.peers}`}
-            aria-pressed={state.participantsOpen} title={t('lesson.peersTitle')}
-            onClick={() => actions.participants()}
-          >
-            <span className="bar-ico" aria-hidden="true">👥</span>
-            <span className="bar-lbl">{t('lesson.peersTitle')}</span>
-            {state.hands > 0 && (
-              <span className="bar-badge" data-testid="participants-badge" aria-hidden="true">{state.hands}</span>
-            )}
-          </button>
-        </span>
-
-        <span className="bar-rel">
-          <button
-            type="button" className={`bar-btn${menu === 'more' ? ' bar-active' : ''}`}
-            data-testid="more-btn" aria-label={t('lesson.more')} aria-haspopup="menu"
-            aria-expanded={menu === 'more'} title={t('lesson.more')} onClick={(e) => toggle('more', e.currentTarget)}
-          >
-            <span className="bar-ico" aria-hidden="true">⋯</span>
-            <span className="bar-lbl">{t('lesson.more')}</span>
-          </button>
-        </span>
-
-        {state.isTeacher ? (
-          <button
-            type="button" className="bar-btn bar-leave" data-testid="leave-btn"
-            aria-label={t('lesson.leave')} title={t('lesson.leave')}
-            aria-haspopup="menu" aria-expanded={menu === 'leave'}
-            onClick={(e) => toggle('leave', e.currentTarget)}
-          >
-            <span className="bar-ico" aria-hidden="true">📴</span>
-            <span className="bar-lbl">{t('lesson.leave')}</span>
-          </button>
-        ) : (
-          <button
-            type="button" className="bar-btn bar-leave" data-testid="leave-btn"
-            aria-label={t('lesson.leave')} title={t('lesson.leave')} onClick={() => actions.leave()}
-          >
-            <span className="bar-ico" aria-hidden="true">📴</span>
-            <span className="bar-lbl">{t('lesson.leave')}</span>
-          </button>
-        )}
-
-        {menu === 'mic' && (
-          <div className="bar-menu" role="group" aria-label={t('lesson.pickMic')} data-testid="mic-menu"
-            ref={barPop.ref} style={barPop.style}>
-            <div className="bar-menu-title">🎙 {t('lesson.pickMic')}</div>
-            {deviceRows('mic')}
-          </div>
-        )}
-        {menu === 'cam' && (
-          <div className="bar-menu" role="group" aria-label={t('lesson.pickCam')} data-testid="cam-menu"
-            ref={barPop.ref} style={barPop.style}>
-            <div className="bar-menu-title">📹 {t('lesson.pickCam')}</div>
-            {deviceRows('cam')}
-          </div>
-        )}
-        {menu === 'leave' && (
-          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="leave-menu"
-            ref={barPop.ref} style={barPop.style}>
-            <button type="button" className="bar-item" role="menuitem" data-testid="leave-keep"
-              onClick={() => { close(); actions.leave(); }}>
-              📴 {t('lesson.leaveKeep')}
-            </button>
-            {!confirmEnd ? (
-              <button type="button" className="bar-item bar-danger" role="menuitem" data-testid="end-for-all"
-                onClick={() => setConfirmEnd(true)}>
-                ⏹ {t('lesson.endForAll')}
+          {menu === 'mic' && (
+            <div className="bar-menu" role="group" aria-label={t('lesson.pickMic')} data-testid="mic-menu"
+              ref={barPop.ref} style={barPop.style}>
+              <div className="bar-menu-title">🎙 {t('lesson.pickMic')}</div>
+              {deviceRows('mic')}
+            </div>
+          )}
+          {menu === 'cam' && (
+            <div className="bar-menu" role="group" aria-label={t('lesson.pickCam')} data-testid="cam-menu"
+              ref={barPop.ref} style={barPop.style}>
+              <div className="bar-menu-title">📹 {t('lesson.pickCam')}</div>
+              {deviceRows('cam')}
+            </div>
+          )}
+          {menu === 'leave' && (
+            <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="leave-menu"
+              ref={barPop.ref} style={barPop.style}>
+              <button type="button" className="bar-item" role="menuitem" data-testid="leave-keep"
+                onClick={() => { close(); actions.leave(); }}>
+                📴 {t('lesson.leaveKeep')}
               </button>
-            ) : (
-              <div className="panel-section" data-testid="end-confirm">
-                <p className="bar-hint" role="presentation">{t('lesson.endForAllConfirm')}</p>
-                <div className="row">
-                  <button type="button" className="bar-item bar-danger" role="menuitem" data-testid="end-for-all-confirm"
-                    onClick={() => { close(); actions.endForAll(); }}>
-                    {t('lesson.confirm')}
-                  </button>
-                  <button type="button" className="bar-item" role="menuitem" data-testid="end-cancel" onClick={() => setConfirmEnd(false)}>
-                    ✕ {t('common.cancel')}
-                  </button>
+              {!confirmEnd ? (
+                <button type="button" className="bar-item bar-danger" role="menuitem" data-testid="end-for-all"
+                  onClick={() => setConfirmEnd(true)}>
+                  ⏹ {t('lesson.endForAll')}
+                </button>
+              ) : (
+                <div className="panel-section" data-testid="end-confirm">
+                  <p className="bar-hint" role="presentation">{t('lesson.endForAllConfirm')}</p>
+                  <div className="row">
+                    <button type="button" className="bar-item bar-danger" role="menuitem" data-testid="end-for-all-confirm"
+                      onClick={() => { close(); actions.endForAll(); }}>
+                      {t('lesson.confirm')}
+                    </button>
+                    <button type="button" className="bar-item" role="menuitem" data-testid="end-cancel" onClick={() => setConfirmEnd(false)}>
+                      ✕ {t('common.cancel')}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-        {menu === 'more' && (
-          <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="more-menu"
-            ref={barPop.ref} style={barPop.style}>
-            <div className="bar-menu-title" role="presentation">📱 {t('lesson.layout')}</div>
-            {([
-              ['auto', t('lesson.layoutAuto')], ['gallery', t('lesson.layoutGrid')],
-              ['stage', t('lesson.layoutSidebar')], ['teacher', t('lesson.layoutSpotlight')],
-            ] as const).map(([value, label]) => (
-              <button key={value} type="button" className="bar-item" role="menuitemradio"
-                aria-checked={state.layout === value} data-testid={`layout-${value}`}
-                onClick={() => actions.layout(value)}>
-                {label}
+              )}
+            </div>
+          )}
+          {menu === 'more' && (
+            <div className="bar-menu" role="menu" aria-label={t('lesson.more')} data-testid="more-menu"
+              ref={barPop.ref} style={barPop.style}>
+              <div className="bar-menu-title" role="presentation">📱 {t('lesson.layout')}</div>
+              {([
+                ['auto', t('lesson.layoutAuto')], ['gallery', t('lesson.layoutGrid')],
+                ['stage', t('lesson.layoutSidebar')], ['teacher', t('lesson.layoutSpotlight')],
+              ] as const).map(([value, label]) => (
+                <button key={value} type="button" className="bar-item" role="menuitemradio"
+                  aria-checked={state.layout === value} data-testid={`layout-${value}`}
+                  onClick={() => actions.layout(value)}>
+                  {label}
+                </button>
+              ))}
+              <div className="bar-sep" role="separator" />
+              {/* на телефоне сюда переезжают показ экрана и список участников */}
+              {/*
+                axe (2026-10-11) поймала `aria-allowed-attr`: у `menuitem` нет состояния `pressed`.
+                Двухпозиционный пункт меню — это menuitemcheckbox + aria-checked (так же сделаны
+                «Доска», режим лекции и полноэкранный режим), поэтому показ экрана переехал на них.
+              */}
+              {state.canScreen ? (
+                <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.screenOn}
+                  data-testid="more-share" disabled={!state.connected}
+                  onClick={() => { close(); actions.share(); }}>
+                  🖥 {state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
+                </button>
+              ) : (
+                /* шаг B1: на мобильном Safari `getDisplayMedia` нет — вместо мёртвой кнопки строка,
+                     объясняющая, почему показа экрана нет. Кнопка, которая «никогда не жмётся»,
+                     читается как сломанный урок. */
+                <p className="bar-hint bar-mob" role="note" data-testid="cap-no-screen">{t('lesson.capNoScreen')}</p>
+              )}
+              <button type="button" className="bar-item bar-mob" role="menuitem" data-testid="more-participants"
+                onClick={() => { close(); actions.participants(); }}>
+                👥 {t('lesson.peersTitle')} · {state.peers}
               </button>
-            ))}
-            <div className="bar-sep" role="separator" />
-            {/* на телефоне сюда переезжают показ экрана и список участников */}
-            {/*
-              axe (2026-10-11) поймала `aria-allowed-attr`: у `menuitem` нет состояния `pressed`.
-              Двухпозиционный пункт меню — это menuitemcheckbox + aria-checked (так же сделаны
-              «Доска», режим лекции и полноэкранный режим), поэтому показ экрана переехал на них.
-            */}
-            {state.canScreen ? (
-              <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.screenOn}
-                data-testid="more-share" disabled={!state.connected}
-                onClick={() => { close(); actions.share(); }}>
-                🖥 {state.screenOn ? t('lesson.shareStop') : t('lesson.shareScreen')}
+              <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.boardOpen}
+                data-testid="more-board"
+                onClick={() => { close(); actions.board(); }}>
+                🧑‍🏫 {state.boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen')}
               </button>
-            ) : (
-              /* шаг B1: на мобильном Safari `getDisplayMedia` нет — вместо мёртвой кнопки строка,
-                   объясняющая, почему показа экрана нет. Кнопка, которая «никогда не жмётся»,
-                   читается как сломанный урок. */
-              <p className="bar-hint bar-mob" role="note" data-testid="cap-no-screen">{t('lesson.capNoScreen')}</p>
-            )}
-            <button type="button" className="bar-item bar-mob" role="menuitem" data-testid="more-participants"
-              onClick={() => { close(); actions.participants(); }}>
-              👥 {t('lesson.peersTitle')} · {state.peers}
-            </button>
-            <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.boardOpen}
-              data-testid="more-board"
-              onClick={() => { close(); actions.board(); }}>
-              🧑‍🏫 {state.boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen')}
-            </button>
-            {state.isTeacher && (
-              <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.lectureMode}
-                data-testid="lecture-mode" onClick={() => actions.lecture()}>
-                🎓 {state.lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
+              {state.isTeacher && (
+                <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.lectureMode}
+                  data-testid="lecture-mode" onClick={() => actions.lecture()}>
+                  🎓 {state.lectureMode ? t('lesson.lectureOn') : t('lesson.lectureMode')}
+                </button>
+              )}
+              {/* часть A (шаг A4): переход через роутер, а не `<a href>` — документальная перезагрузка
+                  обрывала урок, теперь она и вовсе не нужна */}
+              <button type="button" className="bar-item" role="menuitem" data-testid="lesson-new-note"
+                onClick={() => { close(); actions.note(); }}>📝 {t('home.newNote')}</button>
+              {state.canFullscreen && (
+                <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.fullscreen}
+                  data-testid="fullscreen-btn" disabled={!state.connected}
+                  onClick={() => { close(); actions.fullscreenToggle(); }}>
+                  ⛶ {t('lesson.boardFull')}
+                </button>
+              )}
+              <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.selfHidden}
+                data-testid="hide-self" disabled={!state.connected}
+                onClick={() => { close(); actions.hideSelf(); }}>
+                🙈 {t('lesson.pipHide')}
               </button>
-            )}
-            {/* часть A (шаг A4): переход через роутер, а не `<a href>` — документальная перезагрузка
-                обрывала урок, теперь она и вовсе не нужна */}
-            <button type="button" className="bar-item" role="menuitem" data-testid="lesson-new-note"
-              onClick={() => { close(); actions.note(); }}>📝 {t('home.newNote')}</button>
-            {state.canFullscreen && (
-              <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.fullscreen}
-                data-testid="fullscreen-btn" disabled={!state.connected}
-                onClick={() => { close(); actions.fullscreenToggle(); }}>
-                ⛶ {t('lesson.boardFull')}
+              <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.videoPaused}
+                data-testid="stop-video" title={t('lesson.stopVideoHint')} disabled={!state.connected}
+                onClick={() => { close(); actions.stopVideo(); }}>
+                ⏸ {state.videoPaused ? t('lesson.resumeVideo') : t('lesson.stopVideo')}
               </button>
-            )}
-            <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.selfHidden}
-              data-testid="hide-self" disabled={!state.connected}
-              onClick={() => { close(); actions.hideSelf(); }}>
-              🙈 {t('lesson.pipHide')}
-            </button>
-            <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.videoPaused}
-              data-testid="stop-video" title={t('lesson.stopVideoHint')} disabled={!state.connected}
-              onClick={() => { close(); actions.stopVideo(); }}>
-              ⏸ {state.videoPaused ? t('lesson.resumeVideo') : t('lesson.stopVideo')}
-            </button>
-            <button type="button" className="bar-item" role="menuitem" data-testid="more-devices"
-              onClick={() => { close(); actions.devices(); }}>
-              ⚙ {t('lesson.deviceSettings')}
-            </button>
-            <div className="bar-sep" role="separator" />
-            <div className="bar-menu-title" role="presentation">⌨ {t('lesson.hotkeys')}</div>
-            <p className="bar-hint" role="presentation" data-testid="hotkeys-list">{t('lesson.hotkeysList')}</p>
-          </div>
-        )}
+              <button type="button" className="bar-item" role="menuitem" data-testid="more-devices"
+                onClick={() => { close(); actions.devices(); }}>
+                ⚙ {t('lesson.deviceSettings')}
+              </button>
+              <div className="bar-sep" role="separator" />
+              <div className="bar-menu-title" role="presentation">⌨ {t('lesson.hotkeys')}</div>
+              <p className="bar-hint" role="presentation" data-testid="hotkeys-list">{t('lesson.hotkeysList')}</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

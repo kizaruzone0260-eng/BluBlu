@@ -778,19 +778,28 @@ button.danger-text { color: var(--danger); }
  * ограничение высоты доски ниже.
  */
 .bar-slot { position: relative; height: var(--bar-h); pointer-events: none; }
+/*
+ * Часть D: пояс сцены — ровно та область, под которой висит контент урока. Её края пишет
+ * `lib/sceneBand.ts` (ResizeObserver по `.lesson-main`). Полоса центрируется ПОЯСОМ, а не окном,
+ * и центрирует её flex-обёртка, а не сама полоса: когда полоса шире пояса (1024 px, развёрнутая
+ * боковая и открытая правая панели — пояс 444 px против 525 px полосы), `justify-content: center`
+ * выпускает её наполовину в обе стороны, и центр полосы остаётся центром сцены. С `margin-inline:
+ * auto` на самой полосе тот же случай давал бы «встала у левого края пояса» и центр съезжал на
+ * 53 px — это и поймал zz27 в прогоне 39034112298.
+ *
+ * Трансформации на поясе и на полосе в видимом состоянии нет ни какой: `transform` (как и
+ * `filter`, `perspective`, `will-change: transform`, `contain: paint`) сделал бы их содержащими
+ * блоками для `position: fixed` меню полосы — «Ещё», выбор устройств, выход уехали бы за экран
+ * (прогон 38997323161, красные zz18/zz19/zz2).
+ */
+.bar-band {
+  position: fixed; bottom: 0; left: var(--scene-left, 0px); right: var(--scene-right, 0px);
+  z-index: 44; display: flex; justify-content: center; pointer-events: none;
+}
 .lesson-bar {
   pointer-events: auto;
-  /*
-   * Часть D: центр пояса — контейнер сцены, а не окно. `--scene-left`/`--scene-right` пишет
-   * `lib/sceneBand.ts` (ResizeObserver по `.lesson-main`), а полоса центрируется внутри этого
-   * пояса прежним `margin-inline: auto`. `transform: translateX(-50%)` для того же не годится:
-   * трансформация делает `.lesson-bar` содержащим блоком для ЕГО ЖЕ `position: fixed` меню
-   * («Ещё», выбор устройств, выход), и они уезжают за нижний край экрана — клик до пункта не
-   * доходит. Это поймал CI на zz18/zz19/zz2 (прогон 38997323161).
-   */
-  position: fixed; bottom: 0; left: var(--scene-left, 0px); right: var(--scene-right, 0px);
-  margin-inline: auto; width: fit-content;
-  max-width: calc(100vw - 12px); z-index: 44;
+  position: relative;
+  flex: 0 0 auto; width: max-content; max-width: calc(100vw - 12px);
   display: flex; align-items: center; justify-content: center; gap: 4px; flex-wrap: nowrap;
   padding: 6px 10px; overflow: visible;
   background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--border);
@@ -919,7 +928,9 @@ button.danger-text { color: var(--danger); }
 @media (max-width: 1023px) {
   .bar-desk { display: none; }
   .bar-mob { display: flex; }
-  .lesson-bar { left: 8px; right: 8px; transform: none; max-width: none; justify-content: center; }
+  /* планшет: полоса тянется от края до края, пояс сцены ей не нужен */
+  .bar-band { left: 8px; right: 8px; }
+  .lesson-bar { width: 100%; max-width: none; }
   .lesson-bar.bar-hidden { transform: translateY(calc(100% + 10px)); }
 }
 /*
@@ -941,7 +952,8 @@ button.danger-text { color: var(--danger); }
    * узком экране зазоры и внутренние отступы полосы ужимаются до 2 и 4: 352 + 10 + 8 + 2 = 372,
    * и 5 px остаются на случай более широких подписей.
    */
-  .lesson-bar { bottom: var(--tab-h); gap: 2px; padding: 6px 4px; }
+  .bar-band { bottom: var(--tab-h); }
+  .lesson-bar { gap: 2px; padding: 6px 4px; }
   .lesson-shell ~ .sheet-fab, .lesson-shell .sheet-fab { bottom: calc(var(--bar-h) + var(--tab-h) + 14px); }
   .lesson-shell .toast { bottom: calc(var(--bar-h) + var(--tab-h) + var(--sp-4)); }
 }
