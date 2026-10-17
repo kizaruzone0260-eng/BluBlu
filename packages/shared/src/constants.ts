@@ -29,6 +29,21 @@ export const SUPPORTED_LOCALES = ['ru', 'uz', 'en'] as const;
 export const DEFAULT_LOCALE: Locale = 'en';
 
 /**
+ * Part A (2026-10-17): the ONE order in which a human is offered languages — everywhere a
+ * language is pickable (sidebar menu, mobile bar, sign-in, registration, profile).
+ *
+ * It is deliberately NOT `SUPPORTED_LOCALES`: that array is the validation domain (its order
+ * feeds `z.enum` and the `app_locale` enum), this one is presentation. `DEFAULT_LOCALE` stays
+ * `'en'` and does not move to the front — the first row is the most prominent choice, not the
+ * fallback for someone who never chose anything.
+ */
+export const LANGUAGE_CHOICES = [
+  { code: 'uz', native: "Oʻzbekcha" },
+  { code: 'en', native: 'English' },
+  { code: 'ru', native: 'Русский' },
+] as const satisfies readonly { readonly code: Locale; readonly native: string }[];
+
+/**
  * Legal/consent (Hardening Phase 2). One version string covers the privacy
  * policy + terms bundle shown at registration and on first login. Bump it (and
  * the texts) whenever the legal documents change; every user is then asked to

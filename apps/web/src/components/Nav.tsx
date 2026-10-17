@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DEFAULT_LOCALE, LANGUAGE_CHOICES } from '@klass/shared';
 import { usePopover } from '../lib/popover';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -30,19 +31,14 @@ export const icons = {
   moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
 };
 
-const LOCALES = [
-  { code: 'ru', native: 'Русский' },
-  { code: 'uz', native: "Oʻzbekcha" },
-  { code: 'en', native: 'English' },
-] as const;
-
 /** Compact language dropdown: shows CURRENT language, switches instantly (B.2). */
 export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?: () => void }) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const pop = usePopover({ open, anchor, align: 'end', onClose: () => setOpen(false) });
-  const current = LOCALES.find((l) => l.code === i18n.language) ?? LOCALES[0];
+  const current = LANGUAGE_CHOICES.find((l) => l.code === i18n.language)
+    ?? LANGUAGE_CHOICES.find((l) => l.code === DEFAULT_LOCALE)!;
   async function pick(code: string) {
     setOpen(false);
     // a click on a language IS the choice: it is stored on this device (task 1 — the old code
@@ -64,7 +60,7 @@ export function LangDropdown({ me, onMeChanged }: { me: Me | null; onMeChanged?:
       </button>
       {open && (
         <div className="lang-menu" role="menu" data-testid="lang-menu" ref={pop.ref} style={pop.style}>
-          {LOCALES.map((l) => (
+          {LANGUAGE_CHOICES.map((l) => (
             <button key={l.code} data-testid={`lang-${l.code}`} className={l.code === current.code ? 'sel' : ''} onClick={() => void pick(l.code)} role="menuitem">
               {l.native}{l.code === current.code ? ' ✓' : ''}
             </button>

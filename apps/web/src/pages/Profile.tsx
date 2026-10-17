@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DEFAULT_LOCALE, type Locale } from '@klass/shared';
+import { DEFAULT_LOCALE, LANGUAGE_CHOICES, type Locale } from '@klass/shared';
 import { api, logoutAll } from '../lib/api';
 import { buildId } from '../lib/build';
 import { useAuth } from '../App';
@@ -93,10 +93,9 @@ export default function Profile() {
       <label htmlFor="profile-last">{t('auth.lastName')}</label>
       <input id="profile-last" data-testid="profile-last-name" value={lastName} onChange={(e) => setLastName(e.target.value)} />
       <label htmlFor="profile-locale">{t('common.language')}</label>
-      <select id="profile-locale" value={locale} onChange={(e) => setLocale(e.target.value as 'ru' | 'uz' | 'en')}>
-        <option value="ru">Русский</option>
-        <option value="uz">Oʻzbekcha</option>
-        <option value="en">English</option>
+      {/* часть A: порядок и подписи — из одной константы shared, как в сайдбаре и на входе */}
+      <select id="profile-locale" value={locale} onChange={(e) => setLocale(e.target.value as Locale)}>
+        {LANGUAGE_CHOICES.map((l) => <option key={l.code} value={l.code}>{l.native}</option>)}
       </select>
       {/* item 4: timezone is detected automatically (Intl) — no manual field */}
       <button onClick={save} disabled={saving} data-testid="profile-save">{t('common.save')}</button>
