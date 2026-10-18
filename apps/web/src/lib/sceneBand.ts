@@ -33,7 +33,6 @@ export function useSceneBand(): (el: HTMLElement | null) => void {
     let raf = 0;
 
     const write = () => {
-      raf = 0;
       if (document.fullscreenElement) {
         root.style.setProperty(LEFT, '0px');
         root.style.setProperty(RIGHT, '0px');
@@ -43,10 +42,20 @@ export function useSceneBand(): (el: HTMLElement | null) => void {
       root.style.setProperty(LEFT, `${Math.max(0, Math.round(r.left))}px`);
       root.style.setProperty(RIGHT, `${Math.max(0, Math.round(window.innerWidth - r.right))}px`);
     };
-    const schedule = () => { if (!raf) raf = requestAnimationFrame(write); };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; write(); }); };
 
     write();
-    const ro = new ResizeObserver(schedule);
+    /*
+     * По поясу — ПРЯМОЙ вызов, без `schedule()`. Доставка ResizeObserver происходит уже после
+     * расчёта раскладки этого кадра, то есть `getBoundingClientRect()` внутри неё даёт финальные
+     * края сцены; отложенный же на следующий кадр запись даёт пояс, всегда на один кадр отстающий
+     * от сцены, и если после последней доставки ничего не меняется, пояс так и остаётся
+     * рассинхронизированным. Прогон 39085847851: `zz27` измерил расхождение центра полосы с
+     * центром сцены в 4 px при одном и том же CSS — пояс догнал сцену с опозданием, а замер
+     * (два подряд одинаковых кадра) этого не видит, потому что полоса к тому моменту уже
+     * стоит на СТАРОМ поясе неподвижно.
+     */
+    const ro = new ResizeObserver(write);
     ro.observe(el);
     window.addEventListener('resize', schedule);
     document.addEventListener('fullscreenchange', schedule);
