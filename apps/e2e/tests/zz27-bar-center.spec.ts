@@ -33,7 +33,9 @@ async function settle(page: Page): Promise<void> {
     const sig = () => {
       const b = document.querySelector<HTMLElement>('[data-testid=lesson-bar]')?.getBoundingClientRect();
       const s = document.querySelector<HTMLElement>('.lesson-main')?.getBoundingClientRect();
-      return `${b?.x ?? -1}:${b?.width ?? -1}:${s?.x ?? -1}:${s?.width ?? -1}`;
+      const cs = getComputedStyle(document.documentElement);
+      return `${b?.x ?? -1}:${b?.width ?? -1}:${s?.x ?? -1}:${s?.width ?? -1}`
+        + `:${cs.getPropertyValue('--scene-left')}:${cs.getPropertyValue('--scene-right')}`;
     };
     let prev = '';
     for (let i = 0; i < 120; i++) {
@@ -42,6 +44,27 @@ async function settle(page: Page): Promise<void> {
       if (now === prev) return;
       prev = now;
     }
+  });
+}
+
+/**
+ * Согласие пояса сцены с самим прямоугольником сцены. Полоса центрируется ПОЯСОМ, поэтому без
+ * этой пары чисел замер «центр полосы = центр сцены» может краснеть по вине устаревшего пояса,
+ * и по сообщению нельзя будет отличить дефект центрирования от рассинхронизации хука
+ * (`lib/sceneBand.ts`). Прогон 39085847851 упал именно так: 4 px без единой правки CSS.
+ */
+async function belt(page: Page) {
+  return page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>('.lesson-main');
+    const cs = getComputedStyle(document.documentElement);
+    const s = main!.getBoundingClientRect();
+    return {
+      left: parseFloat(cs.getPropertyValue('--scene-left')),
+      right: parseFloat(cs.getPropertyValue('--scene-right')),
+      stageLeft: s.left,
+      stageRight: s.right,
+      innerW: window.innerWidth,
+    };
   });
 }
 
@@ -135,6 +158,14 @@ test.describe('панель урока по центру сцены (часть 
           const c = await centers(page);
           expect(c, `нет полосы или сцены при ${width}px`).not.toBeNull();
           const got = c!;
+          const bt = await belt(page);
+          // хук пишет пояс округлением до пикселя, поэтому допуск — 1 px, а не 0
+          expect(Math.abs(bt.left - bt.stageLeft),
+            `пояс --scene-left отстал от сцены при ${width}px, боковая ${collapsed}, панель ${panelOpen}`)
+            .toBeLessThanOrEqual(1);
+          expect(Math.abs(bt.right - (bt.innerW - bt.stageRight)),
+            `пояс --scene-right отстал от сцены при ${width}px, боковая ${collapsed}, панель ${panelOpen}`)
+            .toBeLessThanOrEqual(1);
           const delta = Math.abs(got.bar - got.stage);
           const stageOffWindow = Math.abs(got.stage - got.window);
           rows.push({ w: width, side: collapsed ? 'свёрнута' : 'развёрнута', panel: panelOpen ? 'открыта' : 'закрыта',
