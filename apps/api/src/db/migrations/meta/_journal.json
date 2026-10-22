@@ -232,6 +232,20 @@
       "when": 1792166945386,
       "tag": "0032_email_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792666372645,
+      "tag": "0033_amused_pride",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792674200139,
+      "tag": "0034_typical_jazinda",
+      "breakpoints": true
     }
   ]
 }

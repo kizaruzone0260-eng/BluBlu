@@ -10,6 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "reset-teacher": "node scripts/reset-teacher.mjs",
     "db:migrate": "drizzle-kit migrate",
+    "db:fresh-check": "node scripts/with-postgres.mjs node scripts/migrations-fresh.mjs",
     "db:secure": "node scripts/secure-db.mjs",
     "seed:teacher": "tsx --env-file=../../.env src/scripts/seed-teacher.ts",
     "demo": "node scripts/demo.mjs",

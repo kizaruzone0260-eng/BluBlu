@@ -29,6 +29,15 @@ async function main() {
   const { seedTeacherAtBoot } = await import('./services/seed.js');
   await seedTeacherAtBoot(db);
 
+  // Homework: a process that died while formatting or publishing leaves a draft whose
+  // status no longer reflects reality. Resolve it at boot (stale formatting → collecting,
+  // stale publishing → publish_unknown, sending → uncertain) instead of making the teacher
+  // wait for the ten-minute housekeeping tick. Never re-sends anything.
+  {
+    const { sweepHomeworkState } = await import('./services/homework/store.js');
+    await sweepHomeworkState(db).catch((e) => console.warn(errorLine('homework sweep', e)));
+  }
+
   // Telegram bot (null when TELEGRAM_BOT_TOKEN is empty — §3.9/§5)
   const bot = createBot();
   const transport = bot && env.TELEGRAM_TRANSPORT === 'telegram'
@@ -40,6 +49,9 @@ async function main() {
     import('./services/wsTicket.js').then((m) => m.sweepWsTickets(db)).catch(() => undefined);
     import('./services/chat.js').then((m) => m.sweepChatTickets(db)).catch(() => undefined);
     import('./services/bot.js').then((m) => m.sweepBotState(db)).catch(() => undefined);
+    // homework: expired callback/bind tokens and drafts left mid-format or mid-publish by a
+    // restarted process. A stuck publication becomes `publish_unknown`, never retryable.
+    import('./services/homework/store.js').then((m) => m.sweepHomeworkState(db)).catch(() => undefined);
     // часть A5 (2026-10-16): история очереди уведомлений. 30 дней — и ряд с финальным статусом
     // больше ничего не объясняет; живые `pending`/`sending` уборка не трогает.
     import('./services/notify.js')

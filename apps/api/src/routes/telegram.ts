@@ -10,6 +10,7 @@ import {
 import { notificationPrefs, classNotifyPrefs, classTelegramChats, classLinkTokens, users, telegramLinks } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
 import { createBot } from '../services/telegramBot.js';
+import { makeHomeworkAi } from '../services/homework/ai.js';
 import { claimUpdate, processUpdate, type BotDeps, type TgUpdate } from '../services/bot.js';
 import { applyMenu, CapturingApi, grammyApi, removeMenu, type BotApi } from '../services/botApi.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -39,6 +40,7 @@ export function botDeps(db: DB, bot: Bot | null): BotDeps {
   return {
     db,
     api,
+    homeworkAi: makeHomeworkAi(),
     isGroupAdmin: async (chatId, tgUserId) => {
       if (!bot) return false;
       try {

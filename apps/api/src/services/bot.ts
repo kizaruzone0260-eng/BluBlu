@@ -23,6 +23,12 @@ import {
 import { listEventsInRange } from './events.js';
 import { consumeLinkToken, getPrefs, hashToken, siteUrl, unlinkUser, enqueueNotification } from './notify.js';
 import { applyMenu, esc, removeMenu, verifyCb, signCb, type BotApi, type InlineButton } from './botApi.js';
+import {
+  homeworkCallback, homeworkCommand, homeworkDone, homeworkGroupBind, homeworkInput,
+} from './homework/flow.js';
+import { libraryCommand } from './homework/library.js';
+import { isHomeworkCallback } from './homework/tokens.js';
+import type { HomeworkAi } from './homework/types.js';
 import { audit } from './audit.js';
 import { DEFAULT_LOCALE } from '@klass/shared';
 
@@ -30,13 +36,41 @@ export interface BotDeps {
   db: DB;
   api: BotApi;
   isGroupAdmin: (chatId: string, tgUserId: number) => Promise<boolean>;
+  /** Optional: env-configured formatter, injected by botDeps(); tests may omit it. */
+  homeworkAi?: HomeworkAi;
 }
 
+export interface TgChat { id: number; type: string; title?: string }
+export interface TgFrom {
+  id: number; is_bot?: boolean; username?: string; first_name?: string; last_name?: string;
+}
+export interface TgPhotoSize {
+  file_id: string; file_unique_id: string; width: number; height: number; file_size?: number;
+}
+export interface TgDocument {
+  file_id: string; file_unique_id: string; file_name?: string; mime_type?: string; file_size?: number;
+}
+export interface TgMessage {
+  message_id: number;
+  chat: TgChat;
+  from?: TgFrom;
+  text?: string;
+  /** Photo captions and document captions arrive here, not in `text`. */
+  caption?: string;
+  date?: number;
+  media_group_id?: string;
+  photo?: TgPhotoSize[];
+  document?: TgDocument;
+  /** Present on forwarded messages in one of the Bot API shapes; only the fact matters. */
+  forward_origin?: { type?: string };
+  forward_from?: { id?: number };
+  forward_from_chat?: { id?: number; title?: string };
+}
 export interface TgUpdate {
   update_id: number;
-  message?: { message_id: number; chat: { id: number; type: string }; from?: { id: number; is_bot?: boolean }; text?: string; date?: number };
+  message?: TgMessage;
   callback_query?: {
-    id: string; from: { id: number }; message?: { message_id: number; chat: { id: number; type: string } }; data?: string;
+    id: string; from: TgFrom; message?: { message_id: number; chat: TgChat }; data?: string;
   };
 }
 
@@ -78,9 +112,9 @@ export const T: Record<string, Loc> = {
     en: 'Commands: /start — link, /schedule — class schedule by name, /contact — write to a teacher, /language — language, /help — this message.',
   },
   helpTeacher: {
-    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы, /announce — объявление классу, /settings — уведомления, /language, /help.',
-    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — materiallar, /announce — e’lon, /settings — bildirishnomalar, /language, /help.',
-    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /announce — post an announcement, /settings — notifications, /language, /help.',
+    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы класса, /library — библиотека материалов для Telegram, /announce — объявление классу, /homework — домашнее задание в Telegram, /settings — уведомления, /language, /help.',
+    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — sinf materiallari, /library — Telegram uchun materiallar kutubxonasi, /announce — e’lon, /homework — Telegramga uy vazifasi, /settings — bildirishnomalar, /language, /help.',
+    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /library — the Telegram material library, /announce — post an announcement, /homework — homework to Telegram groups, /settings — notifications, /language, /help.',
   },
   helpStudent: {
     ru: 'Команды: /schedule — расписание моих классов, /next — ближайшее событие, /contact — написать учителю, /language, /stop — отвязать аккаунт, /help.',
@@ -363,10 +397,17 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
   if (!m || m.chat.id === undefined) return;
   const chatId = String(m.chat.id);
 
-  // groups/supergroups: only the existing /link binding, everything else silent (§1)
+  // groups/supergroups: only the existing /link binding and the new homework /bind,
+  // everything else stays silent (§1)
   if (m.chat.type === 'group' || m.chat.type === 'supergroup') {
-    if (m.text?.trim().toLowerCase().startsWith('/link')) {
+    const groupText = m.text?.trim() ?? '';
+    const groupCmd = (groupText.split(/\s+/)[0] ?? '').split('@')[0]?.toLowerCase() ?? '';
+    if (groupText.toLowerCase().startsWith('/link')) {
       await legacyGroupLink(deps, chatId, m);
+    } else if (groupCmd === '/bind') {
+      await homeworkGroupBind(
+        deps, chatId, m.from?.id ?? 0, groupText, m.chat.title, deps.isGroupAdmin,
+      );
     }
     return;
   }
@@ -381,11 +422,21 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
   const sess = await loadSession(db, chatId);
   const id = await identify(db, chatId, (sess?.data.lang as Lang) ?? DEFAULT_LOCALE);
 
+  // homework edit mode owns its messages: plain text replaces the final text, /cancel
+  // leaves the preview unchanged. Existing dialogs are untouched (state prefix is unique).
+  if (sess?.state.startsWith('hw:')) {
+    if (await homeworkInput(deps, chatId, id, m, sess)) return;
+  }
+
   // in a dialog? plain text goes to the dialog first (commands still work,
   // EXCEPT /cancel which belongs to the dialog — §5)
   if (sess && (!text.startsWith('/') || text.toLowerCase() === '/cancel')) {
     if (await dialogStep(deps, chatId, sess, id, m)) return;
   }
+
+  // material collection and /cancel do not need a bot_sessions row: the draft itself
+  // says whether it is collecting. A non-homework dialog above wins.
+  if (await homeworkInput(deps, chatId, id, m, sess)) return;
 
   const cmd = ((text.split('@')[0] ?? '').split(/\s+/)[0] ?? '').toLowerCase();
   const arg = text.slice(cmd.length).trim();
@@ -401,6 +452,9 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
     case '/materials': return materialsHome(deps, chatId, id);
     case '/settings': return settings(deps, chatId, id);
     case '/announce': return announceHome(deps, chatId, id, arg);
+    case '/homework': return homeworkCommand(deps, chatId, id, m);
+    case '/done': return homeworkDone(deps, chatId, id);
+    case '/library': return libraryCommand(deps, chatId, id);
     default:
       if (cmd.startsWith('/')) await send(deps, chatId, id.role === 'teacher' ? 'helpTeacher' : id.role === 'student' ? 'helpStudent' : 'helpBasic', {}, id.lang);
   }
@@ -807,6 +861,14 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
   // (its linked account), so "this button is stale" must not arrive in the product default
   // when the person reads the bot in Russian
   const id = await identify(db, chatId, DEFAULT_LOCALE);
+  if (isHomeworkCallback(data)) {
+    // Homework buttons are only ever sent to a private chat. In a group the bot stays
+    // silent, as it does for every other update there.
+    if (cbq.message?.chat.type && cbq.message.chat.type !== 'private') return;
+    if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, id.lang); return; }
+    await homeworkCallback(deps, chatId, id, data, cbq.message?.message_id);
+    return;
+  }
   if (!payload) { await api.sendMessage(chatId, t('badCallback', id.lang)); return; }
   if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, id.lang); return; }
   // the signed payload must belong to the acting account (§1)

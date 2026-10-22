@@ -647,3 +647,230 @@ export const policyAcceptances = pgTable('policy_acceptances', {
   version: text('version').notNull(),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─── Telegram homework assistant (2026-10-22) ────────────────────────────────
+//
+// A deliberately separate domain: nothing here alters `classes`, `posts` or the
+// public-site flows. Offline groups exist only in these tables, and a publication
+// belongs to a Telegram chat, not to a BluBlu class. The optional bridge to class
+// materials is NOT implemented; it can be added later without changing this shape.
+
+/** Telegram groups an operator may publish to. Soft-removed, never deleted: history survives. */
+export const tgGroupKindEnum = pgEnum('tg_group_kind', ['online', 'offline']);
+export const tgGroupStatusEnum = pgEnum('tg_group_status', ['active', 'removed']);
+/**
+ * Draft lifecycle. `publish_unknown` is terminal: at least one send may have happened.
+ * `choosing_materials` and `awaiting_instruction` (migration 0034) are the two library
+ * steps that sit between "groups picked" and "collecting": the teacher either chooses a
+ * saved book or continues without one, and then says what to do with it.
+ */
+export const tgDraftStatusEnum = pgEnum('tg_draft_status', [
+  'selecting', 'choosing_materials', 'awaiting_instruction', 'collecting', 'formatting',
+  'needs_clarification', 'preview', 'publishing', 'published', 'failed',
+  'publish_unknown', 'cancelled',
+]);
+export const tgItemKindEnum = pgEnum('tg_item_kind', ['text', 'link', 'photo', 'document']);
+export const tgPublicationStatusEnum = pgEnum('tg_publication_status',
+  ['sending', 'sent', 'failed', 'uncertain']);
+/** A reusable attachment: a textbook, a workbook, anything else the teacher uploads once. */
+export const tgMaterialKindEnum = pgEnum('tg_material_kind', ['book', 'workbook', 'other']);
+/** `archived` = «убрано из рекомендаций»: файл остаётся, новые задания его не предлагают. */
+export const tgMaterialStatusEnum = pgEnum('tg_material_status', ['active', 'archived']);
+
+/** One row per linked BluBlu teacher who has ever used /homework. */
+export const tgOperators = pgTable('tg_operators', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  telegramUserId: bigint('telegram_user_id', { mode: 'number' }).notNull(),
+  telegramChatId: text('telegram_chat_id').notNull(),
+  username: text('username').notNull().default(''),
+  displayName: text('display_name').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique('tg_operators_chat_key').on(t.telegramChatId)]);
+
+/**
+ * A group is identified by (owner, Telegram chat). The same Telegram group can be
+ * connected by two teachers only if both are administrators — binding requires it.
+ */
+export const tgGroups = pgTable('tg_groups', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  telegramChatId: text('telegram_chat_id').notNull(),
+  title: text('title').notNull(),
+  kind: tgGroupKindEnum('kind').notNull().default('offline'),
+  status: tgGroupStatusEnum('status').notNull().default('active'),
+  boundAt: timestamp('bound_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique('tg_groups_owner_chat_key').on(t.ownerId, t.telegramChatId),
+  index('tg_groups_owner_status_idx').on(t.ownerId, t.status),
+]);
+
+/** One-time code typed as `/bind CODE` in a group. Only the hash is stored. */
+export const tgBindTokens = pgTable('tg_bind_tokens', {
+  tokenHash: text('token_hash').primaryKey(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+}, (t) => [index('tg_bind_tokens_expiry_idx').on(t.expiresAt)]);
+
+/**
+ * A homework draft. Materials live in `tg_draft_items`; selected groups in
+ * `tg_draft_targets`. The AI result is stored as plain text — it is what the
+ * teacher previews and what publication sends, so a restart changes nothing.
+ */
+export const tgDrafts = pgTable('tg_drafts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  status: tgDraftStatusEnum('status').notNull().default('selecting'),
+  title: text('title').notNull().default(''),
+  formattedText: text('formatted_text').notNull().default(''),
+  /**
+   * The teacher's own words about the task (`Unit 2, Exercises 1–5`). It is the only text
+   * a library-based homework has besides the collected materials, so it is stored apart
+   * from `formattedText`: the teacher may edit the final message without losing what she
+   * actually asked for.
+   */
+  instruction: text('instruction').notNull().default(''),
+  aiQuestions: jsonb('ai_questions').$type<string[]>().notNull().default([]),
+  aiWarnings: jsonb('ai_warnings').$type<string[]>().notNull().default([]),
+  aiProvider: text('ai_provider').notNull().default(''),
+  lastError: text('last_error').notNull().default(''),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+}, (t) => [index('tg_drafts_owner_status_idx').on(t.ownerId, t.status, t.updatedAt)]);
+
+export const tgDraftTargets = pgTable('tg_draft_targets', {
+  draftId: uuid('draft_id').notNull().references(() => tgDrafts.id, { onDelete: 'cascade' }),
+  groupId: uuid('group_id').notNull().references(() => tgGroups.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.draftId, t.groupId] })]);
+
+/**
+ * One collected material per source Telegram message. `file_id` is Telegram's own
+ * reference: bytes are never copied into Render's ephemeral disk or into Postgres.
+ * The unique (draft, source message) key makes webhook redelivery harmless.
+ */
+export const tgDraftItems = pgTable('tg_draft_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  draftId: uuid('draft_id').notNull().references(() => tgDrafts.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull().default(0),
+  kind: tgItemKindEnum('kind').notNull(),
+  text: text('text').notNull().default(''),
+  url: text('url'),
+  fileId: text('file_id'),
+  fileUniqueId: text('file_unique_id'),
+  fileName: text('file_name'),
+  mimeType: text('mime_type'),
+  fileSize: bigint('file_size', { mode: 'number' }),
+  caption: text('caption').notNull().default(''),
+  sourceMessageId: bigint('source_message_id', { mode: 'number' }).notNull(),
+  forwarded: boolean('forwarded').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique('tg_draft_items_source_key').on(t.draftId, t.sourceMessageId),
+  index('tg_draft_items_draft_idx').on(t.draftId, t.position),
+]);
+
+/** Per-group real outcome of one publish attempt; group title/chat are snapshotted for history. */
+export const tgPublications = pgTable('tg_publications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  draftId: uuid('draft_id').notNull().references(() => tgDrafts.id, { onDelete: 'cascade' }),
+  groupId: uuid('group_id').notNull().references(() => tgGroups.id),
+  groupTitle: text('group_title').notNull(),
+  telegramChatId: text('telegram_chat_id').notNull(),
+  status: tgPublicationStatusEnum('status').notNull().default('sending'),
+  telegramMessageId: bigint('telegram_message_id', { mode: 'number' }),
+  error: text('error').notNull().default(''),
+  attempts: integer('attempts').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique('tg_publications_draft_group_key').on(t.draftId, t.groupId),
+  index('tg_publications_draft_idx').on(t.draftId),
+]);
+
+/**
+ * Short callback references. Telegram allows 64 bytes of callback_data; the
+ * existing signed payloads are longer, so this module uses `h1.<16 chars>` and
+ * keeps the meaning server-side. One-time rows are atomically claimed.
+ */
+export const tgCallbackTokens = pgTable('tg_callback_tokens', {
+  token: text('token').primaryKey(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  payload: jsonb('payload').$type<Record<string, string>>().notNull().default({}),
+  once: boolean('once').notNull().default(true),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('tg_callback_tokens_expiry_idx').on(t.expiresAt)]);
+
+/**
+ * The teacher's material library (2026-10-22, part B).
+ *
+ * A material is a FILE the teacher uploads once and re-uses as an attachment — a textbook,
+ * a workbook. Its bytes are never stored: only Telegram's own `file_id`, which is what the
+ * bot sends back to a group. `file_unique_id` is the stable identity, so uploading the same
+ * book twice updates one row instead of filling the library with duplicates.
+ *
+ * The contents are deliberately NOT read here (no OCR, no PDF/DOCX parser, no vision): the
+ * formatter sees the title the teacher typed, never the file. That is also why a broken
+ * `file_id` is a re-upload problem and not a data-loss problem.
+ */
+export const tgMaterials = pgTable('tg_materials', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  kind: tgMaterialKindEnum('kind').notNull().default('other'),
+  telegramFileId: text('telegram_file_id').notNull(),
+  fileUniqueId: text('file_unique_id').notNull(),
+  fileName: text('file_name').notNull().default(''),
+  mimeType: text('mime_type').notNull().default(''),
+  fileSize: bigint('file_size', { mode: 'number' }),
+  status: tgMaterialStatusEnum('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+}, (t) => [
+  unique('tg_materials_owner_file_key').on(t.ownerId, t.fileUniqueId),
+  index('tg_materials_owner_status_idx').on(t.ownerId, t.status, t.updatedAt),
+  index('tg_materials_owner_used_idx').on(t.ownerId, t.status, t.lastUsedAt),
+]);
+
+/** «В каких группах этот материал уместен». Recommendations are per group, never global. */
+export const tgMaterialGroups = pgTable('tg_material_groups', {
+  materialId: uuid('material_id').notNull().references(() => tgMaterials.id, { onDelete: 'cascade' }),
+  groupId: uuid('group_id').notNull().references(() => tgGroups.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  primaryKey({ columns: [t.materialId, t.groupId] }),
+  index('tg_material_groups_group_idx').on(t.groupId),
+]);
+
+/**
+ * A material chosen for one draft, stored as a SNAPSHOT (title, kind, file id).
+ *
+ * `material_id` is ON DELETE SET NULL on purpose: removing a book from the library must
+ * never touch a draft that is being written, and must never rewrite the history of what
+ * was already published. Renaming a material has the same property — the draft keeps the
+ * title that was chosen at the time.
+ */
+export const tgDraftMaterials = pgTable('tg_draft_materials', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  draftId: uuid('draft_id').notNull().references(() => tgDrafts.id, { onDelete: 'cascade' }),
+  materialId: uuid('material_id').references(() => tgMaterials.id, { onDelete: 'set null' }),
+  position: integer('position').notNull().default(0),
+  title: text('title').notNull(),
+  kind: tgMaterialKindEnum('kind').notNull().default('other'),
+  telegramFileId: text('telegram_file_id').notNull(),
+  fileUniqueId: text('file_unique_id'),
+  fileName: text('file_name').notNull().default(''),
+  mimeType: text('mime_type').notNull().default(''),
+  fileSize: bigint('file_size', { mode: 'number' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique('tg_draft_materials_draft_file_key').on(t.draftId, t.telegramFileId),
+  index('tg_draft_materials_draft_idx').on(t.draftId, t.position),
+]);

@@ -12,11 +12,24 @@ import { env } from '../env.js';
 
 export interface InlineButton { text: string; cb?: string; url?: string }
 export interface SendOpts { buttons?: InlineButton[][]; html?: boolean }
+/**
+ * Can this `file_id` still be re-sent? `missing` is Telegram's own definite refusal (4xx),
+ * `unknown` is any other failure — a timeout must not block a homework. Metadata only:
+ * nothing here downloads or inspects a file, which is exactly why the library can promise
+ * that no AI ever reads a textbook.
+ */
+export type FileCheck = 'ok' | 'missing' | 'unknown';
 
 export interface BotApi {
-  sendMessage(chatId: string, text: string, opts?: SendOpts): Promise<void>;
+  /** Returns Telegram's message_id when known (publication history), otherwise null. */
+  sendMessage(chatId: string, text: string, opts?: SendOpts): Promise<number | null>;
   editMessageText(chatId: string, messageId: number, text: string, opts?: SendOpts): Promise<void>;
   deleteMessage(chatId: string, messageId: number): Promise<void>;
+  /** Send an already-uploaded photo/document by its Telegram file_id. */
+  sendPhoto(chatId: string, fileId: string): Promise<number | null>;
+  sendDocument(chatId: string, fileId: string): Promise<number | null>;
+  /** Preflight of a stored `file_id` before a publication sends anything. */
+  checkFile(fileId: string): Promise<FileCheck>;
   /** scope: undefined = default (global) scope, a chat id = per-chat menu */
   setMyCommands(commands: { command: string; description: string }[], languageCode: string, chatId?: string): Promise<void>;
   deleteMyCommands(languageCode: string, chatId?: string): Promise<void>;
@@ -26,13 +39,37 @@ export interface BotApi {
 export function grammyApi(bot: { api: any }): BotApi {
   return {
     async sendMessage(chatId, text, opts) {
-      await bot.api.sendMessage(chatId, text, extra(opts));
+      const m = await bot.api.sendMessage(chatId, text, extra(opts));
+      return typeof m?.message_id === 'number' ? m.message_id : null;
     },
     async editMessageText(chatId, messageId, text, opts) {
       await bot.api.editMessageText(chatId, messageId, text, extra(opts));
     },
     async deleteMessage(chatId, messageId) {
       try { await bot.api.deleteMessage(chatId, messageId); } catch { /* Telegram often refuses old/bot messages — ignore per spec */ }
+    },
+    async sendPhoto(chatId, fileId) {
+      const m = await bot.api.sendPhoto(chatId, fileId);
+      return typeof m?.message_id === 'number' ? m.message_id : null;
+    },
+    async sendDocument(chatId, fileId) {
+      // Sending by file_id keeps Telegram's original file name; no re-upload happens.
+      const m = await bot.api.sendDocument(chatId, fileId);
+      return typeof m?.message_id === 'number' ? m.message_id : null;
+    },
+    async checkFile(fileId) {
+      if (!env.TELEGRAM_BOT_TOKEN) return 'unknown';
+      try {
+        const f = await bot.api.getFile(fileId);
+        return typeof f?.file_path === 'string' && f.file_path ? 'ok' : 'missing';
+      } catch (e) {
+        // Only Telegram's own refusal (grammY puts the code on `error_code`) means the
+        // file_id is dead. Any other failure — a timeout, a 5xx — must not stop a homework,
+        // so it stays `unknown` and the send itself decides.
+        // grammY can put the Bot API URL (which IS the token) into an error; never let it escape.
+        const code = (e as { error_code?: unknown })?.error_code;
+        return code === 400 ? 'missing' : 'unknown';
+      }
     },
     async setMyCommands(commands, languageCode, chatId) {
       const scope = chatId ? { type: 'chat', chat_id: Number(chatId) } : { type: 'all_private_chats' };
@@ -54,11 +91,51 @@ function extra(opts?: SendOpts) {
 
 /** Test/dev transport: records everything, sends nothing. */
 export class CapturingApi implements BotApi {
-  calls: { kind: string; chatId: string; text?: string; messageId?: number; opts?: SendOpts; commands?: unknown; lang?: string }[] = [];
+  calls: {
+    kind: string; chatId: string; text?: string; messageId?: number; opts?: SendOpts;
+    commands?: unknown; lang?: string; fileId?: string;
+  }[] = [];
   failNext = false;
-  async sendMessage(chatId: string, text: string, opts?: SendOpts) { this.calls.push({ kind: 'send', chatId, text, opts }); }
+  /** Chat ids whose sends throw — used to prove per-group publication outcomes. */
+  failChats = new Set<string>();
+  /** Like failChats, but with Telegram's 4xx shape: a definite refusal, safe to retry. */
+  rejectChats = new Set<string>();
+  failPhotoChats = new Set<string>();
+  failDocumentChats = new Set<string>();
+  /** `file_id`s Telegram would refuse to re-send: the library's unavailable-file path. */
+  missingFiles = new Set<string>();
+  private nextMessageId = 7000;
+
+  private fail(chatId: string, photosOnly = false, docsOnly = false) {
+    if (this.rejectChats.has(chatId)) {
+      throw Object.assign(new Error('fictitious telegram rejection'), { error_code: 403 });
+    }
+    if (this.failChats.has(chatId)
+      || (photosOnly && this.failPhotoChats.has(chatId))
+      || (docsOnly && this.failDocumentChats.has(chatId))) {
+      throw new Error('fictitious telegram transport failure');
+    }
+  }
+  async sendMessage(chatId: string, text: string, opts?: SendOpts) {
+    this.fail(chatId);
+    this.calls.push({ kind: 'send', chatId, text, opts });
+    return ++this.nextMessageId;
+  }
   async editMessageText(chatId: string, messageId: number, text: string, opts?: SendOpts) { this.calls.push({ kind: 'edit', chatId, messageId, text, opts }); }
   async deleteMessage(chatId: string, messageId: number) { this.calls.push({ kind: 'del', chatId, messageId }); }
+  async sendPhoto(chatId: string, fileId: string) {
+    this.fail(chatId, true);
+    this.calls.push({ kind: 'photo', chatId, fileId });
+    return ++this.nextMessageId;
+  }
+  async sendDocument(chatId: string, fileId: string) {
+    this.fail(chatId, false, true);
+    this.calls.push({ kind: 'doc', chatId, fileId });
+    return ++this.nextMessageId;
+  }
+  async checkFile(fileId: string) {
+    return this.missingFiles.has(fileId) ? 'missing' : 'ok';
+  }
   async setMyCommands(commands: unknown, lang: string, chatId?: string) { this.calls.push({ kind: 'cmds', chatId: chatId ?? '', commands, lang }); }
   async deleteMyCommands(lang: string, chatId?: string) { this.calls.push({ kind: 'delcmds', chatId: chatId ?? '', lang }); }
   last(kind: string) { for (let i = this.calls.length - 1; i >= 0; i--) if (this.calls[i]?.kind === kind) return this.calls[i]; return undefined; }
@@ -120,7 +197,10 @@ export const TEACHER_COMMANDS = [
   ['next', { ru: 'Ближайшее событие', uz: 'Yaqin tadbir', en: 'Next event' }],
   ['classes', { ru: 'Мои классы', uz: 'Sinflarim', en: 'My classes' }],
   ['materials', { ru: 'Материалы', uz: 'Materiallar', en: 'Materials' }],
+  // the Telegram library is its own command: `/materials` keeps serving BluBlu classes
+  ['library', { ru: 'Библиотека материалов', uz: 'Materiallar kutubxonasi', en: 'Material library' }],
   ['announce', { ru: 'Объявление классу', uz: 'E’lon yuborish', en: 'Announce to class' }],
+  ['homework', { ru: 'Домашнее задание в Telegram', uz: 'Telegramga uy vazifasi', en: 'Homework to Telegram' }],
   ['settings', { ru: 'Настройки уведомлений', uz: 'Bildirishnoma sozlamalari', en: 'Notification settings' }],
   ['language', { ru: 'Язык', uz: 'Til', en: 'Language' }],
   ['help', { ru: 'Помощь', uz: 'Yordam', en: 'Help' }],

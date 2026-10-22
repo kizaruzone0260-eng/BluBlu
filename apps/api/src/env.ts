@@ -105,10 +105,36 @@ const envSchema = z
   SMTP_PASS: z.string().default(''),
   /** Имя в EHLO/HELO: почтовые серверы требуют FQDN, а не «localhost». */
   SMTP_HELO_NAME: z.string().default('blublu.local'),
+  /*
+   * Telegram homework assistant (2026-10-22). `none` is the safe default: materials are
+   * assembled deterministically without reformulation, and the preview says so. A real
+   * provider is enabled only by choosing `openai-compatible` and supplying its key/model.
+   * The key is never logged; AI failures are shown to the teacher as a short class of error.
+   * There is no vision setting on purpose: the formatter never receives the contents of a
+   * file (PDF, DOCX or photo), only the teacher's own text and the titles she chose.
+   */
+  AI_PROVIDER: z.enum(['none', 'openai-compatible']).default('none'),
+  AI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
+  AI_API_KEY: z.string().default(''),
+  AI_MODEL: z.string().default(''),
+  AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(30_000),
 })
   .superRefine((v, ctx) => {
     if (v.SEED_TEACHER_EMAIL && !v.SEED_TEACHER_PASSWORD) {
       ctx.addIssue({ code: 'custom', message: 'SEED_TEACHER_PASSWORD is required when SEED_TEACHER_EMAIL is set', path: ['SEED_TEACHER_PASSWORD'] });
+    }
+    /*
+     * A half-configured AI provider must fail at boot, not after a teacher has already
+     * collected a lesson: "AI_PROVIDER=openai-compatible without a key" would otherwise look
+     * like a working setup whose every formatting request fails.
+     */
+    if (v.AI_PROVIDER === 'openai-compatible') {
+      if (!v.AI_API_KEY) {
+        ctx.addIssue({ code: 'custom', message: 'AI_API_KEY is required for AI_PROVIDER=openai-compatible', path: ['AI_API_KEY'] });
+      }
+      if (!v.AI_MODEL) {
+        ctx.addIssue({ code: 'custom', message: 'AI_MODEL is required for AI_PROVIDER=openai-compatible', path: ['AI_MODEL'] });
+      }
     }
     /*
      * Часть F: наполовину настроенная почта — это не «выключено», а «учитель жмёт „получить
