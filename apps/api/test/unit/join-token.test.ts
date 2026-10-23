@@ -98,36 +98,53 @@ describe('takeJoinToken / consumeJoinToken: очистка адреса', () => 
   });
 });
 
-describe('shell-страница: токен уходит из адреса раньше первой запроски', () => {
-  const html = readFileSync(path.resolve(__dirname, '../../../web/index.html'), 'utf8');
-  const head = html.slice(0, html.indexOf('</head>'));
+describe('shell и точка входа: ключ уходит из адреса до первого рендера', () => {
+  const webRoot = path.resolve(__dirname, '../../../web');
+  const html = readFileSync(path.join(webRoot, 'index.html'), 'utf8');
+  const main = readFileSync(path.join(webRoot, 'src/main.tsx'), 'utf8');
+  const primed = readFileSync(path.join(webRoot, 'src/lib/joinToken.ts'), 'utf8');
 
-  it('инлайн-скрипт стоит в head и он классический, а не модуль', () => {
-    const m = /<script>\s*\(function \(\)\s*\{/.exec(head);
-    expect(m, 'в head есть инлайн-IIFE до загрузки модуля').toBeTruthy();
-    expect(html).toMatch(/window\.__blubluJoinToken\s*=\s*h/);
-    expect(html).toMatch(/history\.replaceState\(null, '', location\.pathname \+ \(location\.search \|\| ''\)\)/);
+  /**
+   * CSP приложения — `script-src 'self'` (см. helmet в apps/api/src/app.ts), и она отбрасывает
+   * ЛЮБОЙ инлайн-скрипт на served-сборке. Это не теоретическая опасность: ровно по этой причине
+   * здесь однажды уже оказался мёртвый код, и проверка стоит, чтобы инлайн-скрипт не вернулся
+   * «временно, для отладки» — он бы молча не выполнился, и фрагмент остался бы в адресе.
+   */
+  it('в shell нет ни одного инлайн-скрипта (CSP их всё равно отбросила бы)', () => {
+    expect(html).not.toMatch(/<script>(?!\s*<\/script>)/);
+    expect(html, 'модуль подключается только тегом src').toMatch(/<script type="module" src=/);
   });
 
-  /** Смысл всего механизма: до шрифтов, манифеста и модуля в адресе уже нет ключа. */
-  it('скрипт идёт ПЕРЕД preload-шрифтов, манифестом и модулем приложения', () => {
-    const scriptAt = head.indexOf('<script>');
-    expect(scriptAt).toBeGreaterThan(-1);
-    for (const needle of ['<link rel="preload"', '<link rel="manifest"', 'type="module"', '<title>']) {
-      const at = html.indexOf(needle);
-      expect(at, `«${needle}» есть в документе`).toBeGreaterThan(-1);
-      expect(at, `«${needle}» обязан стоять ПОСЛЕ скрипта`).toBeGreaterThan(scriptAt);
-    }
-  });
-
+  /** Сторонних ресурсов в shell нет — «не грузить их до очистки фрагмента» выполняется само. */
   it('в shell нет ни одного стороннего адреса, куда фрагмент мог бы уехать', () => {
     const external = [...html.matchAll(/https?:\/\/[^\s"'<>]+/g)].map((m) => m[0]);
     expect(external, `сторонние ссылки: ${external.join(', ')}`).toEqual([]);
+    expect(html.match(/<link[^>]+href="https?:\/\//g) ?? [], 'только свои origin').toEqual([]);
   });
 
-  it('скрипт проверяет форму ключа ровно так же, как приложение', () => {
-    const pattern = /\/\^(\[A-Za-z0-9_-\]\{32\})\$\/\.test\(h\)/.exec(html);
-    expect(pattern, 'тот же класс символов и та же длина, что у `isInviteToken`').toBeTruthy();
-    expect(new RegExp(`^${pattern![1]}$`).test(generateInviteToken())).toBe(true);
+  /** Единственный порядок, который имеет значение: prime до темы, до ReactDOM и до любого fetch. */
+  it('main.tsx чистит адрес первым делающим оператором, до ReactDOM.render', () => {
+    const at = main.indexOf('primeJoinToken(window');
+    expect(at, 'вызов есть').toBeGreaterThan(-1);
+    for (const needle of ['applyTheme(', 'ReactDOM.createRoot(', 'serviceWorker']) {
+      const later = main.indexOf(needle);
+      expect(later, `«${needle}» присутствует`).toBeGreaterThan(-1);
+      expect(later, `«${needle}» обязан идти ПОСЛЕ очистки адреса`).toBeGreaterThan(at);
+    }
+  });
+
+  it('подготовка ключа оставляет его там же, где читает страница', () => {
+    expect(primed).toMatch(/import \{ JOIN_TOKEN_KEY, takeJoinToken \} from '@klass\/shared'/);
+    expect(primed).toMatch(/win\[JOIN_TOKEN_KEY\] = token/);
+    expect(primed, 'очистка без записи ключа потеряла бы приглашение').toMatch(/if \(token\)/);
+  });
+
+  /** Чтобы правило «нет инлайн-скриптов» имело причину, а не была случайностью. */
+  it('причина правила живёт в CSP сервера: script-src без unsafe-inline', () => {
+    const app = readFileSync(path.resolve(__dirname, '../../src/app.ts'), 'utf8');
+    const m = /scriptSrc: \[([^\]]*)\]/.exec(app);
+    expect(m, 'директива scriptSrc есть в helmet-конфиге').toBeTruthy();
+    expect(m![1]).toContain("'self'");
+    expect(m![1], 'появление unsafe-inline означало бы, что инлайн-скрипт снова разрешён').not.toMatch(/unsafe-inline|unsafe-eval/);
   });
 });

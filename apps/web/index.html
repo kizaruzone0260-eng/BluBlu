@@ -3,25 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <!--
-      Одноразовая ссылка-приглашение: /join#<токен>. Этот скрипт стоит ПЕРВЫМ в <head> и читает
-      фрагмент раньше, чем страница успевает попросить хоть один ресурс: токен убирается из адреса
-      до загрузки шрифтов, до модуля приложения, до любого `Referer` и до аналитики. Та же
-      логика — `packages/shared/src/joinToken.ts` (сюда её нельзя импортировать: модуль
-      грузится позже, а чистить адрес надо сейчас). Юнит
-      `apps/api/test/unit/join-token.test.ts` следит и за правилами, и за тем, чтобы скрипт не
-      уехал из начала head.
+      Одноразовая ссылка-приглашение: /join#<токен>. Фрагмент убирается из адреса ПЕРВЫМ
+      оператором модуля приложения (`src/main.tsx` → `src/lib/joinToken.ts`), и именно модулем, а
+      не инлайн-скриптом здесь: наша же CSP (`script-src 'self'`) отбрасывает инлайн-скрипты на
+      served-сборке — по той же причине здесь нет и инлайн-регистрации service worker (см.
+      main.tsx). Это не ослабление требования: фрагмент в принципе не уходит серверу (ни в
+      access-лог, ни в `Referer` — referrer-policy `same-origin`), сторонних ресурсов в этом shell
+      нет ни одного, а запрос модуля передаёт путь без фрагмента. Ответственность одна — адрес
+      обязан очиститься до первого рендера, чтобы человек не скопировал и не переслал токен;
+      правила разбора живут в `packages/shared/src/joinToken.ts`, а за порядком следит юнит
+      `apps/api/test/unit/join-token.test.ts`.
     -->
-    <script>
-      (function () {
-        try {
-          var p = '/' + (location.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '');
-          if (p !== '/join') return;
-          var h = (location.hash || '').trim().replace(/^#/, '').trim();
-          if (/^[A-Za-z0-9_-]{32}$/.test(h)) window.__blubluJoinToken = h;
-          history.replaceState(null, '', location.pathname + (location.search || ''));
-        } catch (e) { /* приватный режим без replaceState: токен прочитается из hash ниже */ }
-      })();
-    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- build stamp: the API replaces 'dev' with RENDER_GIT_COMMIT when serving the shell -->
     <meta name="app-build" content="dev" />

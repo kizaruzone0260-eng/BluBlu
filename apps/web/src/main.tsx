@@ -6,7 +6,17 @@ import './i18n';
 import './fonts.css';
 import './styles.css';
 import { applyTheme, getThemeChoice } from './lib/theme';
+import { primeJoinToken } from './lib/joinToken';
 import App from './App';
+
+/*
+ * Первым ДЕЛАЮЩИМ оператором (инлайн-скрипт в index.html для этого места не годится: CSP
+ * `script-src 'self'` отбрасывает инлайн-код на served-сборке): ссылка-приглашение выглядит как
+ * /join#<токен>, и ключ обязан исчезнуть из адресной строки до первого рендера — иначе человек
+ * скопирует его из бара или перешлёт. Импорт стилей выше этого объявления выполняется раньше
+ * (так устроен ESM), но утечки в этом нет: фрагмент не отправляется серверу ни при каком запросе.
+ */
+primeJoinToken(window as unknown as Window & { [key: string]: unknown });
 
 applyTheme(getThemeChoice());
 
