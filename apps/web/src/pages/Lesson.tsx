@@ -1674,23 +1674,23 @@ export default function Lesson({ mode = 'full', target = null }: {
       <>
         {sharePip}
         <LessonMini
-        elapsed={formatElapsed(lessonElapsedMs(session?.startedAt, nowTick))}
-        tile={miniTile} track={miniTrack}
-        micOn={localMicOn} camOn={localCamOn}
-        comments={unread} hands={handsQ.q.data?.hands?.length ?? 0}
-        needConfirm={isTeacher}
-        pos={miniPos} min={miniMin}
-        onMic={() => void toggleMicInRoom()}
-        onCam={() => void toggleCameraInRoom()}
-        onBack={() => nav(`/lesson?${eventId ? `eventId=${eventId}` : `classId=${classIdParam ?? ''}`}`)}
-        onLeave={() => {
-          // мини-окно подтверждение уже показало (кнопка стала «Точно?»), здесь только действие
-          const s = session;
-          if (isTeacher && s) act.mutate({ path: `/api/lessons/${s.id}/end` });
-          void leaveRoom();
-        }}
-        onMin={() => setMiniMin((v) => { const nv = !v; saveMini(miniPos, nv); return nv; })}
-        onPointerDown={miniDown} onPointerMove={miniMove} onPointerUp={miniUp}
+          elapsed={formatElapsed(lessonElapsedMs(session?.startedAt, nowTick))}
+          tile={miniTile} track={miniTrack}
+          micOn={localMicOn} camOn={localCamOn}
+          comments={unread} hands={handsQ.q.data?.hands?.length ?? 0}
+          needConfirm={isTeacher}
+          pos={miniPos} min={miniMin}
+          onMic={() => void toggleMicInRoom()}
+          onCam={() => void toggleCameraInRoom()}
+          onBack={() => nav(`/lesson?${eventId ? `eventId=${eventId}` : `classId=${classIdParam ?? ''}`}`)}
+          onLeave={() => {
+            // мини-окно подтверждение уже показало (кнопка стала «Точно?»), здесь только действие
+            const s = session;
+            if (isTeacher && s) act.mutate({ path: `/api/lessons/${s.id}/end` });
+            void leaveRoom();
+          }}
+          onMin={() => setMiniMin((v) => { const nv = !v; saveMini(miniPos, nv); return nv; })}
+          onPointerDown={miniDown} onPointerMove={miniMove} onPointerUp={miniUp}
         />
       </>,
       target,

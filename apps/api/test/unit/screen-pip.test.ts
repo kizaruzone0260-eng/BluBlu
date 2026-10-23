@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  PIP_HINT_KEY, PIP_HEIGHT, PIP_WIDTH, canUseDocumentPip, collectStyleSources,
+  PIP_HINT_KEY, PIP_HEIGHT, PIP_WIDTH, absolutizeCssUrls, canUseDocumentPip, collectStyleSources,
   pipHintDismissed, previewOpenByDefault, shouldShowPipHint,
 } from '@klass/shared';
 import ru from '@klass/shared/locales/ru.json';
@@ -102,6 +102,32 @@ describe('перенос стилей в пустый документ окна'
 
   it('не-стилевой тег без текста не создаёт узла в окне', () => {
     expect(collectStyleSources([{ rel: 'preload', href: '/assets/font.woff2' }], BASE)).toEqual([]);
+  });
+
+  it('шрифты из инлайнового `<style>` доезжают абсолютными — в dev Vite вкладывает CSS именно так', () => {
+    // `/fonts/inter-400-latin.woff2` из apps/web/src/fonts.css: без базы окно ушло бы за ним в
+    // about:blank и показалось системным шрифтом (то есть потеряло бы `oʻ`/`gʻ`)
+    const got = collectStyleSources(
+      [{ textContent: "@font-face{src:url('/fonts/inter-400-latin.woff2') format('woff2-variations')}" }],
+      BASE,
+    );
+    expect((got[0] as { css: string }).css)
+      .toBe("@font-face{src:url('https://school.example/fonts/inter-400-latin.woff2') format('woff2-variations')}");
+  });
+
+  it('data:, blob:, http(s): и //host внутри CSS не переписываются', () => {
+    const css = 'a{background:url(data:image/png;base64,AAA)}'
+      + 'b{background:url("https://cdn.example/x.png")}'
+      + 'c{background:url(//cdn.example/y.png)}'
+      + 'd{background:url(blob:1234)}'
+      + 'e{background:url(/local/z.png)}';
+    expect(absolutizeCssUrls(css, BASE)).toBe(
+      'a{background:url(data:image/png;base64,AAA)}'
+      + 'b{background:url("https://cdn.example/x.png")}'
+      + 'c{background:url(//cdn.example/y.png)}'
+      + 'd{background:url(blob:1234)}'
+      + 'e{background:url(https://school.example/local/z.png)}',
+    );
   });
 });
 

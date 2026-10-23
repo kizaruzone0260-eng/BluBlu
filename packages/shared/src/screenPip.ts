@@ -69,7 +69,8 @@ export function pipHintDismissed(stored: string | null | undefined): boolean {
  * нужно вставить, в ТОМ ЖЕ порядке — порядок важен, иначе переопределения в styles.css поедут.
  *
  * `baseUrl` обязателен: в PiP-окне документ пустой, и относительный `href` без базы ушёл бы в
- * `about:blank` вместо `/assets/x.css`.
+ * `about:blank` вместо `/assets/x.css`. То же самое происходит ВНУТРИ инлайновых `<style>` — а в
+ * dev-режиме Vite вкладывает CSS именно так, и `/fonts/*.woff2` из `fonts.css` живут в этой ветке.
  */
 export type StyleSource =
   | { kind: 'link'; href: string }
@@ -81,6 +82,22 @@ export interface HeadTagLike {
   textContent?: string | null;
 }
 
+/**
+ * `url()` внутри CSS: абсолютятся только относительные цели. `data:`, `blob:`, `http(s):` и
+ * `//host` не трогаются: их переписывать нечем, а неудачная попытка испортит inline-шрифт или
+ * ссылку на CDN.
+ */
+export function absolutizeCssUrls(css: string, baseUrl: string): string {
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (whole, quote: string, target: string) => {
+    if (/^(data:|blob:|https?:|\/\/)/i.test(target)) return whole;
+    try {
+      return `url(${quote}${new URL(target, baseUrl).href}${quote})`;
+    } catch {
+      return whole;
+    }
+  });
+}
+
 export function collectStyleSources(tags: readonly HeadTagLike[], baseUrl: string): StyleSource[] {
   const out: StyleSource[] = [];
   for (const tag of tags) {
@@ -89,7 +106,7 @@ export function collectStyleSources(tags: readonly HeadTagLike[], baseUrl: strin
       try { abs = new URL(tag.href, baseUrl).href; } catch { /* как есть: битый href не повод терять остальные стили */ }
       out.push({ kind: 'link', href: abs });
     } else if (tag.textContent && tag.textContent.trim() !== '') {
-      out.push({ kind: 'style', css: tag.textContent });
+      out.push({ kind: 'style', css: absolutizeCssUrls(tag.textContent, baseUrl) });
     }
   }
   return out;
