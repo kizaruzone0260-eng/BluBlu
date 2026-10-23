@@ -17,5 +17,7 @@ export * from './authErrors.js';
 export * from './browserContext.js';
 // часть A: правила панели стилей доски — чистые, чтобы проверяться без браузера
 export * from './boardStylesPanel.js';
+// часть C: правила окна показа экрана поверх других программ — те же четыре ответа, что и в вебе
+export * from './screenPip.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';

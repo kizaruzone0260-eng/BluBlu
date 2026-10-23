@@ -362,6 +362,42 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 }
 .share-preview.preview-min { width: 148px; }
 .share-preview video { width: 100%; aspect-ratio: 16/9; background: #000; display: block; }
+/*
+ * Часть C (2026-10-23): содержимое окна показа экрана поверх других программ (Document
+ * Picture-in-Picture). Документ окна пустой — стили, тему (`html[data-theme]`) и шрифты сюда
+ * переносит `lib/documentPip.ts`, поэтому правила лежат в ЭТОМ файле и просто копируются:
+ * светлая и тёмная темы получаются бесплатно, потому что цвета берутся из переменных.
+ *
+ * Окно по умолчанию 360×220 и resizing разрешён браузером, поэтому всё на flex: полоса состояния
+ * и кнопки фиксированные, картинка растягивается на остаток. `100vh` — высота документа окна, у
+ * него нет ни шапки приложения, ни полосы урока.
+ */
+.share-pip {
+  display: flex; flex-direction: column; gap: var(--sp-2); box-sizing: border-box;
+  min-height: 100vh; margin: 0; padding: var(--sp-2);
+  background: var(--bg); color: var(--text); font-family: var(--font);
+}
+.share-pip-status {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-size: .9rem; font-weight: 600;
+}
+.share-pip-mini { margin-left: auto; min-height: 32px; }
+.share-pip-stage {
+  position: relative; flex: 1 1 auto; min-height: 0; display: flex; align-items: center;
+  justify-content: center; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); overflow: hidden; padding: 2px;
+}
+.share-pip-stage .video-tile { width: 100%; }
+.share-pip-stage video { width: 100%; max-height: 100%; aspect-ratio: 16/9; background: #000; display: block; object-fit: contain; }
+.share-pip-stage.is-min { align-items: flex-start; }
+.share-pip-cam {
+  position: absolute; right: 6px; bottom: 6px; width: 26%; min-width: 64px;
+  border-radius: var(--r-sm); overflow: hidden; box-shadow: var(--shadow-md);
+  background: var(--surface);
+}
+.share-pip-bar { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
+.share-pip-bar .bar-btn { min-height: var(--tap); flex: 1 1 auto; }
+.share-pip-hint { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; }
 .lesson-stage:fullscreen .stage-main video { max-height: calc(100vh - 96px); }
 /* phone: the strip runs along the BOTTOM, the board takes the full width */
 @media (max-width: 899px) {

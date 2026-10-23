@@ -21,7 +21,11 @@ import {
   type MiniPos, type RejoinMark,
 } from '@klass/shared';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
+// часть C: правила окна показа экрана — те же функции, что покрываются юнитами
+import { PIP_HINT_KEY, canUseDocumentPip, pipHintDismissed, previewOpenByDefault } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
+import SharePip from '../components/SharePip';
+import { focusMainPage, openSharePipWindow, pipApi, type PipHandle } from '../lib/documentPip';
 import { useSceneBand } from '../lib/sceneBand';
 
 /*
@@ -205,6 +209,25 @@ export default function Lesson({ mode = 'full', target = null }: {
   const [pip, setPip] = useState<{ x: number; y: number; min: boolean; hidden: boolean }>(
     () => { try { return { x: 12, y: 12, min: false, hidden: false, ...JSON.parse(localStorage.getItem(LS_PIP) || '{}') }; } catch { return { x: 12, y: 12, min: false, hidden: false }; } });
   const stageRef = useRef<HTMLDivElement | null>(null);
+  /*
+   * Часть C (2026-10-23): окно показа экрана ПОВЕРХ других программ.
+   *
+   * `shareWin` — само окно и его документ; содержимое рисуется порталом из этого же дерева
+   * React, поэтому тема, перевод и дорожки те же и ВТОРОГО соединения к LiveKit не возникает.
+   * `pipSupported` считается один раз по наличию API (не по UA): там, где окна нет, человек
+   * получает штатную плашку урока + один раз подсказку про Chrome/Edge, а не мёртвую кнопку.
+   */
+  const [shareWin, setShareWin] = useState<PipHandle | null>(null);
+  const shareWinRef = useRef<PipHandle | null>(null);
+  const pipTriggerRef = useRef<HTMLElement | null>(null);
+  const [pipSupported] = useState(() => canUseDocumentPip({
+    apiPresent: !!pipApi(),
+    userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
+  }));
+  const [pipHintOff, setPipHintOff] = useState(() => {
+    try { return pipHintDismissed(localStorage.getItem(PIP_HINT_KEY)); } catch { return false; }
+  });
+
   /** часть D: ref контейнера сцены — относительно него центрируется нижняя панель */
   const mainRef = useSceneBand();
   const dragRef = useRef<{ x0: number; y0: number; px0: number; py0: number } | null>(null);
@@ -1029,9 +1052,14 @@ export default function Lesson({ mode = 'full', target = null }: {
           const surface = st.displaySurface === 'browser' || st.displaySurface === 'window' || st.displaySurface === 'monitor'
             ? st.displaySurface : '';
           setShareSurface(surface);
-          // collapsed by default (task: «по умолчанию свёрнут, разворачивается»); when the shared
-          // surface is a browser tab the warning below explains why it stays collapsed
-          setSharePreview(false);
+          /*
+           * Часть C: «коридор зеркал». Свёрнутый предпросмотр был правилом по умолчанию для
+           * любой поверхности, из-за чего показ ОКНА или вкладки тоже начинался пустым. Теперь
+           * решает `previewOpenByDefault`: весь монитор — свёрнут (он виден человеку и так),
+           * окно/вкладка — показаны, неизвестная поверхность (Safari не отдаёт `displaySurface`) —
+           * показана, потому что пустое окно хуже лишней плитки.
+           */
+          setSharePreview(previewOpenByDefault(surface));
         }
         addTile(
           // the '· Экран' suffix belongs to VideoTile (localized); a second one here measured
@@ -1151,7 +1179,52 @@ export default function Lesson({ mode = 'full', target = null }: {
     setScreenOn(false);
     setVideoPaused(false);
     setDevicesOpen(false);
+    // часть C: окно показа не имеет смысл жить после урока — закрываем, фокус возвращать некому
+    closeShareWindow(false);
   }
+
+  /*
+   * Часть C: открыть/закрыть окно показа поверх других программ.
+   *
+   * `openShareWindow` обязан стартовать СИНХРОННО в том же нажатии, что включает показ:
+   * `documentPictureInPicture.requestWindow()` требует пользовательский жест, и «попробуем потом,
+   * когда трек опубликуется» — это второй шанс, а не план. Если жест не сработал (браузер,
+   * политика, гонка), показ это не трогает: остаётся плашка и та же кнопка в ней, нажатая отдельно.
+   */
+  async function openShareWindow(trigger?: HTMLElement | null): Promise<boolean> {
+    if (shareWinRef.current) return true;
+    const handle = await openSharePipWindow(() => {
+      // крестик на самом окне: человек закрыл его сам — состояние урока обязано это узнать
+      shareWinRef.current = null;
+      setShareWin(null);
+    });
+    if (!handle) return false;
+    shareWinRef.current = handle;
+    setShareWin(handle);
+    pipTriggerRef.current = trigger ?? null;
+    return true;
+  }
+
+  function closeShareWindow(refocus = true) {
+    const handle = shareWinRef.current;
+    shareWinRef.current = null;
+    setShareWin(null);
+    handle?.close();
+    if (refocus) focusMainPage(pipTriggerRef.current);
+  }
+
+  /** Плашка и «Ещё» зовут это отдельно: окно можно вынести и позже, своим нажатием. */
+  function toggleShareWindow() {
+    if (shareWinRef.current) { closeShareWindow(); return; }
+    void openShareWindow(document.activeElement as HTMLElement | null);
+  }
+
+  useEffect(() => {
+    // остановка показа (наша кнопка, «Остановить» в браузере или отзыв публикации) закрывает окно
+    if (!screenOn && shareWinRef.current) closeShareWindow(false);
+  }, [screenOn]);
+
+  useEffect(() => () => { closeShareWindow(false); }, []);
 
   /**
    * Task 1.3: start / stop demonstrating the screen.
@@ -1174,9 +1247,14 @@ export default function Lesson({ mode = 'full', target = null }: {
       systemAudio: 'include', contentHint: 'detail',
     };
     try {
+      // часть C: окно запрашивается ПЕРВЫМ и не ждёт публикации — тот же жест, та же кнопка
+      const pipStart = on && pipSupported ? openShareWindow() : null;
       await room.localParticipant.setScreenShareEnabled(on, on ? opts : undefined);
-      if (!on) { setShareSurface(''); setSharePreview(false); }
+      if (!on) { setShareSurface(''); setSharePreview(false); closeShareWindow(false); }
+      // отказ окна (браузер не дал жеста) ничего не меняет: показ продолжается в штатной плашке
+      if (pipStart) await pipStart;
     } catch {
+      if (on) closeShareWindow(false);
       // the key existed in all three locales but was shown RAW here (the render prints `error`
       // untranslated) — the same trap the join path avoids with t(`lesson.${code}`)
       setError(t('lesson.screenShareFailed'));
@@ -1473,6 +1551,8 @@ export default function Lesson({ mode = 'full', target = null }: {
     videoPaused, selfHidden: pip.hidden, fullscreen: boardFull, layout,
     // шаг B1 (2026-10-16): чего не умеет этот браузер — панель прячет кнопку и даёт объяснение
     canScreen: caps.screen, canFullscreen: caps.fullscreen,
+    // часть C: окно показа поверх других программ (есть ли API и открыто ли оно сейчас)
+    canPip: pipSupported, pipOpen: Boolean(shareWin),
   };
   const barDevices: BarDevices = {
     cams: cams.map((d) => ({ deviceId: d.deviceId, label: d.label })),
@@ -1483,6 +1563,7 @@ export default function Lesson({ mode = 'full', target = null }: {
     mic: () => void toggleMicInRoom(),
     cam: () => void toggleCameraInRoom(),
     share: () => void toggleShare(),
+    pip: toggleShareWindow,
     hand: () => handM.mutate(),
     board: toggleBoard,
     comments: () => toggleTab('comments'),
@@ -1567,10 +1648,32 @@ export default function Lesson({ mode = 'full', target = null }: {
   const miniTile = screenTile ?? teacherTile ?? localTile;
   const miniTrack = miniTile ? tracksRef.current.get(miniTile.key) ?? null : null;
 
+  /*
+   * Часть C: содержимое окна показа. Портал в документ PiP-окна, а не отдельное React-дерево:
+   * та же комната, те же дорожки (LiveKit вешает один поток на второй `<video>`), та же тема и те
+   * же переводы. Рисуется и в большой странице, и в мини-окне: показ не обязан прерываться, когда
+   * учитель ушёл с маршрута урока, — окно live'ит поверх Word ровно столько, сколько live'ит
+   * дорожка.
+   */
+  const sharePip = shareWin ? createPortal(
+    <SharePip
+      screenTile={screenTile} screenTrack={screenTile ? tracksRef.current.get(screenTile.key) ?? null : null}
+      camTile={localTile} camTrack={localTile ? tracksRef.current.get(localTile.key) ?? null : null}
+      micOn={localMicOn} camOn={localCamOn} surface={shareSurface}
+      onToggleMic={() => void toggleMicInRoom()}
+      onToggleCam={() => void toggleCameraInRoom()}
+      onStop={() => void toggleShare()}
+      onReturn={() => focusMainPage(pipTriggerRef.current)}
+    />,
+    shareWin.doc.body,
+  ) : null;
+
   if (mode === 'mini') {
     if (!target) return null;
     return createPortal(
-      <LessonMini
+      <>
+        {sharePip}
+        <LessonMini
         elapsed={formatElapsed(lessonElapsedMs(session?.startedAt, nowTick))}
         tile={miniTile} track={miniTrack}
         micOn={localMicOn} camOn={localCamOn}
@@ -1588,7 +1691,8 @@ export default function Lesson({ mode = 'full', target = null }: {
         }}
         onMin={() => setMiniMin((v) => { const nv = !v; saveMini(miniPos, nv); return nv; })}
         onPointerDown={miniDown} onPointerMove={miniMove} onPointerUp={miniUp}
-      />,
+        />
+      </>,
       target,
     );
   }
@@ -1676,6 +1780,28 @@ export default function Lesson({ mode = 'full', target = null }: {
                       {shareSurface === 'browser' && (
                         <span className="muted" data-testid="share-mirror-warn">{t('lesson.shareMirrorWarn')}</span>
                       )}
+                      {/*
+                       * Часть C: два разных «нет». Если API окна есть — человек может вынести показ
+                       * поверх других программ этим же нажатием. Если его нет (Safari, Firefox,
+                       * телефон) — не мёртвая кнопка, а строка, объясняющая, где окно появится;
+                       * подсказка закрывается навсегда одной кнопкой.
+                       */}
+                      {pipSupported ? (
+                        <button type="button" className="secondary" style={{ marginTop: 0 }} data-testid="share-pip-open"
+                          aria-pressed={Boolean(shareWin)} onClick={toggleShareWindow}>
+                          ⬈ {t('lesson.sharePipOpen')}
+                        </button>
+                      ) : !pipHintOff ? (
+                        <span className="muted share-pip-hint" data-testid="share-pip-hint">
+                          {t('lesson.sharePipHint')}
+                          <button type="button" className="ghost link-button" style={{ marginTop: 0 }}
+                            data-testid="share-pip-hint-hide"
+                            onClick={() => {
+                              setPipHintOff(true);
+                              try { localStorage.setItem(PIP_HINT_KEY, '1'); } catch { /* память недоступна */ }
+                            }}>{t('lesson.sharePipHintHide')}</button>
+                        </span>
+                      ) : null}
                       <div className="spacer" />
                       <button type="button" className="danger" style={{ marginTop: 0 }} data-testid="share-stop"
                         onClick={() => void toggleShare()}>{t('lesson.shareStop')}</button>
@@ -1913,6 +2039,8 @@ export default function Lesson({ mode = 'full', target = null }: {
           )}
         </div>
       )}
+      {/* часть C: окно показа поверх других программ (портал в документ PiP, см. `sharePip`) */}
+      {sharePip}
     </div>
   );
 

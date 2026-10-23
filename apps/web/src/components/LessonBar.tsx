@@ -35,6 +35,12 @@ export interface BarState {
    * а «кнопка никогда не сработает» — её не видно, а вместо неё стоит объяснение.
    */
   canScreen: boolean; canFullscreen: boolean;
+  /**
+   * Часть C (2026-10-23): окно показа поверх других программ. `canPip` — что ЭТОТ браузер умеет
+   * `documentPictureInPicture`; `pipOpen` — открыто ли окно сейчас (кнопка тогда «вернуть», а не
+   * «вынести»). При `canPip: false` кнопки нет: вместо неё объяснение в плашке показа.
+   */
+  canPip: boolean; pipOpen: boolean;
 }
 
 export interface BarActions {
@@ -46,6 +52,8 @@ export interface BarActions {
   pickCam: (deviceId: string) => void; pickMic: (deviceId: string) => void;
   /** часть A (шаг A4): «новая заметка» — переход через роутер, адрес считает родитель */
   note: () => void;
+  /** часть C (2026-10-23): вынести показ экрана в окно поверх других программ / вернуть его */
+  pip: () => void;
 }
 
 export interface BarDevices {
@@ -342,6 +350,14 @@ export default function LessonBar({ state, actions, devices }: {
                 onClick={() => { close(); actions.participants(); }}>
                 👥 {t('lesson.peersTitle')} · {state.peers}
               </button>
+              {/* часть C: окно показа поверх других программ — только там, где браузер это умеет,
+                  и только когда показ уже идёт (иначе выносить нечего) */}
+              {state.canPip && state.screenOn && (
+                <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.pipOpen}
+                  data-testid="more-pip" onClick={() => { close(); actions.pip(); }}>
+                  ⧉ {t('lesson.sharePipOpen')}
+                </button>
+              )}
               <button type="button" className="bar-item bar-mob" role="menuitemcheckbox" aria-checked={state.boardOpen}
                 data-testid="more-board"
                 onClick={() => { close(); actions.board(); }}>
