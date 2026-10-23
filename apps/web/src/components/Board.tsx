@@ -470,22 +470,22 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
    * Excalidraw нам поставить некуда (DOM панели библиотечный, и слота в него нет), а закрывать
    * панель чем-то надо не только Esc. Кнопка остаётся той же самой — тот же `aria-pressed`, тот же
    * фокус, никаких новых слоёв над полотном.
+   *
+   * КНОПКА РЕНДЕРИТСЯ ВСЕГДА, а при `!canDraw` просто выключена. Это не косметика: появление
+   * нового объекта в строке шапки поднимало её на 10,25 px ровно в момент, когда учитель выдавал
+   * право рисовать, и полотно уезжало вниз — это измеряет блокирующий спек zz20 («выдача права не
+   * сдвигает полотно», допуск 2 px, прогон 39993977646). Место зарезервировано в обеих состояниях,
+   * поэтому сдвиг нулевой, а причина «почему не жмётся» читается в подсказке.
    */
-  const stylesButton = canDraw ? (
+  const stylesButton = (
     <button type="button" className="secondary board-styles-toggle" style={{ marginTop: 0 }}
-      ref={stylesBtnRef} data-testid="board-styles-toggle"
+      ref={stylesBtnRef} data-testid="board-styles-toggle" disabled={!canDraw}
       aria-pressed={stylesOpen} aria-label={t('lesson.boardStylesAria')}
-      title={t('lesson.boardStylesHint')} onClick={toggleStyles}>
-      {/*
-        Глиф в ячейке фиксированной ширины (styles.css): без неё смена 🎨 → ✕ меняла бы ширину
-        кнопки, а строка шапки — flex с переносом, и на средней ширине это сдвинуло бы полотно на
-        несколько пикселей ровно в момент нажатия. Состояние при этом читается и без картинки, по
-        `aria-pressed`.
-      */}
+      title={canDraw ? t('lesson.boardStylesHint') : t('lesson.boardNoPermission')} onClick={toggleStyles}>
       <span className="board-styles-glyph" aria-hidden="true">{stylesOpen ? '✕' : '🎨'}</span>
       {t('lesson.boardStyles')}
     </button>
-  ) : null;
+  );
 
   return (
     <div className="card" data-testid="board">
@@ -625,12 +625,24 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
               отступами выше обычного текста, и строка шапки растягивалась ровно в тот момент,
               когда учитель выдавал право, — полотно уезжало на несколько пикселей вниз.
             */}
+            {/*
+              Часть 3: разрешённый ученик видит, что ему можно, а не догадывается по курсору.
+              Обе состояния лежат в одной ячейке фиксированной высоты: без неё «pill» с
+              отступами выше обычного текста, и строка шапки растягивалась ровно в тот момент,
+              когда учитель выдавал право, — полотно уезжало на несколько пикселей вниз.
+
+              Кнопка «Стили» живёт В ЭТОЙ ЖЕ ячейке (часть A, 2026-10-23). В первом варианте она
+              стояла рядом, и выдача права поднимала строку на 10,25 px — ровно на разницу между
+              высотой pill-ячейки и высотой кнопки; это поймал блокирующий спек zz20 («выдача
+              права не сдвигает полотно», прогон 39993977646). Ячейка теперь одна на оба
+              состояния, и её высота не зависит от того, есть ли кнопка.
+            */}
             <span className="board-status">
               {canDraw
                 ? <span className="board-draw-badge" data-testid="board-draw-badge">✏️ {t('lesson.boardYouCanDraw')}</span>
                 : <span className="muted" data-testid="board-readonly">👁 {t('lesson.readonly')}</span>}
+              {stylesButton}
             </span>
-            {stylesButton}
           </>
         )}
       </div>

@@ -22,7 +22,7 @@ import {
 } from '@klass/shared';
 import { cameraAttempts, microphoneAttempts, isRetryableMediaError, mediaErrorKey, pickStageContent, stageSwitchVisible, stripKeys } from '@klass/shared';
 // часть C: правила окна показа экрана — те же функции, что покрываются юнитами
-import { PIP_HINT_KEY, canUseDocumentPip, pipHintDismissed, previewOpenByDefault } from '@klass/shared';
+import { PIP_HINT_KEY, canUseDocumentPip, pipHintDismissed } from '@klass/shared';
 import ScreenStage from '../components/ScreenStage';
 import SharePip from '../components/SharePip';
 import { focusMainPage, openSharePipWindow, pipApi, type PipHandle } from '../lib/documentPip';
@@ -1053,13 +1053,14 @@ export default function Lesson({ mode = 'full', target = null }: {
             ? st.displaySurface : '';
           setShareSurface(surface);
           /*
-           * Часть C: «коридор зеркал». Свёрнутый предпросмотр был правилом по умолчанию для
-           * любой поверхности, из-за чего показ ОКНА или вкладки тоже начинался пустым. Теперь
-           * решает `previewOpenByDefault`: весь монитор — свёрнут (он виден человеку и так),
-           * окно/вкладка — показаны, неизвестная поверхность (Safari не отдаёт `displaySurface`) —
-           * показана, потому что пустое окно хуже лишней плитки.
+           * Предпросмотр В УРОКЕ остаётся свёрнутым по умолчанию для любой поверхности — так было
+           * задано раньше (task 1.3), и это пинает блокирующий спек zz13. Правило «коридора
+           * зеркал» из части C относится к НОВОМУ окну показа (SharePip) и действует только там.
+           * Первая версия этой правки распространила правило и на плашку урока — прогон
+           * 39993977646 поймал это красным zz13 («ожидался класс preview-min»), поэтому здесь
+           * прежний вызов и прежний смысл.
            */
-          setSharePreview(previewOpenByDefault(surface));
+          setSharePreview(false);
         }
         addTile(
           // the '· Экран' suffix belongs to VideoTile (localized); a second one here measured
