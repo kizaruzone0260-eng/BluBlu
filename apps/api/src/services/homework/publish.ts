@@ -193,11 +193,19 @@ interface GroupResult {
   error: string;
 }
 
-/** A part that already arrived in an earlier attempt of the same row. */
-function arrived(
-  previous: PublicationPart[], kind: PublicationPart['kind'], label: string,
+/**
+ * The recorded part standing at one position of the previous attempt, if that position really
+ * still holds the same piece of homework. Position matters: two plain photos have the same
+ * label («photo»), so matching by label alone could mark a file as delivered that never was,
+ * and skipping it would silently lose it. The order is deterministic — the library books in
+ * their position, then the collected files in theirs — so a position only shifts when the
+ * teacher adds something, and new material lands after the old ones.
+ */
+function arrivedAt(
+  previous: PublicationPart[], index: number, kind: PublicationPart['kind'], label: string,
 ): PublicationPart | null {
-  return previous.find((p) => p.kind === kind && p.label === label && p.status === 'sent') ?? null;
+  const p = previous[index];
+  return p && p.kind === kind && p.label === label && p.status === 'sent' ? p : null;
 }
 
 /**
@@ -216,11 +224,13 @@ async function sendOne(
   let firstTextId: number | null = null;
 
   const chunks = splitText(text);
-  const sentText = chunks.length ? arrived(previous, 'text', 'text') : null;
-  if (sentText) {
-    parts.push(sentText);
-    delivered++;
-    firstTextId = sentText.messageId;
+  const prevText = previous.filter((p) => p.kind === 'text');
+  const textAlreadyOut = chunks.length > 0 && prevText.length === chunks.length
+    && prevText.every((p) => p.status === 'sent');
+  if (textAlreadyOut) {
+    parts.push(...prevText);
+    delivered += prevText.length;
+    firstTextId = prevText.find((p) => p.messageId)?.messageId ?? null;
   } else if (chunks.length) {
     try {
       for (const chunk of chunks) {
@@ -249,8 +259,10 @@ async function sendOne(
     }
   }
 
-  for (const a of buildAttachments(materials, items)) {
-    const done = arrived(previous, a.partKind, a.label);
+  const attachments = buildAttachments(materials, items);
+  for (let j = 0; j < attachments.length; j++) {
+    const a = attachments[j]!;
+    const done = arrivedAt(previous, prevText.length + j, a.partKind, a.label);
     if (done) {
       parts.push(done);
       delivered++;

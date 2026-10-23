@@ -439,5 +439,39 @@ suite('homework delivery, language and outcomes', () => {
     expect(await draftStatus(draft.id)).toBe('published');
   });
 
+  it('retries only the missing file when two attachments share one label', async () => {
+    // Photos have no file name, so both parts are labelled «photo». A retry that decided
+    // "already sent" by label alone would skip the second picture forever — positions decide.
+    const first = photo('pic-a');
+    const second = photo('pic-b');
+    const idA = (first.message as { message_id: number }).message_id;
+    const idB = (second.message as { message_id: number }).message_id;
+    const draftId = await toPreview([first, second], 'Two pictures');
+
+    const publishToken = button('Publish to groups');
+    clearApi();
+    // the second original message is gone and Telegram refuses the fallback too
+    api.missingSources.add(`${T_CHAT}:${idB}`);
+    api.rejectPhotoChats.add(GROUP_A);
+    await go(rawCb(publishToken));
+
+    const [pub1] = await pubsOf(draftId);
+    expect(pub1!.parts.map((p) => `${p.kind}:${p.status}`))
+      .toEqual(['text:sent', 'photo:sent', 'photo:failed']);
+    expect(hasButton('Retry failed')).toBe(true);
+
+    const retryToken = button('Retry failed');
+    api.missingSources.delete(`${T_CHAT}:${idB}`);
+    api.rejectPhotoChats.delete(GROUP_A);
+    clearApi();
+    await go(rawCb(retryToken));
+    // the first picture is NOT copied again, the second one finally arrives
+    expect(copiesTo(GROUP_A).map((c) => c.messageId)).toEqual([idB]);
+    const [pub2] = await pubsOf(draftId);
+    expect(pub2!.status).toBe('sent');
+    expect(pub2!.parts.filter((p) => p.kind === 'photo')).toHaveLength(2);
+    expect(await draftStatus(draftId)).toBe('published');
+  });
+
   const draftStatus = async (id: string) => (await draftRow(id)).status;
 });
