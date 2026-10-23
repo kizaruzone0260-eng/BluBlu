@@ -253,6 +253,13 @@
       "when": 1792737393504,
       "tag": "0035_tearful_shape",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792780714976,
+      "tag": "0036_gigantic_strong_guy",
+      "breakpoints": true
     }
   ]
 }

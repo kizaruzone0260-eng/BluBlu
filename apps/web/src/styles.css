@@ -22,6 +22,7 @@
   --ok: #1c7c43;
   --ok-soft: #dcf3e4;
   --warn: #9a6700;
+  --warn-soft: #fdf3dc;
   --shadow-sm: 0 1px 2px rgba(23, 33, 29, .06), 0 1px 3px rgba(23, 33, 29, .05);
   --shadow-md: 0 2px 6px rgba(23, 33, 29, .07), 0 8px 24px rgba(23, 33, 29, .08);
   --shadow-lg: 0 4px 12px rgba(23, 33, 29, .10), 0 16px 40px rgba(23, 33, 29, .14);
@@ -63,6 +64,7 @@ html[data-theme="dark"] {
   --ok: #5ec97f;
   --ok-soft: #143121;
   --warn: #e0b64f;
+  --warn-soft: #3a2f10;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, .45);
   --shadow-lg: 0 6px 24px rgba(0, 0, 0, .55);
@@ -1102,3 +1104,63 @@ button.danger-text { color: var(--danger); }
 }
 .rejoin-box p { margin: 0; }
 .rejoin-btn { min-height: 48px; font-size: 1.05rem; font-weight: 600; }
+
+/* ═══ приглашения в класс и вход по ссылке (задача 2026-10-23) ═══════════════
+   Все цвета — из токенов, поэтому светлая и тёмная темы покрываются сами собой.
+   Единственное, за чем тут надо следить отдельно: 390 px (нет горизонтального
+   скролла) и --tap (44 px) на всех кнопках. */
+
+.invite-row { align-items: flex-end; flex-wrap: wrap; gap: var(--sp-2); }
+.invite-row .field { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 180px; }
+.invite-row .field label { font-size: .8rem; color: var(--text-muted); }
+.invite-row .field input, .invite-row .field select { margin-top: 0; min-width: 0; }
+
+/* блок «ссылка показана один раз»: само значение + предупреждение + действия */
+.invite-reveal {
+  margin-top: var(--sp-3); padding: var(--sp-3);
+  border: 1px solid var(--accent); border-radius: var(--r-md); background: var(--surface-2);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+.invite-warn {
+  margin: 0; font-size: .88rem; font-weight: 600;
+  color: var(--warn); background: var(--warn-soft);
+  border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3);
+}
+.invite-url {
+  font-family: ui-monospace, "Cascadia Mono", monospace; font-size: .85rem; word-break: break-all;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-2);
+}
+.invite-actions { flex-wrap: wrap; }
+.invite-actions button, .invite-actions a.invite-tg { min-height: var(--tap); }
+a.invite-tg {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 var(--sp-3); border-radius: var(--r-sm); border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text); text-decoration: none; font-size: .9rem;
+}
+a.invite-tg:hover { border-color: var(--accent); }
+.invite-code-fallback { margin-top: var(--sp-4); }
+.invite-code-fallback h3 { margin: 0 0 var(--sp-2); font-size: .9rem; color: var(--text-muted); font-weight: 600; }
+.badge.revoked { background: var(--warn-soft); color: var(--warn); }
+
+/* форма «учитель задаёт пароль сам» */
+.pw-form { max-width: 420px; margin-top: var(--sp-3); box-shadow: var(--shadow-sm); }
+.pw-form h3 { margin: 0 0 var(--sp-2); font-size: 1rem; }
+.pw-form input[type="password"] { margin-top: 0; }
+
+/* страница /join */
+.join-card { max-width: 460px; margin: 24px auto; }
+.join-class { font-size: 1.02rem; margin: var(--sp-2) 0 var(--sp-4); }
+.join-as {
+  margin: var(--sp-3) 0; padding: var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2);
+}
+.join-as p { margin: 0 0 var(--sp-2); }
+.join-card .muted input, .join-card input { margin-top: 0; }
+
+/* телефон: карточка ссылки не должна давать горизонтальный скролл (390 px) */
+@media (max-width: 520px) {
+  .invite-row .field { flex: 1 1 100%; }
+  .invite-actions { flex-direction: column; align-items: stretch; }
+  .invite-actions button, .invite-actions a.invite-tg { width: 100%; }
+  .join-card { margin: 12px auto; }
+}

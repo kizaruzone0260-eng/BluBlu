@@ -205,6 +205,41 @@ export async function requestEmailCode(firstName: string, lastName: string, emai
   });
 }
 
+/* ─── одноразовая ссылка-приглашение (задача 2026-10-23, часть B) ───────────────────────── */
+
+/**
+ * «Куда меня зовут» — ничего не расходует. Отдельная функция потому, что у ответа ровно два
+ * поля и он не должен превратиться в «проверку кода»: проверка приглашения тоже обязана
+ * оставаться безвредной, иначе предпросмотр в мессенджере сжигал бы ссылку.
+ */
+export async function previewInvite(token: string): Promise<{ className: string; expiresAt: string | null }> {
+  return api<{ className: string; expiresAt: string | null }>('/api/invitations/preview', {
+    method: 'POST', body: JSON.stringify({ token }),
+  });
+}
+
+/** Регистрация по приглашению: аккаунт + класс + расход токена одним запросом. */
+export async function registerByInvite(
+  token: string, firstName: string, lastName: string, email: string, password: string, locale?: string,
+): Promise<{ user: Me; classId: string }> {
+  const j = await api<{ accessToken: string; user: Me; classId: string }>('/api/invitations/register', {
+    method: 'POST',
+    body: JSON.stringify({
+      token, firstName, lastName, email, password,
+      ...(locale ? { locale } : {}),
+    }),
+  });
+  setAccessToken(j.accessToken);
+  return { user: j.user, classId: j.classId };
+}
+
+/** Войти в приглашённый класс уже существующим аккаунтом. `alreadyMember` — честно, без дублей. */
+export async function joinByInvite(token: string): Promise<{ classId: string; alreadyMember: boolean }> {
+  return api<{ classId: string; alreadyMember: boolean }>('/api/invitations/join', {
+    method: 'POST', body: JSON.stringify({ token }),
+  });
+}
+
 export async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
   setAccessToken(null);

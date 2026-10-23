@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   classCreateSchema, classUpdateSchema, joinByCodeSchema, memberAddSchema, memberMoveSchema,
+  memberResetPasswordSchema, passwordIssueCode,
 } from '@klass/shared';
+import { errorBody } from '../lib/requestId.js';
 import type { DB } from '../db/index.js';
 import {
   resolveClass, listMyClasses, createClass, updateClass, archiveClass,
@@ -137,19 +139,45 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true };
   });
 
-  // §3.1 password reset by teacher: generates a temporary password (no email server)
+  /**
+   * §3.1 + задача 2026-10-23 (часть C): временный пароль ученика.
+   *
+   * Два способа, и оба остаются намеренно:
+   *  • учитель ВВОДИТ пароль сам (`{password}`) — так можно продиктовать его в классе, и ответ
+   *    сервера ничего не возвращает: то, что набрал учитель, ему известно, а повторять пароль в
+   *    JSON — значит оставить его в истории запросов и в логах;
+   *  • пароля в запросе нет — сервер генерирует (прежний путь, его же используют тесты и скрипт
+   *    владельца) и показывает ровно один раз.
+   *
+   * Во обоих случаях `setTempPassword` поднимает `must_change_password` (гейт держит
+   * `plugins/auth.ts`, не экран), снимает refresh-сессии и — это и было сломано — снимает строку
+   * `login_attempts`, без которой новый пароль не работал до 15 минут.
+   *
+   * Политика та же, что при регистрации: временный пароль не может быть «12345678». Ослаблять её
+   * ради сброса не стали — сброс и есть самый удобный канал подобрать лёгкий пароль.
+   */
   app.post('/api/classes/:id/members/:userId/reset-password', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const p = uuidParam.safeParse(req.params);
     if (!p.success || !p.data.userId) return reply.code(404).send({ error: 'notFound' });
+    const parsed = memberResetPasswordSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const pw = passwordIssueCode(parsed.error.issues.find((i) => i.path[0] === 'password'));
+      if (pw) return reply.code(400).send(errorBody(req.id, pw));
+      return reply.code(400).send(errorBody(req.id, 'invalidInput'));
+    }
     const cls = await needClass(db, req, reply, p.data.id);
     if (!cls) return;
     const [member] = await db.select({ id: classMembers.userId }).from(classMembers)
       .where(and(eq(classMembers.classId, cls.id), eq(classMembers.userId, p.data.userId))).limit(1);
     if (!member) return reply.code(404).send({ error: 'notFound' });
-    const pw = tempPassword();
+    const chosen = parsed.data.password;
+    const pw = chosen ?? tempPassword();
     await setTempPassword(db, p.data.userId, pw);
-    audit(db, req.user!.id, 'reset_password', { classId: cls.id, userId: p.data.userId });
-    return { tempPassword: pw };
+    // в журнал — только идентификаторы и РОВНО то, кем пароль задан; самого пароля там нет
+    audit(db, req.user!.id, 'reset_password', {
+      classId: cls.id, userId: p.data.userId, source: chosen ? 'teacher' : 'generated',
+    });
+    return chosen ? { ok: true } : { tempPassword: pw };
   });
 
   // Students can leave a class themselves

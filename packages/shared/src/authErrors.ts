@@ -29,6 +29,15 @@ export const AUTH_ERROR_CODES = [
   // limits — the two shapes differ on purpose: 429 from the shared-IP ceiling is a one-minute
   // wait, `codeRateLimited` is the credential-scoped block that lasts longer
   'tooManyRequests', 'codeRateLimited',
+  /*
+   * Одноразовая ссылка-приглашение (2026-10-23). Здесь четыре состояния ТОКЕНА называются по
+   * имени, а не сводятся к одному «неверный код», — и это не исключение из правила против
+   * перечисления: перечислять тут нечего, токен — 24 случайных байта, угадать его нельзя, а
+   * ученику, который пришёл по просроченной или уже использованной ссылке, «неверная ссылка»
+   * было бы бесполезно: ему нужно сказать, что попросить УЧИТЕЛЯ о новой.
+   */
+  'inviteInvalid', 'inviteExpired', 'inviteRevoked', 'inviteUsed', 'alreadyMember',
+  'registrationUnavailable',
   // last resorts that must still say something useful
   'serverError', 'policyVersionStale',
 ] as const satisfies readonly string[];
@@ -45,4 +54,18 @@ export function isAuthErrorCode(value: unknown): value is AuthErrorCode {
 /** The i18n key of a code, in the flat `auth.*` namespace the screens already use. */
 export function authErrorKey(code: string): string {
   return `auth.${isAuthErrorCode(code) ? code : 'invalidInput'}`;
+}
+
+/**
+ * Расшифровка отказа пароля — ОНА Одна на все три места, где пароль принимают: регистрация по
+ * коду, регистрация по ссылке и сброс учителем (задача 2026-10-23). Причина в `message`: сама
+ * схема задаёт его нашими же кодами (`.min(10, 'passwordTooShort')`), а `code` у zod общий
+ * («too_small», «invalid_string», «custom») и не различает «короткий» и «слишком простой».
+ * Всё остальное — `null`, и маршрут отвечает `invalidInput`, а не домысленным кодом.
+ */
+export function passwordIssueCode(
+  issue: { message?: unknown } | undefined,
+): 'passwordTooShort' | 'passwordTooSimple' | 'passwordTooCommon' | null {
+  const m = issue?.message;
+  return m === 'passwordTooShort' || m === 'passwordTooSimple' || m === 'passwordTooCommon' ? m : null;
 }

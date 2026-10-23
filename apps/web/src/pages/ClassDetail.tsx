@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { INVITE_LABEL_MAX, INVITE_LINK_DEFAULT_TTL_DAYS, INVITE_LINK_TTL_DAYS, passwordPolicy } from '@klass/shared';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useAuth } from '../App';
 import Feed from '../components/Feed';
@@ -10,6 +11,8 @@ import Feed from '../components/Feed';
 interface InviteRow {
   id: string; status: 'active' | 'used' | 'expired' | 'revoked';
   expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
+  /** задача 2026-10-23: список показывает оба вида приглашений */
+  kind?: 'code' | 'link'; label?: string;
 }
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
 interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean; boardArchivePublic?: boolean }
@@ -22,6 +25,16 @@ export default function ClassDetail() {
   const nav = useNavigate();
   const [newCode, setNewCode] = useState<string | null>(null);
   const [ttlDays, setTtlDays] = useState(7);
+  // задача 2026-10-23: ссылка-приглашение. `newLink` живёт только в памяти этой страницы —
+  // сервер отдаёт её ровно один раз, и «показать ещё раз» честного способа не имеет.
+  const [linkLabel, setLinkLabel] = useState('');
+  const [linkTtl, setLinkTtl] = useState<number>(INVITE_LINK_DEFAULT_TTL_DAYS);
+  const [newLink, setNewLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  // сброс пароля учителем (часть C): null — форма закрыта, иначе id ученика
+  const [pwFor, setPwFor] = useState<string | null>(null);
+  const [pwA1, setPwA1] = useState('');
+  const [pwA2, setPwA2] = useState('');
   // feedback is a toast, not `window.alert` (task 3, 2026-10-10): a native modal blocks the
   // renderer until somebody dismisses it, and a page that still has one open when the client
   // wants to leave it cannot finish closing — measured as `page.close` taking 235 s in the e2e
@@ -66,9 +79,12 @@ export default function ClassDetail() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); },
   });
 
+  // задача 2026-10-23: история обоими видами приглашений одним запросом (`…/invitations`).
+  // `…/invites` остаётся списком КОДОВ — на нём держится прежний экран, и сервер теперь
+  // возвращает там только kind='code', чтобы ссылки не путались с кодами.
   const invites = useQuery({
-    queryKey: ['invites', id],
-    queryFn: () => api<InviteRow[]>(`/api/classes/${id}/invites`),
+    queryKey: ['invitations', id],
+    queryFn: () => api<InviteRow[]>(`/api/classes/${id}/invitations`),
     enabled: me?.role === 'teacher',
   });
   const members = useQuery({
@@ -81,18 +97,40 @@ export default function ClassDetail() {
     mutationFn: () => api<{ code: string }>(`/api/classes/${id}/invites`, {
       method: 'POST', body: JSON.stringify({ ttlDays }),
     }),
-    onSuccess: (r) => { setNewCode(r.code); void qc.invalidateQueries({ queryKey: ['invites', id] }); },
+    onSuccess: (r) => { setNewCode(r.code); void qc.invalidateQueries({ queryKey: ['invitations', id] }); },
+  });
+  const createLink = useMutation({
+    mutationFn: () => api<{ id: string; url: string; expiresAt: string }>(`/api/classes/${id}/invites/link`, {
+      method: 'POST', body: JSON.stringify({ label: linkLabel, ttlDays: linkTtl }),
+    }),
+    onSuccess: (r) => {
+      setNewLink(r.url);
+      void qc.invalidateQueries({ queryKey: ['invitations', id] });
+    },
   });
   const revoke = useMutation({
     mutationFn: (inviteId: string) => api(`/api/classes/${id}/invites/${inviteId}/revoke`, { method: 'POST' }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['invites', id] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['invitations', id] });
+      say(t('classes.invite.revoked'));
+    },
   });
   const removeMember = useMutation({
     mutationFn: (userId: string) => api(`/api/classes/${id}/members/${userId}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['members', id] }),
   });
+  /** прежний путь: сервер генерирует пароль и показывает его один раз */
   const resetPw = useMutation({
     mutationFn: (userId: string) => api<{ tempPassword: string }>(`/api/classes/${id}/members/${userId}/reset-password`, { method: 'POST' }),
+    onSuccess: () => say(t('classes.pwSet')),
+  });
+  /** новый путь: пароль набирает учитель; ответ сервера его не возвращает */
+  const setPw = useMutation({
+    mutationFn: ({ userId, password }: { userId: string; password: string }) =>
+      api<{ ok: true }>(`/api/classes/${id}/members/${userId}/reset-password`, {
+        method: 'POST', body: JSON.stringify({ password }),
+      }),
+    onSuccess: () => { setPwFor(null); setPwA1(''); setPwA2(''); say(t('classes.pwSet')); },
   });
 
   return (
@@ -124,25 +162,82 @@ export default function ClassDetail() {
       <Feed classId={id} />
       {me?.role === 'teacher' && (
         <>
-          <div className="card">
-            <h2>{t('classes.invite.title')}</h2>
-            <div className="row">
-              <label style={{ margin: 0 }}>{t('classes.invite.ttlDays')}</label>
-              <input type="number" min={1} max={30} value={ttlDays} style={{ width: 80 }}
-                onChange={(e) => setTtlDays(Number(e.target.value))} />
-              <button data-testid="create-invite" style={{ marginTop: 0 }} onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
-                {t('classes.invite.create')}
+          {/* задача 2026-10-23, часть A: «Добавить ученика». Ссылка — основной способ, код —
+              запасной. Ссылка показывается ОДИН раз: сервер хранит только её хеш, поэтому
+              «вспомнить» её невозможно, и это надо сказать прямо, а не оставить пустую кнопку. */}
+          <div className="card" data-testid="add-student">
+            <h2>{t('classes.addStudent')}</h2>
+            <p className="muted" style={{ fontSize: '.88rem' }}>{t('classes.addStudentHint')}</p>
+
+            <div className="row invite-row">
+              <div className="field">
+                <label htmlFor="invite-label">{t('classes.invite.linkLabel')}</label>
+                <input id="invite-label" data-testid="invite-link-label" value={linkLabel} maxLength={INVITE_LABEL_MAX}
+                  onChange={(e) => setLinkLabel(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="invite-ttl">{t('classes.invite.linkTtl')}</label>
+                <select id="invite-ttl" data-testid="invite-link-ttl" value={linkTtl} style={{ marginTop: 0 }}
+                  onChange={(e) => setLinkTtl(Number(e.target.value))}>
+                  {INVITE_LINK_TTL_DAYS.map((d) => <option key={d} value={d}>{t(`classes.invite.ttl${d}`)}</option>)}
+                </select>
+              </div>
+              <button data-testid="create-invite-link" onClick={() => { setLinkCopied(false); createLink.mutate(); }}
+                disabled={createLink.isPending}>
+                {t('classes.invite.createLink')}
               </button>
             </div>
-            {newCode && (
-              <div style={{ marginTop: 12 }}>
-                <div data-testid="invite-code" className="code-box">{newCode}</div>
-                <p className="muted">{t('classes.invite.showOnce')}</p>
+
+            {newLink && (
+              <div className="invite-reveal" data-testid="invite-link-box">
+                <p className="invite-warn" role="status" data-testid="invite-link-warn">{t('classes.invite.warn')}</p>
+                <div className="invite-url" dir="ltr">{newLink}</div>
+                <div className="row invite-actions">
+                  <button type="button" data-testid="invite-link-copy" onClick={() => {
+                    void navigator.clipboard?.writeText(newLink).then(() => setLinkCopied(true)).catch(() => undefined);
+                  }}>
+                    {linkCopied ? t('classes.invite.copied') : t('classes.invite.copy')}
+                  </button>
+                  {/* обычная ссылка share-URL Telegram: без бота, без токена и без отправки —
+                      мессенджер открывается у самого учителя, и сообщение остаётся его */}
+                  <a className="secondary invite-tg" data-testid="invite-link-telegram"
+                    href={`https://t.me/share/url?url=${encodeURIComponent(newLink)}`}
+                    target="_blank" rel="noopener noreferrer">{t('classes.invite.sendTg')}</a>
+                  <button type="button" className="ghost" data-testid="invite-link-done" style={{ marginTop: 0 }}
+                    onClick={() => { setNewLink(null); setLinkLabel(''); }}>
+                    {t('classes.invite.done')}
+                  </button>
+                </div>
+                <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.invite.linkOnce')}</p>
               </div>
             )}
+
+            {/* Запасной способ тоже виден всегда: «спряхать под details» означало бы, что
+                учителю нужен клик, чтобы найти то, чем он пользовался месяцами, а старый
+                тест (flow/zz8) жмет кнопку сразу. */}
+            <div className="invite-code-fallback" data-testid="invite-code-fallback">
+              <h3>{t('classes.invite.create')}</h3>
+              <div className="row invite-row">
+                <label style={{ margin: 0 }}>{t('classes.invite.ttlDays')}</label>
+                <input type="number" min={1} max={30} value={ttlDays} style={{ width: 80 }}
+                  onChange={(e) => setTtlDays(Number(e.target.value))} />
+                <button className="secondary" data-testid="create-invite" style={{ marginTop: 0 }}
+                  onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
+                  {t('classes.invite.create')}
+                </button>
+              </div>
+              {newCode && (
+                <div style={{ marginTop: 12 }}>
+                  <div data-testid="invite-code" className="code-box">{newCode}</div>
+                  <p className="muted">{t('classes.invite.showOnce')}</p>
+                </div>
+              )}
+            </div>
+
             <table style={{ marginTop: 12 }}>
               <thead>
                 <tr>
+                  <th>{t('classes.invite.kind')}</th><th>{t('classes.invite.label')}</th>
                   <th>{t('classes.invite.title')}</th><th>{t('classes.invite.created')}</th>
                   <th>{t('classes.invite.expires')}</th>
                   <th>{t('classes.invite.usedBy')}</th><th />
@@ -151,6 +246,8 @@ export default function ClassDetail() {
               <tbody>
                 {(invites.data ?? []).map((i) => (
                   <tr key={i.id}>
+                    <td>{t(i.kind === 'link' ? 'classes.invite.kindLink' : 'classes.invite.kindCode')}</td>
+                    <td className="muted">{i.label || '—'}</td>
                     <td><span className={`badge ${i.status}`}>{t(`classes.invite.${i.status}`)}</span></td>
                     {/* item 7: journal rows must show WHEN the action happened — the
                         old table only printed expiresAt (today+7d), which read like a
@@ -160,7 +257,12 @@ export default function ClassDetail() {
                     <td>{i.usedByName ?? '—'}{i.usedAt ? ` · ${fmtDateTime(i.usedAt, i18n.language)}` : ''}</td>
                     <td>
                       {i.status === 'active' && (
-                        <button className="danger" style={{ marginTop: 0 }} onClick={() => revoke.mutate(i.id)}>
+                        <button className="danger" style={{ marginTop: 0 }} data-testid={`revoke-${i.id}`}
+                          onClick={() => {
+                            if (window.confirm(t(i.kind === 'link' ? 'classes.invite.revokeConfirm' : 'classes.invite.revokeCodeConfirm'))) {
+                              revoke.mutate(i.id);
+                            }
+                          }}>
                           {t('classes.invite.revoke')}
                         </button>
                       )}
@@ -171,7 +273,7 @@ export default function ClassDetail() {
             </table>
           </div>
 
-          <div className="card">
+          <div className="card" data-testid="class-members">
             <h2>{t('classes.members')}</h2>
             {(members.data ?? []).length === 0 && <p className="muted">{t('classes.noMembers')}</p>}
             <table>
@@ -182,22 +284,78 @@ export default function ClassDetail() {
                     <td className="muted">{m.email}</td>
                     <td className="muted">{fmtDate(m.joinedAt, i18n.language)}</td>
                     <td>
+                      {/* Задача 2026-10-23, часть C. Кнопка как раньше — сервер генерирует пароль
+                          и показывает его один раз: это тот путь, который учителю нужен, когда
+                          ученик стоит рядом. Рядом — форма «ввести пароль самому» (ученик
+                          distant, пароль диктуется по телефону). Оба пути поднимают
+                          must_change_password и снимают локаут: без последнего сброс
+                          «не работал» ровно для того, ради кого его делают. */}
                       <button className="secondary" style={{ marginTop: 0, marginRight: 6 }}
                         data-testid="member-reset-pw"
-                        onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending}>
+                        onClick={() => resetPw.mutate(m.userId)} disabled={resetPw.isPending || setPw.isPending}>
                         {t('classes.resetPw')}
+                      </button>
+                      <button className="ghost" style={{ marginTop: 0, marginRight: 6 }} data-testid={`member-reset-pw-custom-${m.userId}`}
+                        onClick={() => {
+                          setPwFor(pwFor === m.userId ? null : m.userId);
+                          setPwA1(''); setPwA2('');
+                        }}
+                        disabled={setPw.isPending}>
+                        {t('classes.pwByTeacher')}
                       </button>
                       <button className="danger" style={{ marginTop: 0 }} onClick={() => { if (window.confirm(t('classes.removeMemberConfirm'))) removeMember.mutate(m.userId); }}>
                         {t('classes.removeMember')}
                       </button>
-                      {resetPw.data && resetPw.variables === m.userId && (
+                      {resetPw.data && resetPw.variables === m.userId && !resetPw.isPending && (
                         <span className="ok" data-testid="member-temp-pw" style={{ marginLeft: 8 }}>{resetPw.data.tempPassword}</span>
+                      )}
+                      {resetPw.error && resetPw.variables === m.userId && (
+                        <span className="error" data-testid="member-reset-pw-error" style={{ marginLeft: 8 }}>
+                          {t('common.errorGeneric')}
+                        </span>
                       )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+
+            {pwFor && (
+              <form className="card pw-form" data-testid="pw-form" onSubmit={(e) => {
+                e.preventDefault();
+                if (pwA1 !== pwA2) return;
+                if (!passwordPolicy.safeParse(pwA1).success) return;
+                setPw.mutate({ userId: pwFor, password: pwA1 });
+              }}>
+                <h3>{t('classes.pwNew')}</h3>
+                <label htmlFor="pw-a1">{t('classes.pwNew')}</label>
+                <input id="pw-a1" data-testid="pw-input" type="password" value={pwA1} autoComplete="new-password"
+                  onChange={(e) => setPwA1(e.target.value)} minLength={10} />
+                <label htmlFor="pw-a2">{t('classes.pwConfirm')}</label>
+                <input id="pw-a2" data-testid="pw-confirm" type="password" value={pwA2} autoComplete="new-password"
+                  onChange={(e) => setPwA2(e.target.value)} />
+                <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.pwHint')}</p>
+                {pwA1 !== '' && pwA2 !== '' && pwA1 !== pwA2 && (
+                  <p className="error" role="alert" data-testid="pw-mismatch">{t('classes.pwMismatch')}</p>
+                )}
+                {setPw.error && (
+                  <p className="error" role="alert" data-testid="pw-error">
+                    {t(`auth.${(setPw.error as { code?: string }).code ?? 'errorGeneric'}`,
+                      { defaultValue: t('common.errorGeneric') })}
+                  </p>
+                )}
+                <div className="row">
+                  <button type="submit" data-testid="pw-save"
+                    disabled={setPw.isPending || pwA1 !== pwA2 || !passwordPolicy.safeParse(pwA1).success}>
+                    {t('common.save')}
+                  </button>
+                  <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="pw-cancel"
+                    onClick={() => { setPwFor(null); setPwA1(''); setPwA2(''); }}>
+                    {t('classes.pwCancel')}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
           <div className="card">
             <h2>{t('tg.group')}</h2>

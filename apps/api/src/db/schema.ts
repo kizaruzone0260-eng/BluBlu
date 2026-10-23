@@ -82,7 +82,22 @@ export const classMembers = pgTable('class_members', {
   joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.classId, t.userId] }), index('members_user_idx').on(t.userId)]);
 
-/** Only the SHA-256 hash of the code is stored; the plain code is shown once. */
+/**
+ * Только хеш подписанного SHA-256 значения лежит в базе; сам код/токен показывается один раз.
+ *
+ * Одна таблица на два вида приглашения (задача 2026-10-23, часть A):
+ *  • `kind = 'code'` — прежний восьмизначный код класса (кодируется `hashInviteCode`, ветка
+ *    `code.`), который ученик ВВОДИТ руками и который может пережить несколько входов, если
+ *    учитель его не отзывал;
+ *  • `kind = 'link'` — одноразовая ссылка `<PUBLIC_URL>/join#<token>` (кодируется
+ *    `hashInviteToken`, ветка `link.`): 24 случайных байта, расходится ровно один раз,
+ *    отзывается учителем, помечает кто и кем использован.
+ *
+ * Разные доменные префиксы в хеш-функции означают, что ни один код не может совпасть с хешем
+ * ссылки и наоборот, поэтому общий уникальный индекс здесь — не лотерея, а намерение: смысл у
+ * строк один («учитель пригласил в этот класс»), и набор полей (срок, отзыв, кем и когда
+ * израсходовано) для обоих видов один и тот же.
+ */
 export const inviteCodes = pgTable('invite_codes', {
   id: uuid('id').primaryKey().defaultRandom(),
   classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
@@ -93,6 +108,12 @@ export const inviteCodes = pgTable('invite_codes', {
   usedBy: uuid('used_by').references(() => users.id),
   usedAt: timestamp('used_at', { withTimezone: true }),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  /** кто отозвал (учитель) — нужно для журнала: «приглашение отозвано» это привилегированное действие */
+  revokedBy: uuid('revoked_by').references(() => users.id),
+  /** 'code' — прежний способ; 'link' — одноразовая ссылка */
+  kind: text('kind').notNull().default('code'),
+  /** подпись учителя (например имя ученика); наружу не отдаётся, кроме как самому учителю */
+  label: text('label').notNull().default(''),
 }, (t) => [index('invites_class_idx').on(t.classId)]);
 
 /** Rotating refresh tokens; only salted SHA-256 hash stored. */

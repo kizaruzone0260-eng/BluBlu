@@ -29,6 +29,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 // Performance (Phase 4): the heavy, editor/media surfaces are lazy-loaded so
 // Excalidraw, FullCalendar, LiveKit and Tiptap stay OUT of the initial chunk.
 const ClassDetail = lazy(() => import('./pages/ClassDetail'));
+// задача 2026-10-23 (часть B): вход по одноразовой ссылке — и для нового аккаунта, и для вошедшего
+const Join = lazy(() => import('./pages/Join'));
 // часть A (2026-10-16): урок монтирует провайдер над роутером, поэтому он здесь не маршрут
 import { LessonHostProvider, LessonSlot } from './components/LessonLive';
 // часть 4: архив урока — своя ленивая страница, чтобы Excalidraw-миниатюры не ехали в начальный чанк
@@ -163,6 +165,9 @@ export default function App() {
             <Route path="/notes" element={me.role === 'teacher' ? <Notes /> : <ErrorScreen kind="403" />} />
             <Route path="/classes" element={<Classes />} />
             <Route path="/classes/:id" element={<ClassDetail />} />
+            {/* приглашение в класс: тот же экран, что и для незашедшего, но с выбором «продолжить
+                этим аккаунтом / пересесть на другой» */}
+            <Route path="/join" element={<Join onDone={refresh} />} />
             {/* часть 4: архив класса. Роль здесь не проверяется — права решает сервер, и ученику
                 с выключенным переключателем положен тот же 404, что и чужому классу */}
             <Route path="/classes/:id/archive" element={<ClassArchive />} />
@@ -189,14 +194,19 @@ export default function App() {
         ) : (
           <div className="container">
             <AuthHeader />
+            <Suspense fallback={<div className="container muted">…</div>}>
             <Routes>
               <Route path="/login" element={<Login onDone={refresh} />} />
               <Route path="/register" element={<Register onDone={refresh} />} />
+              {/* человек пришёл по ссылке приглашения — это вход в продукт, а не «404, иди на /login»:
+                  до роутера страница уже успела вычистить токен из адреса */}
+              <Route path="/join" element={<Join onDone={refresh} />} />
               <Route path="/spike" element={<Spike />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="*" element={<Navigate to="/login" />} />
             </Routes>
+            </Suspense>
           </div>
         )}
       </AuthCtx.Provider>

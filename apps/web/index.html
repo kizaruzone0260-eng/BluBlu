@@ -2,6 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Одноразовая ссылка-приглашение: /join#<токен>. Этот скрипт стоит ПЕРВЫМ в <head> и читает
+      фрагмент раньше, чем страница успевает попросить хоть один ресурс: токен убирается из адреса
+      до загрузки шрифтов, до модуля приложения, до любого `Referer` и до аналитики. Та же
+      логика — `packages/shared/src/joinToken.ts` (сюда её нельзя импортировать: модуль
+      грузится позже, а чистить адрес надо сейчас). Юнит
+      `apps/api/test/unit/join-token.test.ts` следит и за правилами, и за тем, чтобы скрипт не
+      уехал из начала head.
+    -->
+    <script>
+      (function () {
+        try {
+          var p = '/' + (location.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '');
+          if (p !== '/join') return;
+          var h = (location.hash || '').trim().replace(/^#/, '').trim();
+          if (/^[A-Za-z0-9_-]{32}$/.test(h)) window.__blubluJoinToken = h;
+          history.replaceState(null, '', location.pathname + (location.search || ''));
+        } catch (e) { /* приватный режим без replaceState: токен прочитается из hash ниже */ }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- build stamp: the API replaces 'dev' with RENDER_GIT_COMMIT when serving the shell -->
     <meta name="app-build" content="dev" />

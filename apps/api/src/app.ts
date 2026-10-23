@@ -22,6 +22,7 @@ import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { createEmailTransport, type EmailTransport } from './services/email.js';
 import { classRoutes } from './routes/classes.js';
+import { invitationRoutes } from './routes/invitations.js';
 import { rtcRoutes } from './routes/rtc.js';
 import { healthRoutes } from './routes/health.js';
 import { featureRoutes } from './routes/features.js';
@@ -291,6 +292,7 @@ export async function buildApp(
     // opt out of @fastify/compress via the plugin's per-route `compress:false`.
     if (
       url.startsWith('/api/auth')
+      || url === '/api/invitations/register'
       || url === '/api/ws/ticket'
       || /^\/api\/[^/]+\/[^/]+\/(chat\/ticket|link-token|telegram-link|ical-token)$/.test(url)
       || /^\/api\/(classes|lessons)\/[^/]+\/(chat\/ticket|link-token)$/.test(url)
@@ -318,8 +320,13 @@ export async function buildApp(
     }
     // Часть F (2026-10-16): /api/auth/email-code — под тот же потолок, что и остальные
     // кодовые маршруты: это тоже вход с общего адреса, и письма шлёт целый класс.
+    // Задача 2026-10-23 (часть A): публичные маршруты приглашений — это ровно тот же «вход с
+    // общего адреса школы», что и регистрация по коду, поэтому они в этом же списке, а не со
+    // своим лимитом в обработчике: общий `onRoute` выше перезаписал бы любой per-route config,
+    // и настоящий потолок держит именно здесь.
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code'
-      || url === '/api/auth/email-code') {
+      || url === '/api/auth/email-code'
+      || url === '/api/invitations/preview' || url === '/api/invitations/register' || url === '/api/invitations/join') {
       routeOptions.config = {
         ...routeOptions.config,
         rateLimit: {
@@ -346,6 +353,9 @@ export async function buildApp(
   await app.register(featureRoutes, { emailVerification: email.provider !== 'none' });
   await app.register(authRoutes(db, email));
   await app.register(classRoutes, { db });
+  // задача 2026-10-23 (часть A): публичная половина приглашений — предпросмотр, регистрация по
+  // одноразовой ссылке и вход существующим аккаунтом
+  await app.register(invitationRoutes(db));
   await app.register(rtcRoutes, { db });
   await app.register(postRoutes, { db });
   await app.register(noteRoutes, { db });

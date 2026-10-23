@@ -4,6 +4,7 @@ import { eq, and, isNull } from 'drizzle-orm';
 import {
   registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema,
   emailCodeRequestSchema, normalizeEmailCode, POLICY_VERSION, CODE_ATTEMPTS_PER_MIN,
+  passwordIssueCode,
 } from '@klass/shared';
 import { users, refreshTokens, policyAcceptances } from '../db/schema.js';
 import type { DB } from '../db/index.js';
@@ -15,12 +16,11 @@ import { peekInviteCode } from '../services/invites.js';
 import { normalizeInviteCode } from '../lib/invite.js';
 import { requestOriginAllowed } from '../lib/origin.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
-import { cookieIsSecure, effectiveCodeMax, effectiveIpFailMax, effectiveLoginMax } from '../lib/prodConfig.js';
+import { effectiveCodeMax, effectiveIpFailMax, effectiveLoginMax } from '../lib/prodConfig.js';
+import { REFRESH_COOKIE, refreshCookieOpts } from '../lib/sessionCookie.js';
 import { errorBody } from '../lib/requestId.js';
 import type { EmailTransport } from '../services/email.js';
 import { requestEmailCode } from '../services/emailVerify.js';
-
-const REFRESH_COOKIE = 'klass_rt';
 
 /**
  * One credential-scoped throttle key (task B, 2026-10-23).
@@ -37,18 +37,12 @@ const credKey = (kind: string, ip: string, credential: string): string =>
 /** Failed auth attempts of ANY kind from one address — the anti-stuffing counter. */
 const ipFailKey = (ip: string): string => `af:${ip}`;
 
-function refreshCookieOpts(ttlMs: number) {
-  return {
-    path: '/api/auth',
-    httpOnly: true,
-    // SameSite=Lax is what actually stops a cross-site POST from carrying the refresh
-    // cookie; Secure is mandatory in production (a real deploy is https-only) — see
-    // lib/prodConfig.ts. Do not weaken either: the Origin gate is the third layer.
-    sameSite: 'lax' as const,
-    secure: cookieIsSecure(env.NODE_ENV),
-    maxAge: Math.floor(ttlMs / 1000),
-  };
-}
+/*
+ * Атрибуты refresh-куки больше не описаны здесь: они живут в `lib/sessionCookie.ts`, потому что
+ * сессию теперь выдаёт и `/api/invitations/register` (задача 2026-10-23, часть A). Два
+ * одинаковых описания одного набора — это способ однажды получить «вход работает, вход по
+ * ссылке — нет».
+ */
 
 /** §3.9/§4 + Hardening (Phase 1в) + production regression fix: refresh/logout must
  * reject cross-origin POSTs. The rule lives in lib/origin.ts so the WebSocket gate
@@ -122,13 +116,11 @@ export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance
         // Hardening (Phase 1д): surface a SPECIFIC, translated password reason
         // so the user knows why their password was rejected; every other input
         // problem stays the generic 'invalidInput' (no field enumeration).
-        const pw = parsed.error.issues.find((i) => i.path[0] === 'password');
-        if (pw) {
-          const code = pw.code === 'too_small' ? 'passwordTooShort'
-            : pw.code === 'invalid_string' ? 'passwordTooSimple'
-            : pw.code === 'custom' ? 'passwordTooCommon' : null;
-          if (code) return reply.code(400).send(errorBody(req.id, code));
-        }
+        // Расшифровка теперь общая (`passwordIssueCode`) — её же требуют и регистрация по
+        // ссылке, и сброс учителем, а три разных объяснения одного отказа это гарантированно
+        // однажды разойдутся.
+        const pw = passwordIssueCode(parsed.error.issues.find((i) => i.path[0] === 'password'));
+        if (pw) return reply.code(400).send(errorBody(req.id, pw));
         return reply.code(400).send(errorBody(req.id, 'invalidInput'));
       }
       // Часть F: при включённом подтверждении без кода регистрация не случается — и это

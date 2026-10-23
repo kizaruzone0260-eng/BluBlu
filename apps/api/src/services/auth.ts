@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword } from '../lib/password.js';
 import {
   signAccessToken, generateRefreshToken, generateFamilyId, hashRefreshToken,
 } from '../lib/tokens.js';
-import { redeemInviteCode } from './invites.js';
+import { redeemInviteCode, redeemInviteLink, peekInviteLink, inviteStateCode } from './invites.js';
 import { consumeEmailCode, precheckEmailCode } from './emailVerify.js';
 
 export type AuthResult =
@@ -140,6 +140,73 @@ export async function registerStudentByCode(
     if (err instanceof EmailTakenError) return { ok: false, error: 'emailTaken' };
     // the race path: two registrations of one address in the same instant — the second is stopped
     // by the unique index, and its code may sit anywhere in the wrapper chain.
+    if (isUniqueViolation(err)) return { ok: false, error: 'emailTaken' };
+    throw err;
+  }
+}
+
+/**
+ * Одноразовая ссылка-приглашение (2026-10-23, часть A): регистрация тем же атомарным ходом, что и
+ * регистрация по коду класса. Отличие одно — вместо проверки восьмизначного кода расходуется
+ * токен приглашения, и расход происходит ВНУТРИ той же транзакции.
+ *
+ * Почему это важно ровно так же, как с кодом: если бы токен списывался до вставки аккаунта,
+ * любая ошибка (занятая почта, отвалившийся коннект) оставляла человека без приглашения, а
+ * учитель получал бы «ссылка не работает» вместо второй попытки. Здесь либо аккаунт + членство +
+ * израсходованное приглашение, либо ничего.
+ */
+export type InviteRegisterResult =
+  | { ok: true; accessToken: string; user: PublicUser; classId: string; inviteId: string }
+  | { ok: false; error: 'emailTaken' | 'invalidInput' | 'inviteInvalid' | 'inviteExpired' | 'inviteRevoked' | 'inviteUsed' };
+
+class InviteStateError extends Error {
+  constructor(readonly state: 'inviteInvalid' | 'inviteExpired' | 'inviteRevoked' | 'inviteUsed' | 'invalidInput') { super(state); }
+}
+
+export async function registerStudentByInviteLink(
+  db: DB,
+  input: {
+    token: string; firstName: string; lastName: string; email: string; password: string; locale?: Locale;
+  },
+): Promise<InviteRegisterResult> {
+  const passwordHash = await hashPassword(input.password);
+  try {
+    const created = await db.transaction(async (tx) => {
+      // Порядок внутри транзакции важен. Сначала — состояние токена: пока приглашение не
+      // проверено, мы не имеем права сообщить НИЧЕГО про адрес (иначе постучать списком почт
+      // можно было бы любым мусорным токеном). Расход же остаётся ПОСЛЕДНИМ шагом: промах
+      // по адресу или по вставке откатывает всё, и ссылка не сгорает.
+      const peek = await peekInviteLink(tx, input.token);
+      if (peek.state !== 'ok') throw new InviteStateError(inviteStateCode(peek.state));
+      // занятый адрес читается ЯВНО до любых записей, чтобы обычный случай не зависел от формы
+      // ошибки уникального индекса (тот же приём, что у `registerStudentByCode`)
+      const taken = await tx.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1);
+      if (taken.length > 0) throw new EmailTakenError();
+      const [u] = await tx.insert(users).values({
+        role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash,
+        profileCompletedAt: new Date(),
+        ...(input.locale ? { locale: input.locale, localeExplicit: true } : {}),
+      }).returning();
+      if (!u) throw new InviteStateError('invalidInput');
+      // расход — ПОСЛЕ вставки аккаунта и ТЕМ ЖЕ ходом: `UPDATE … WHERE used_at IS NULL` решает
+      // и гонку двух запросов с одной ссылкой (один проходит, второй кидает InviteStateError и
+      // вся транзакция, вместе с аккаунтом, откатывается), и «сбой не сжигает приглашение»
+      const redeem = await redeemInviteLink(tx, input.token, u.id);
+      if (!redeem.ok) throw new InviteStateError(inviteStateCode(redeem.state));
+      await tx.insert(classMembers).values({ classId: redeem.classId, userId: u.id });
+      return { user: u, classId: redeem.classId, inviteId: redeem.inviteId };
+    });
+    const accessToken = await signAccessToken({
+      sub: created.user.id, role: created.user.role, locale: created.user.locale,
+    });
+    return { ok: true, accessToken, user: toPublic(created.user), classId: created.classId, inviteId: created.inviteId };
+  } catch (err) {
+    if (err instanceof EmailTakenError) return { ok: false, error: 'emailTaken' };
+    if (err instanceof InviteStateError) {
+      return err.state === 'invalidInput'
+        ? { ok: false, error: 'invalidInput' }
+        : { ok: false, error: err.state };
+    }
     if (isUniqueViolation(err)) return { ok: false, error: 'emailTaken' };
     throw err;
   }
@@ -289,11 +356,33 @@ export async function logout(db: DB, token: string): Promise<void> {
   await db.delete(refreshTokens).where(eq(refreshTokens.tokenHash, hashRefreshToken(token)));
 }
 
+/**
+ * Временный пароль ученика (задание учителя из списка класса).
+ *
+ * Три вещи происходят обязательно, и вторая из них — причина, по которой сброс раньше «не
+ * работал»:
+ *  1) новый хеш + `must_change_password = true` (серверный гейт в `plugins/auth.ts` не пустит
+ *     дальше смены пароля);
+ *  2) снятие существующих refresh-сессий;
+ *  3) снятие строки `login_attempts`.
+ *
+ * Пункт 3 — это и есть исправление (задача 2026-10-23, часть C). Ученик, которого не пускает в
+ * аккаунт, и есть тот, кому ставят новый пароль: к этому моменту он уже успел пять раз ошибиться,
+ * а `login()` под блокировкой пароль даже не проверяет. Пока строка счётчика висела, учитель
+ * менял пароль, ученик вводил новый и получал тот же 401 — до 15 минут, и каждая попытка окно
+ * удлиняла. Сброс пароля access возвращает сразу.
+ *
+ * Анти-перебор это не ослабляет: снимается ровно строка того аккаунта, чей пароль только что
+ * поменял учитель с правами на этот класс. Дальше счётчик начинается с нуля — как после любого
+ * законного входа.
+ */
 export async function setTempPassword(db: DB, userId: string, newPassword: string): Promise<void> {
+  const [who] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
   await db.update(users)
     .set({ passwordHash: await hashPassword(newPassword), mustChangePassword: true })
     .where(eq(users.id, userId));
   await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  if (who?.email) await db.delete(loginAttempts).where(eq(loginAttempts.email, who.email));
 }
 
 /** Revoke every refresh session for a user (logout-all / on password change). */

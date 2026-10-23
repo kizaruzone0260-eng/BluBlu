@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_TIMEZONE, INVITE_MAX_TTL_DAYS, INVITE_MIN_TTL_DAYS, SUPPORTED_LOCALES } from './constants.js';
+import { INVITE_LABEL_MAX, INVITE_LINK_DEFAULT_TTL_DAYS, INVITE_LINK_TTL_DAYS, isInviteToken } from './inviteLinks.js';
 
 const email = z.string().trim().toLowerCase().email().max(254);
 const name = z.string().trim().min(2).max(100);
@@ -123,6 +124,51 @@ export const profileUpdateSchema = z.object({
 
 export const memberAddSchema = z.object({ userId: z.string().uuid() });
 export const memberMoveSchema = z.object({ toClassId: z.string().uuid() });
+
+/* ─── одноразовые ссылки-приглашения (задача 2026-10-23, часть A) ─────────────────────── */
+
+/**
+ * Создание приглашения учителем. `ttlDays` — строго один из трёх вариантов постановки,
+ * а не любое число: «срок» должен быть тем, что человек реально понял из подписи в форме.
+ */
+export const inviteLinkCreateSchema = z.object({
+  label: z.string().trim().max(INVITE_LABEL_MAX).optional().default(''),
+  ttlDays: z.number().int().refine((d) => (INVITE_LINK_TTL_DAYS as readonly number[]).includes(d))
+    .optional().default(INVITE_LINK_DEFAULT_TTL_DAYS),
+});
+
+/** Тело запроса ученика: токен всегда в ТЕЛЕ, никогда в query или path (§3.1 пункта 5). */
+const inviteTokenField = z.string().trim().refine(isInviteToken, 'inviteInvalid');
+
+export const invitePreviewSchema = z.object({ token: inviteTokenField });
+
+/**
+ * Регистрация по приглашению — те же поля и та же политика пароля, что у регистрации по коду
+ * (part B), и токен вместо кода класса: класс берётся из приглашения на сервере, а не из тела.
+ * `emailCode` здесь сознательно НЕТ: подтверждение почты выключено, и просить его было бы
+ * обещанием, которое продукт не выполняет.
+ */
+export const inviteRegisterSchema = z.object({
+  token: inviteTokenField,
+  firstName: z.string().trim().min(2, 'name2').max(80),
+  lastName: z.string().trim().min(2, 'name2').max(80),
+  email,
+  password: passwordPolicy,
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
+});
+
+/** Вход в класс уже существующим аккаунтом: кроме токена ничего не приходит. */
+export const inviteJoinSchema = z.object({ token: inviteTokenField });
+
+/**
+ * Сброс пароля ученика учителем (часть C). Поле СОЗНАТЕЛЬНО опционально: без него остаётся
+ * прежнее поведение — сервер сам выдаёт временный пароль, и прежние тесты/клиенты этим путем
+ * пользуются. С ним — пароль, который учитель набрал сам; он проходит ровно ту же
+ * `passwordPolicy`, что и регистрация, то есть «12345678» не проходит и здесь.
+ */
+export const memberResetPasswordSchema = z.object({
+  password: passwordPolicy.optional(),
+});
 
 export type RegisterByCodeInput = z.infer<typeof registerByCodeSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

@@ -19,5 +19,7 @@ export * from './browserContext.js';
 export * from './boardStylesPanel.js';
 // часть C: правила окна показа экрана поверх других программ — те же четыре ответа, что и в вебе
 export * from './screenPip.js';
+export * from './inviteLinks.js';
+export * from './joinToken.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';
