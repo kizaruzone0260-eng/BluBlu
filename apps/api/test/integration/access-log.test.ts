@@ -19,6 +19,7 @@ import pino from 'pino';
 import type { FastifyInstance } from 'fastify';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
 import { accessLogOptions, buildApp } from '../../src/app.js';
+import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
 const NIL = '00000000-0000-4000-8000-000000000000';
@@ -166,13 +167,19 @@ suite('access log output (task 5)', () => {
     await t.sql.end();
     const r = await app.inject({ method: 'GET', url: '/api/classes', headers: auth(teacherTok) });
     expect(r.statusCode).toBe(500);
-    expect(r.json(), 'no driver text in the client response').toEqual({ error: 'serverError' });
-    // the same claim from the other side: the body is five words, with no stack, no SQL and no
+    // Task B (2026-10-23): the generic body keeps its shape and gains the request id, so the
+    // client's «что пошло не так» and the operator's log line are the same number. The rule the
+    // test exists for is unchanged: no driver text ever leaves the server.
+    const body = r.json() as { error: string; reqId: string };
+    expect(body.error, 'no driver text in the client response').toBe('serverError');
+    expect(REQUEST_ID_PATTERN.test(String(body.reqId)), JSON.stringify(body)).toBe(true);
+    // the same claim from the other side: the body is two fields, with no stack, no SQL and no
     // connection string anywhere in the bytes the client receives
     expect(r.body).not.toMatch(/at .*\(|Failed query|postgres:\/\/|params:/);
     const errLine = msgLines('unhandled error').at(-1);
     expect(errLine, 'the server does keep an internal record of a 500').toBeTruthy();
     expect(typeof errLine?.reqId).toBe('string');
+    expect(body.reqId, 'the id the pupil reads out is the id in the log').toBe(errLine?.reqId);
     if (pw) expect(out(), 'a driver error must not echo the connection password').not.toContain(pw);
   });
 });

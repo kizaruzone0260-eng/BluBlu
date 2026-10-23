@@ -18,10 +18,17 @@ export function onAuthChange(cb: (loggedIn: boolean) => void) {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string) {
+  constructor(public status: number, public code: string, public reqId = '') {
     super(code);
   }
 }
+
+/**
+ * A request that never reached the server (offline, DNS, a canceled navigation, a portal
+ * wifi with a captive page). Task B: this used to surface as «Something went wrong», which
+ * sent pupils to their teacher with a sentence that describes neither side.
+ */
+export const NETWORK_ERROR = 'networkError';
 
 async function rawFetch(path: string, init: RequestInit): Promise<Response> {
   // FormData must NOT get the JSON content-type — fetch has to set
@@ -69,14 +76,24 @@ export function restoreSession(): Promise<boolean> {
 }
 
 export async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  let res = await rawFetch(path, init);
+  let res: Response;
+  try {
+    res = await rawFetch(path, init);
+  } catch {
+    // fetch itself rejected: no server answer at all. Distinct from a 5xx, because the fix on
+    // the student's side is different (wait / check the network) and the log has nothing to find.
+    throw new ApiError(0, NETWORK_ERROR);
+  }
   if (res.status === 401 && accessToken) {
     if (await tryRefresh()) res = await rawFetch(path, init);
     else { setAccessToken(null); }
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'errorGeneric' }));
-    throw new ApiError(res.status, body.error ?? 'errorGeneric');
+    // The server answers every failure with `{error, reqId}`; a body that is not JSON (a proxy
+    // error page, an empty 502) still has to say something true rather than break the screen.
+    const body = await res.json().catch(() => ({ error: res.status >= 500 ? 'serverError' : 'invalidInput' }));
+    throw new ApiError(res.status, (body as { error?: string }).error ?? 'errorGeneric',
+      (body as { reqId?: string }).reqId ?? res.headers.get('x-request-id') ?? '');
   }
   return res.status === 204 ? (undefined as T) : res.json();
 }

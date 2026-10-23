@@ -118,10 +118,13 @@ suite('stage 1: accounts, classes, codes, members', () => {
     await app.close();
   });
 
-  it('code entry throttle: >5 attempts in a minute → 429, uniform message', async () => {
+  it('code entry throttle: >8 FAILED probes of one code in a minute → 429, uniform message', async () => {
     const app = await freshApp();
     const codes: number[] = [];
-    for (let i = 0; i < 5; i++) {
+    // Task B (2026-10-23): the window is per CODE, not per address, and counts failures only —
+    // so a whole class entering the same code correctly is never refused, while one address
+    // guessing it still stops. Distinct mailboxes here keep the per-mailbox window out of it.
+    for (let i = 0; i < 8; i++) {
       const r = await app.inject({
         method: 'POST', url: '/api/auth/register',
         payload: { firstName: 'Test Pupil', lastName: 'Test', email: `x${i}${Date.now()}@x.io`, password: 'Secret1234', code: 'ABCDEFGH' },
@@ -134,6 +137,8 @@ suite('stage 1: accounts, classes, codes, members', () => {
     });
     expect(limited.statusCode).toBe(429);
     expect(limited.json().error).toBe('codeRateLimited');
+    expect(limited.json().reqId, 'a refusal without a request id cannot be reported').toBeTruthy();
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
     expect(codes.every((c) => c === 400)).toBe(true);
     await app.close();
   });

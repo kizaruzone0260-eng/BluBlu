@@ -53,6 +53,32 @@ function toPublic(u: typeof users.$inferSelect): PublicUser {
  */
 class InvalidCodeError extends Error {}
 class EmailCodeError extends Error {}
+class EmailTakenError extends Error {}
+
+/**
+ * Task B (2026-10-23) — the reason a pupil saw «Something went wrong» on step 2.
+ *
+ * The unique index on `users.email` is the race guard for two registrations of one address, and
+ * the code below used to read `err.code === '23505'` to turn it into `emailTaken`. Inside
+ * `db.transaction` that never matches: drizzle-orm wraps whatever the driver threw in its own
+ * `Failed query: …` error and the Postgres code lands on `err.cause.code` (proved by the
+ * reproduction that became test/integration/auth-nat.test.ts — a second registration of a taken
+ * address answered 500, not 409, and the screen had nothing better to say than the generic
+ * sentence). So the walk goes down the cause chain, and the check is paired with an explicit
+ * pre-read inside the same transaction so the ordinary case does not depend on error shapes at
+ * all. Neither of them replaces the other: the pre-read is the common path, the constraint is the
+ * concurrent path.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    if ((cur as { code?: string }).code === '23505') return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
+}
 
 export async function registerStudentByCode(
   db: DB,
@@ -76,6 +102,15 @@ export async function registerStudentByCode(
   }
   try {
     const user = await db.transaction(async (tx) => {
+      // Task B: a taken address is the ordinary case, so it is answered by a read, not by a
+      // constraint violation. `users.email` is unique over ALL rows — a soft-deleted account holds
+      // its address too — so the check deliberately ignores `deleted_at`, exactly like the index.
+      const takenBefore = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, input.email))
+        .limit(1);
+      if (takenBefore.length > 0) throw new EmailTakenError();
       if (input.emailCode !== undefined) {
         const spent = await consumeEmailCode(tx as unknown as DB, input.email, input.emailCode);
         if (!spent) throw new EmailCodeError();
@@ -102,7 +137,10 @@ export async function registerStudentByCode(
   } catch (err) {
     if (err instanceof InvalidCodeError) return { ok: false, error: 'invalidCode' };
     if (err instanceof EmailCodeError) return { ok: false, error: 'emailCodeInvalid' };
-    if ((err as { code?: string }).code === '23505') return { ok: false, error: 'emailTaken' };
+    if (err instanceof EmailTakenError) return { ok: false, error: 'emailTaken' };
+    // the race path: two registrations of one address in the same instant — the second is stopped
+    // by the unique index, and its code may sit anywhere in the wrapper chain.
+    if (isUniqueViolation(err)) return { ok: false, error: 'emailTaken' };
     throw err;
   }
 }

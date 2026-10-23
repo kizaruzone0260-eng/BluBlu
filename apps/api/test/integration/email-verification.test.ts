@@ -22,6 +22,7 @@ import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.
 import { buildApp } from '../../src/app.js';
 import { classes, emailVerifications, inviteCodes, users } from '../../src/db/schema.js';
 import { hashInviteCode } from '../../src/lib/invite.js';
+import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 import type { EmailMessage, EmailTransport } from '../../src/services/email.js';
 import { registerStudentByCode } from '../../src/services/auth.js';
 import {
@@ -124,7 +125,10 @@ suite('подтверждение почты при регистрации (ча
     // без кода регистрация не случается
     const noCode = await reg(addr, invite);
     expect(noCode.statusCode).toBe(400);
-    expect(noCode.json()).toEqual({ error: 'emailCodeRequired' });
+    // Task B (2026-10-23): к коду ошибки добавился reqId — короткий id, который ученик
+    // диктует учителю; он разный на каждый запрос, поэтому сверяется только сам код.
+    expect(noCode.json()).toMatchObject({ error: 'emailCodeRequired' });
+    expect(REQUEST_ID_PATTERN.test(String((noCode.json() as { reqId?: string }).reqId))).toBe(true);
 
     const ok = await reg(addr, invite, code);
     expect(ok.statusCode, ok.body).toBe(200);

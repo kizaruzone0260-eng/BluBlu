@@ -13,5 +13,7 @@ export * from './boardWord.js';
 export * from './lessonKeep.js';
 export * from './caps.js';
 export * from './editorDraft.js';
+export * from './authErrors.js';
+export * from './browserContext.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';

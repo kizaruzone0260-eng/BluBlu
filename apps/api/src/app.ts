@@ -13,7 +13,11 @@ import type { DB } from './db/index.js';
 import { currentBuildId, injectBuildMeta } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
 import { redactSecrets, safeErrorMessage } from './lib/redact.js';
-import { effectiveCodeMax, effectiveCorsOrigins, effectiveLoginMax } from './lib/prodConfig.js';
+import { effectiveCorsOrigins, effectiveIpWindowMax, effectiveIpWindowMs } from './lib/prodConfig.js';
+import { errorBody, newRequestId } from './lib/requestId.js';
+// The auth error vocabulary is shared with the web screens and with the locale-parity test on
+// purpose: a code the interface cannot name is a dead end for the person seeing it.
+import { isAuthErrorCode } from '@klass/shared';
 import { authPlugin } from './plugins/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { createEmailTransport, type EmailTransport } from './services/email.js';
@@ -65,10 +69,13 @@ export const accessLogOptions = {
   redact: { paths: ['req.headers.authorization', 'req.headers.cookie'], censor: '[redacted]' },
   serializers: {
     req: (req: {
-      method?: string; url?: string; hostname?: string; ip?: string;
+      id?: string; method?: string; url?: string; hostname?: string; ip?: string;
       socket?: { remotePort?: number };
     }) => ({
       type: 'request',
+      // Task B: the same id the student sees under the error message. Without it a complaint
+      // («ученица не может войти») cannot be matched to a line in the log at all.
+      reqId: req.id,
       method: req.method,
       url: sanitizeRequestUrl(req.url),
       hostname: req.hostname,
@@ -114,6 +121,7 @@ export async function buildApp(
     ? Fastify({
         loggerInstance: opts.logger,
         trustProxy: env.TRUST_PROXY,
+        genReqId: newRequestId,
       })
     : Fastify({
         logger: env.NODE_ENV === 'test' ? false : accessLogOptions,
@@ -122,6 +130,9 @@ export async function buildApp(
         // Configurable via TRUST_PROXY env; default off — otherwise a client could
         // forge the header and dodge the per-IP auth limits.
         trustProxy: env.TRUST_PROXY,
+        // Task B: one short random id per request, printed under an auth error and written to
+        // the access log, so «не могу войти» becomes a findable line instead of a shrug.
+        genReqId: newRequestId,
       });
 
   // CSP: connect-src names ONLY concrete origins — same-origin API/WS via 'self'
@@ -196,6 +207,9 @@ export async function buildApp(
       // SPA shell + index: always revalidate (etag/304) so a deploy shows up fast.
       reply.header('cache-control', 'no-cache');
     }
+    // Task B: the id is also on the wire, so a browser extension, a proxy log or a
+    // screenshot of the Network tab can carry it. Not a secret, not derived from the user.
+    if (typeof req.id === 'string') reply.header('x-request-id', req.id);
     done(null, payload);
   });
 
@@ -207,14 +221,27 @@ export async function buildApp(
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
       req.log?.error({ err }, 'unhandled error');
-      return reply.code(500).send({ error: 'serverError' });
+      return reply.code(500).send(errorBody(req.id, 'serverError'));
+    }
+    /*
+     * Task B (2026-10-23): a 429 from @fastify/rate-limit used to reach the browser as
+     * `{error: "Too Many Requests"}` — a string that is not an interface code, so every
+     * throttled student read «Something went wrong. Please try again.» and nobody, including
+     * the teacher, could tell "wait a minute" from "the server is broken". Normalised to one
+     * code with the retry window attached; the header is what the client counts from.
+     */
+    if (status === 429) {
+      const retryAfter = reply.getHeader('retry-after') ?? reply.getHeader('Retry-After');
+      return reply.code(429).send(errorBody(req.id, 'tooManyRequests'))
+        .header('retry-after', typeof retryAfter === 'string' && retryAfter ? retryAfter : '60');
     }
     // known client status: reuse the code, drop any message detail
     const payload = (err as { response?: unknown }).response;
     if (payload && typeof payload === 'object' && 'error' in payload) {
-      return reply.code(status).send(payload as { error: string });
+      const code = String((payload as { error: unknown }).error);
+      return reply.code(status).send(errorBody(req.id, isAuthErrorCode(code) ? code : 'invalidInput'));
     }
-    return reply.code(status).send({ error: 'invalidInput' });
+    return reply.code(status).send(errorBody(req.id, 'invalidInput'));
   });
 
   // Production CORS: no cross-origin entry is needed (the API serves the SPA), and an
@@ -274,27 +301,31 @@ export async function buildApp(
       // not config). Setting it false opts this route out of compression.
       routeOptions.compress = false;
     }
-    // stricter: login (brute force), register/join (one-time code attempts).
-    // The caps are env-overridable (defaults 10 / 8) so the e2e suite, which
-    // logs in far more than a real user, can relax them without touching prod.
-    // Hardening (Phase 1г): in PRODUCTION the env overrides are IGNORED — the
-    // strict caps below are always applied, so a leaked/accidental
-    // RATE_LOGIN_MAX=99999 in the deploy environment can never dis-arm the
-    // brute-force net. Non-prod (test/dev/e2e) keeps honoring the env.
+    // Task B (2026-10-23): the auth routes' per-IP limiter is a FLOOD ceiling on a shared
+    // address, not the brute-force net — a class of 30 registers and logs in through one school
+    // IP, and that traffic must not be refused. The brute-force defence lives per credential
+    // (services/auth.ts lockout + lib/throttle.ts credential windows) and is unchanged.
+    // The caps are env-overridable outside production (see lib/prodConfig.ts for the arithmetic
+    // behind 120/10 min) and production always applies its own value.
     if (url === '/api/auth/login') {
       routeOptions.config = {
         ...routeOptions.config,
-        rateLimit: { max: effectiveLoginMax(env.NODE_ENV, env.RATE_LOGIN_MAX), timeWindow: '1 minute' },
+        rateLimit: {
+          max: effectiveIpWindowMax(env.NODE_ENV, env.RATE_IP_MAX),
+          timeWindow: effectiveIpWindowMs(),
+        },
       };
     }
-    // Часть F (2026-10-16): /api/auth/email-code — под тот же строгий потолок, что и кодовые
-    // маршруты: это тоже перебор (теперь уже писем), и он должен упираться в лимит на минуту,
-    // а не в общий API-кап 300.
+    // Часть F (2026-10-16): /api/auth/email-code — под тот же потолок, что и остальные
+    // кодовые маршруты: это тоже вход с общего адреса, и письма шлёт целый класс.
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code'
       || url === '/api/auth/email-code') {
       routeOptions.config = {
         ...routeOptions.config,
-        rateLimit: { max: effectiveCodeMax(env.NODE_ENV, env.RATE_CODE_MAX), timeWindow: '1 minute' },
+        rateLimit: {
+          max: effectiveIpWindowMax(env.NODE_ENV, env.RATE_IP_MAX),
+          timeWindow: effectiveIpWindowMs(),
+        },
       };
     }
   });

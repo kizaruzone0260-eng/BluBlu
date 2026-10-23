@@ -39,18 +39,64 @@ export function effectiveRefreshGrace(ms: number, nodeEnv: NodeEnv): number {
 }
 
 /**
- * Login / code-probe rate limits. Production ALWAYS uses the strict caps and IGNORES
- * the env relaxations — a deployment must not be able to loosen its own brute-force
- * defence by accident. Non-production runs (the e2e suite logs in far more than a real
- * user does) may raise them via RATE_LOGIN_MAX / RATE_CODE_MAX.
+ * Auth rate limits — three layers, sized for a school (task B, 2026-10-23).
+ *
+ * The old shape had ONE relevant number: 10 logins and 8 code attempts per MINUTE per IP.
+ * A class logging in from the school Wi-Fi (or 30 phones on one carrier NAT) presents as one
+ * IP, so students 11+ were refused by design — and refused with a body the interface could not
+ * name, which is why they read «Something went wrong». The numbers below keep the brute-force
+ * defence where it belongs (a credential) and move the shared-address ceiling above real
+ * traffic. Production ALWAYS uses these values and ignores the env relaxations; non-production
+ * may raise them (the e2e suite logs in far more than a real user does).
+ *
+ * The arithmetic, so it can be checked rather than trusted:
+ *  • real class size assumed 30; requests per student in the worst realistic minute 3
+ *    (check-code + register, or a login + a mistyped retry) ⇒ 90 requests;
+ *  • shared-IP ceiling 120 per 10 MINUTES per auth route ⇒ 33 % headroom over 90, and still
+ *    ~1 request every 5 s sustained minute after minute — no legitimate person needs more;
+ *  • the same-IP budget is only reachable with ~40 successful actions per student, so it is a
+ *    flood ceiling, not a brute-force ceiling;
+ *  • brute force stays capped much lower, per credential: 5 failed CODE attempts per minute for
+ *    one (IP + code) and 10 failed LOGIN attempts per minute for one (IP + email), each followed
+ *    by the existing 15-minute block on that pair; plus 20 failed auth attempts of ANY kind per
+ *    minute from one IP before that address is blocked for 15 minutes (credential-stuffing);
+ *  • and per ACCOUNT the progressive Postgres lockout is untouched: 5 consecutive failures ⇒ 30 s
+ *    doubling to a 15-minute cap. Successes never count toward any failure counter.
  */
 export const PROD_LOGIN_MAX = 10;
 export const PROD_CODE_MAX = 8;
+/** Requests per IP per window on each auth route family (see the class-size arithmetic above). */
+export const PROD_IP_WINDOW_MAX = 120;
+/** The window `PROD_IP_WINDOW_MAX` is measured over — a minute would still wall a big class. */
+export const PROD_IP_WINDOW_MS = 10 * 60_000;
 export function effectiveLoginMax(nodeEnv: NodeEnv, rateLoginMax: number): number {
-  return nodeEnv === 'production' ? PROD_LOGIN_MAX : rateLoginMax;
+  return nodeEnv === 'production' ? PROD_LOGIN_MAX : Math.max(rateLoginMax, PROD_LOGIN_MAX);
 }
 export function effectiveCodeMax(nodeEnv: NodeEnv, rateCodeMax: number): number {
-  return nodeEnv === 'production' ? PROD_CODE_MAX : rateCodeMax;
+  return nodeEnv === 'production' ? PROD_CODE_MAX : Math.max(rateCodeMax, PROD_CODE_MAX);
+}
+export function effectiveIpWindowMax(nodeEnv: NodeEnv, rateIpMax: number): number {
+  return nodeEnv === 'production' ? PROD_IP_WINDOW_MAX : Math.max(rateIpMax, PROD_IP_WINDOW_MAX);
+}
+/**
+ * The window as milliseconds — @fastify/rate-limit takes a number of ms or a string like
+ * `'10 minutes'`; one source for the number keeps the cap and the window from drifting apart.
+ */
+export function effectiveIpWindowMs(): number {
+  return PROD_IP_WINDOW_MS;
+}
+/**
+ * Failed auth attempts per minute from ONE address, of any kind, before that address is blocked
+ * for 15 minutes (credential-stuffing). Successes never count, so a class signing in together
+ * costs nothing here. Outside production the ceiling is much higher on purpose: the test and e2e
+ * suites deliberately produce dozens of failures per minute from `127.0.0.1`.
+ */
+export const PROD_IP_FAILURE_MAX_PER_MIN = 20;
+export const NON_PROD_IP_FAILURE_MAX_PER_MIN = 500;
+export function effectiveIpFailMax(nodeEnv: NodeEnv, rateIpFailMax: number): number {
+  return nodeEnv === 'production'
+    ? PROD_IP_FAILURE_MAX_PER_MIN
+    : Math.max(rateIpFailMax, NON_PROD_IP_FAILURE_MAX_PER_MIN);
 }
 
 /**

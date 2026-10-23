@@ -73,14 +73,18 @@ const envSchema = z
   SEED_TEACHER_EMAIL: z.string().optional(),
   SEED_TEACHER_NAME: z.string().default('Teacher'),
   SEED_TEACHER_PASSWORD: z.string().min(8).optional(),
-  // Auth rate caps. Production keeps the strict defaults (login 10/min, code
-  // attempts 8/min); the e2e suite logs in far more than a real user, so the
-  // stack overrides these to keep the run from tripping its own safety net.
+  // Auth rate caps. Outside production these may be raised for the e2e suite, which logs in far
+  // more than a real user; production always applies lib/prodConfig.ts. Since task B the login
+  // and code numbers are windows PER CREDENTIAL (one IP+email, one IP+code), while RATE_IP_MAX
+  // is the generous ceiling for a WHOLE school behind one address — see prodConfig for the
+  // arithmetic (120 requests per 10 minutes per IP per auth route).
   // Часть 4: срок хранения архива уроков в днях. 0 (по умолчанию) — НЕ удалять никогда:
   // архив — учебная история, и терять её по умолчанию нельзя.
   BOARD_ARCHIVE_RETENTION_DAYS: z.coerce.number().int().min(0).default(0),
   RATE_LOGIN_MAX: z.coerce.number().default(10),
   RATE_CODE_MAX: z.coerce.number().default(8),
+  RATE_IP_MAX: z.coerce.number().default(120),
+  RATE_IP_FAIL_MAX: z.coerce.number().default(20),
   /*
    * Часть F (2026-10-16): подтверждение почты при регистрации.
    *

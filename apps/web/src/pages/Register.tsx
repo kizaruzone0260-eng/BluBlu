@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { acceptPolicy, checkCode, registerByCode, requestEmailCode } from '../lib/api';
+import AuthError from '../components/AuthError';
 import { storedLocale } from '../i18n';
 import { useFeatures } from '../lib/features';
 import { POLICY_VERSION } from '@klass/shared';
@@ -32,19 +33,26 @@ export default function Register({ onDone }: { onDone: () => void }) {
   /** письмо запрошено: поле кода показано и кнопка сменилась с «получить» на «зарегистрировать» */
   const [codeRequested, setCodeRequested] = useState(false);
   const [accepted, setAccepted] = useState(false);
-  const [err, setErr] = useState('');
+  /** code = the server's own error code; reqId = the short reference the pupil can send (task B) */
+  const [err, setErr] = useState<{ code: string; reqId: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /** One place where an exception becomes a screen state, so no path can lose the id. */
+  function rememberError(e: unknown, fallback: string) {
+    const api = e as { code?: string; reqId?: string };
+    setErr({ code: api.code ?? fallback, reqId: api.reqId ?? '' });
+  }
 
   async function submitStep1(e: React.FormEvent) {
     e.preventDefault();
-    setErr('');
+    setErr(null);
     setBusy(true);
     try {
       await checkCode(code);
       setStep(2);
     } catch (e: unknown) {
       // ONE generic message for wrong / used / expired — nothing is revealed (§3.2/item 9)
-      setErr((e as { code?: string }).code ?? 'invalidCode');
+      rememberError(e, 'invalidCode');
     } finally {
       setBusy(false);
     }
@@ -54,13 +62,13 @@ export default function Register({ onDone }: { onDone: () => void }) {
    *  код вот-вот придёт, и иметь возможность попросить его заново, не теряя введённого. */
   async function sendCode(e: React.FormEvent) {
     e.preventDefault();
-    setErr('');
+    setErr(null);
     setBusy(true);
     try {
       await requestEmailCode(firstName.trim(), lastName.trim(), email, storedLocale() ?? undefined);
       setCodeRequested(true);
     } catch (e: unknown) {
-      setErr((e as { code?: string }).code ?? 'emailUnavailable');
+      rememberError(e, 'emailUnavailable');
     } finally {
       setBusy(false);
     }
@@ -68,11 +76,11 @@ export default function Register({ onDone }: { onDone: () => void }) {
 
   async function submitStep2(e: React.FormEvent) {
     e.preventDefault();
-    setErr('');
+    setErr(null);
     // consent (Phase 2): the student must accept Privacy + Terms at step 2
-    if (!accepted) { setErr('mustAccept'); return; }
+    if (!accepted) { setErr({ code: 'mustAccept', reqId: '' }); return; }
     if (emailVerification && !codeRequested) { await sendCode(e); return; }
-    if (emailVerification && !/^\d{6}$/.test(emailCode)) { setErr('emailCodeRequired'); return; }
+    if (emailVerification && !/^\d{6}$/.test(emailCode)) { setErr({ code: 'emailCodeRequired', reqId: '' }); return; }
     setBusy(true);
     try {
       // a language picked on this screen is a choice, so it belongs to the new account (task 1);
@@ -85,7 +93,7 @@ export default function Register({ onDone }: { onDone: () => void }) {
       await acceptPolicy(POLICY_VERSION).catch(() => undefined);
       onDone();
     } catch (e: unknown) {
-      setErr((e as { code?: string }).code ?? 'errorGeneric');
+      rememberError(e, 'errorGeneric');
     } finally {
       setBusy(false);
     }
@@ -106,7 +114,9 @@ export default function Register({ onDone }: { onDone: () => void }) {
           <input id="reg-email" type="email" data-testid="reg-email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
           <label htmlFor="reg-password">{t('common.password')}</label>
           <input id="reg-password" data-testid="reg-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={10} autoComplete="new-password" />
-          {err && <p className="error" role="alert" data-testid="reg-error">{err === 'mustAccept' ? t('consent.mustAccept') : t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}</p>}
+          {err && (err.code === 'mustAccept'
+            ? <p className="error" role="alert" data-testid="reg-error">{t('consent.mustAccept')}</p>
+            : <AuthError code={err.code} reqId={err.reqId} />)}
           <button data-testid="register-step1" type="submit" disabled={busy}>{t('auth.continue')}</button>
         </form>
       ) : (
@@ -146,11 +156,22 @@ export default function Register({ onDone }: { onDone: () => void }) {
                 style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 4 }} />
             </>
           )}
-          {err && (
-            <p className="error" data-testid="reg-error">
-              {err === 'mustAccept' ? t('consent.mustAccept') : t(`auth.${err}`, { defaultValue: t('common.errorGeneric') })}
-            </p>
-          )}
+          {err && (err.code === 'mustAccept' ? (
+            <p className="error" data-testid="reg-error">{t('consent.mustAccept')}</p>
+          ) : (
+            /*
+             * Task B: «почта уже занята» is the one failure the pupil can solve without anybody,
+             * so the sentence comes with the way there — the sign-in link. The wording itself
+             * does not confirm to a stranger that an account exists; it reads as a condition.
+             */
+            <AuthError code={err.code} reqId={err.reqId}>
+              {err.code === 'emailTaken' ? (
+                <p style={{ marginTop: '-8px' }}>
+                  <Link to="/login" data-testid="reg-error-login">{t('common.login')}</Link>
+                </p>
+              ) : null}
+            </AuthError>
+          ))}
           <div className="row">
             {emailVerification && !codeRequested ? (
               /*
@@ -170,7 +191,7 @@ export default function Register({ onDone }: { onDone: () => void }) {
               <button className="ghost" type="button" style={{ marginTop: 0 }} data-testid="register-resend"
                 disabled={busy || !firstName.trim() || !lastName.trim()} onClick={sendCode}>{t('auth.resend')}</button>
             )}
-            <button className="ghost" type="button" style={{ marginTop: 0 }} onClick={() => { setStep(1); setErr(''); }}>
+            <button className="ghost" type="button" style={{ marginTop: 0 }} onClick={() => { setStep(1); setErr(null); }}>
               {t('auth.back')}
             </button>
           </div>

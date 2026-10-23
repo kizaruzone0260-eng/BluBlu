@@ -10,6 +10,7 @@ import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { loginAttempts } from '../../src/db/schema.js';
+import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -68,7 +69,19 @@ suite('Part 2: account brute-force lockout', () => {
     const lockedResp = await attempt(real.email, PW);
     const ghostResp = await attempt(`ghost${Date.now()}@x.io`, PW);
     expect(lockedResp.statusCode).toBe(ghostResp.statusCode);
-    expect(lockedResp.json()).toEqual(ghostResp.json());
+    /*
+     * Task B (2026-10-23): both bodies now carry a request id, and it is a fresh random id per
+     * request — so comparing the raw bytes would compare the ids, not the disclosure. The claim
+     * stays exactly as strong: apart from that id the two answers are the same object, and an
+     * attacker reading the response cannot tell a locked account from an absent one.
+     */
+    const shape = (r: typeof lockedResp) => {
+      const { reqId, ...rest } = r.json() as { reqId?: string } & Record<string, unknown>;
+      expect(REQUEST_ID_PATTERN.test(String(reqId)), JSON.stringify(r.json())).toBe(true);
+      return JSON.stringify(rest);
+    };
+    expect(shape(ghostResp)).toBe(shape(lockedResp));
+    expect(lockedResp.json().reqId).not.toBe(ghostResp.json().reqId);
   });
 
   it('a successful login clears the counter (below threshold)', async () => {

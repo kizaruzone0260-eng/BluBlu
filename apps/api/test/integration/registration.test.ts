@@ -8,6 +8,7 @@ import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.
 import { buildApp } from '../../src/app.js';
 import { classes, inviteCodes, users } from '../../src/db/schema.js';
 import { hashInviteCode } from '../../src/lib/invite.js';
+import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 
@@ -70,10 +71,20 @@ suite('two-step registration (item 9)', () => {
     const used = await check(code);
     const expiredCode = await newInvite(-1000);
     const expired = await check(expiredCode);
+    const shapes: string[] = [];
     for (const res of [wrong, used, expired]) {
       expect(res.statusCode).toBe(400);
-      expect(res.json()).toEqual({ error: 'invalidCode' });
+      const body = res.json() as { error: string; reqId: string };
+      expect(body.error).toBe('invalidCode');
+      /*
+       * Task B (2026-10-23): a refusal now also carries the short id the pupil can dictate, and
+       * that id is different for every request on purpose. So the no-enumeration rule is asserted
+       * on the whole body MINUS the id — which is exactly what a caller can tell apart.
+       */
+      expect(REQUEST_ID_PATTERN.test(body.reqId), JSON.stringify(body)).toBe(true);
+      shapes.push(JSON.stringify({ ...body, reqId: '' }));
     }
+    expect(new Set(shapes).size, 'the three code states differ beyond the request id').toBe(1);
   });
 
   it('check-code cannot be used to probe emails — endpoint ignores email entirely', async () => {
