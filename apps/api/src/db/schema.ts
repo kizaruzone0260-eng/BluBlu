@@ -676,6 +676,15 @@ export const tgPublicationStatusEnum = pgEnum('tg_publication_status',
 export const tgMaterialKindEnum = pgEnum('tg_material_kind', ['book', 'workbook', 'other']);
 /** `archived` = «убрано из рекомендаций»: файл остаётся, новые задания его не предлагают. */
 export const tgMaterialStatusEnum = pgEnum('tg_material_status', ['active', 'archived']);
+/**
+ * Which Telegram message carried the file. This is NOT the MIME type: a PNG sent «as a
+ * file» arrives in `message.document`, and its `file_id` can only be sent as a document.
+ * Guessing from `image/png` is exactly what broke the live test of 2026-10-23
+ * (`400 can't use file of type Document as Photo`), so the type is recorded, not inferred.
+ * Rows written before this column exists are NULL: publication then copies the original
+ * message when it knows the source, and otherwise sends a document.
+ */
+export const tgMediaTypeEnum = pgEnum('tg_media_type', ['photo', 'document']);
 
 /** One row per linked BluBlu teacher who has ever used /homework. */
 export const tgOperators = pgTable('tg_operators', {
@@ -752,6 +761,15 @@ export const tgDraftTargets = pgTable('tg_draft_targets', {
  * One collected material per source Telegram message. `file_id` is Telegram's own
  * reference: bytes are never copied into Render's ephemeral disk or into Postgres.
  * The unique (draft, source message) key makes webhook redelivery harmless.
+ *
+ * `source_chat_id` + `source_message_id` are what publication actually uses: Telegram
+ * `copyMessage` re-posts the ORIGINAL message, so a photo stays a photo, a document stays
+ * a document, and the caption, file name and grouping of an album survive. `file_id` is a
+ * fallback only — and the live test of 2026-10-23 proved why: a PNG sent as a document has
+ * a document `file_id`, and `sendPhoto` rejected it with
+ * «400 can't use file of type Document as Photo».
+ * `source_media_group_id` is Telegram's album id: items sharing it are copied with one
+ * `copyMessages` call, which keeps the album together in the group.
  */
 export const tgDraftItems = pgTable('tg_draft_items', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -767,12 +785,30 @@ export const tgDraftItems = pgTable('tg_draft_items', {
   fileSize: bigint('file_size', { mode: 'number' }),
   caption: text('caption').notNull().default(''),
   sourceMessageId: bigint('source_message_id', { mode: 'number' }).notNull(),
+  sourceChatId: text('source_chat_id'),
+  sourceMediaGroupId: text('source_media_group_id'),
   forwarded: boolean('forwarded').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   unique('tg_draft_items_source_key').on(t.draftId, t.sourceMessageId),
   index('tg_draft_items_draft_idx').on(t.draftId, t.position),
 ]);
+
+/**
+ * How one part of a publication ended up. `sent` means Telegram confirmed that part with a
+ * message id, `failed` means Telegram refused exactly that part, `unknown` means the answer
+ * never arrived and the part may have been delivered. The teacher's result screen is built
+ * from these rows, so «the text went out, the file did not» is never reported as «nothing
+ * was sent».
+ */
+export interface PublicationPart {
+  kind: 'text' | 'material' | 'photo' | 'document';
+  label: string;
+  method: 'copy' | 'file_id' | 'text';
+  status: 'sent' | 'failed' | 'unknown';
+  messageId: number | null;
+  error: string;
+}
 
 /** Per-group real outcome of one publish attempt; group title/chat are snapshotted for history. */
 export const tgPublications = pgTable('tg_publications', {
@@ -784,6 +820,8 @@ export const tgPublications = pgTable('tg_publications', {
   status: tgPublicationStatusEnum('status').notNull().default('sending'),
   telegramMessageId: bigint('telegram_message_id', { mode: 'number' }),
   error: text('error').notNull().default(''),
+  /** Per-part outcome of this attempt (text plus every attachment), newest run only. */
+  parts: jsonb('parts').$type<PublicationPart[]>().notNull().default([]),
   attempts: integer('attempts').notNull().default(1),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -811,8 +849,10 @@ export const tgCallbackTokens = pgTable('tg_callback_tokens', {
  * The teacher's material library (2026-10-22, part B).
  *
  * A material is a FILE the teacher uploads once and re-uses as an attachment — a textbook,
- * a workbook. Its bytes are never stored: only Telegram's own `file_id`, which is what the
- * bot sends back to a group. `file_unique_id` is the stable identity, so uploading the same
+ * a workbook. Its bytes are never stored: Telegram's own `file_id` plus the coordinates of
+ * the original message (`source_chat_id`, `source_message_id`) are enough, and publication
+ * prefers `copyMessage` on those coordinates — no download, no re-upload, and the media
+ * keeps the type it really has. `file_unique_id` is the stable identity, so uploading the same
  * book twice updates one row instead of filling the library with duplicates.
  *
  * The contents are deliberately NOT read here (no OCR, no PDF/DOCX parser, no vision): the
@@ -826,9 +866,13 @@ export const tgMaterials = pgTable('tg_materials', {
   kind: tgMaterialKindEnum('kind').notNull().default('other'),
   telegramFileId: text('telegram_file_id').notNull(),
   fileUniqueId: text('file_unique_id').notNull(),
+  mediaType: tgMediaTypeEnum('media_type'),
   fileName: text('file_name').notNull().default(''),
   mimeType: text('mime_type').notNull().default(''),
   fileSize: bigint('file_size', { mode: 'number' }),
+  /** Where the original message still lives: `copyMessage` reads the file from here. */
+  sourceChatId: text('source_chat_id'),
+  sourceMessageId: bigint('source_message_id', { mode: 'number' }),
   status: tgMaterialStatusEnum('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -866,9 +910,13 @@ export const tgDraftMaterials = pgTable('tg_draft_materials', {
   kind: tgMaterialKindEnum('kind').notNull().default('other'),
   telegramFileId: text('telegram_file_id').notNull(),
   fileUniqueId: text('file_unique_id'),
+  mediaType: tgMediaTypeEnum('media_type'),
   fileName: text('file_name').notNull().default(''),
   mimeType: text('mime_type').notNull().default(''),
   fileSize: bigint('file_size', { mode: 'number' }),
+  /** Snapshotted with the choice: the book may be re-uploaded later, this draft keeps its own. */
+  sourceChatId: text('source_chat_id'),
+  sourceMessageId: bigint('source_message_id', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   unique('tg_draft_materials_draft_file_key').on(t.draftId, t.telegramFileId),

@@ -5,13 +5,14 @@
  */
 import { describeError } from '../../lib/redact.js';
 import type { DB } from '../../db/index.js';
+import { applyEnglishMenu } from '../botApi.js';
 import type { BotApi, InlineButton } from '../botApi.js';
 import { LOCAL_AI } from './ai.js';
 import {
   LIBRARY_SCREEN_LIMIT, MAX_DRAFT_MATERIALS, MAX_EDIT_TEXT, MAX_FILE_MB, MAX_GROUPS,
-  MAX_INSTRUCTION_TEXT, MAX_ITEM_TEXT, MAX_ITEMS, PREVIEW_CHARS,
+  MAX_ITEM_TEXT, MAX_ITEMS, PREVIEW_CHARS,
 } from './constants.js';
-import { canRetry, publishDraft, retryFailedPublications } from './publish.js';
+import { canRetry, isRetryableRow, publishDraft, retryFailedPublications } from './publish.js';
 import {
   addGroup, addItem, clearHomeworkSession, createDraft, getDraft,
   HW_EDIT_STATE, itemCount, latestActiveDraft, linkedUserIdByTelegramId, listGroups, listItems,
@@ -51,6 +52,8 @@ export interface HwIncoming {
   from?: { id?: number; username?: string; first_name?: string; last_name?: string };
   text?: string;
   caption?: string;
+  /** Telegram's album id: photos sent together share it and are copied together. */
+  media_group_id?: string;
   photo?: { file_id: string; file_unique_id: string; file_size?: number }[];
   document?: {
     file_id: string; file_unique_id: string; file_name?: string;
@@ -102,6 +105,25 @@ async function cb(
 
 // ─── screens ─────────────────────────────────────────────────────────────────
 
+/**
+ * Statuses from which saved materials may be chosen or uploaded. Chosing a book never changes
+ * the draft's state — it only adds or removes a snapshot — so the picker is reachable from
+ * collecting and from preview alike, and «back» returns to whichever screen she came from.
+ */
+const PICKABLE: readonly HwDraftRow['status'][] = [
+  'selecting', 'choosing_materials', 'awaiting_instruction', 'collecting',
+  'needs_clarification', 'preview',
+];
+
+/**
+ * Statuses in which an incoming message becomes material of the draft. `selecting` is here on
+ * purpose: a teacher who types «Unit 2, exercises 1–5» before pressing Continue must not be
+ * ignored — the words belong to the draft she is about to fill.
+ */
+const INGESTIBLE: readonly HwDraftRow['status'][] = [
+  'selecting', 'choosing_materials', 'awaiting_instruction', 'collecting', 'needs_clarification',
+];
+
 async function renderSelection(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
   editMessageId?: number,
@@ -126,6 +148,11 @@ async function renderSelection(
     ]);
     return;
   }
+  /*
+   * Step 1 of the simplified flow (live test 2026-10-23: too many screens): the groups, one
+   * continue button, and the two things she may need about groups themselves. Materials are
+   * NOT chosen here — the next screen takes text, files and library books together.
+   */
   const buttons: Btn[][] = [];
   for (const g of groups) {
     const mark = selectedIds.has(g.id) ? '☑' : '☐';
@@ -136,72 +163,52 @@ async function renderSelection(
     )]);
   }
   if (selected.length) {
-    buttons.push([b(h('startCollect', actor.lang, { n: selected.length }),
+    buttons.push([b(h('continueBtn', actor.lang, { n: selected.length }),
       await cb(deps, ownerId, { a: 'start', d: draft.id }))]);
   }
   buttons.push([
     b(h('addGroup', actor.lang), await cb(deps, ownerId, { a: 'ga', d: draft.id })),
     b(h('manageGroups', actor.lang), await cb(deps, ownerId, { a: 'gm', d: draft.id })),
   ]);
-  buttons.push([b(h('libraryBtn', actor.lang), await cb(deps, ownerId, { a: 'lib', x: 'home' }))]);
   buttons.push([b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id }))]);
   await editOrSend(api, chatId, editMessageId, lines.join('\n'), buttons);
 }
 
+/**
+ * Step 2 — one screen where everything arrives: her own words, photos, files, forwarded
+ * messages and saved library books. Nothing is published and nothing is formatted until she
+ * presses Done, so the screen itself needs no warnings, only the three actions.
+ */
 async function renderCollecting(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
   editMessageId?: number,
 ): Promise<void> {
   const ownerId = actor.userId!;
-  const n = await itemCount(deps.db, draft.id);
-  const text = `${h('collectTitle', actor.lang, { n })}\n\n${h('collectHint', actor.lang)}`;
-  await editOrSend(deps.api, chatId, editMessageId, text, [
+  const [n, materials] = await Promise.all([
+    itemCount(deps.db, draft.id),
+    listDraftMaterials(deps.db, draft.id),
+  ]);
+  const lines = [
+    h('collectTitle', actor.lang, { n }),
+    materials.length
+      ? h('collectMaterials', actor.lang, { m: clip(materials.map((m) => m.title).join(', '), 200) })
+      : '',
+    '',
+    h('collectHint', actor.lang),
+  ].filter(Boolean);
+  await editOrSend(deps.api, chatId, editMessageId, lines.join('\n'), [
     [b(h('doneCta', actor.lang), await cb(deps, ownerId, { a: 'done', d: draft.id }))],
     [
-      b(h('materialsBtn', actor.lang), await cb(deps, ownerId, { a: 'mtr', d: draft.id })),
+      b(h('libraryBtn', actor.lang), await cb(deps, ownerId, { a: 'mtr', d: draft.id })),
       b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id })),
     ],
   ]);
 }
 
 /**
- * The library step between "groups chosen" and "collecting": take a saved book, upload a new
- * one, or continue without any attachment. Nothing here is required — the teacher decides.
+ * The saved books that belong to EVERY group of this draft, most recently used first.
+ * Multi-select, and a file she has not saved yet can be uploaded straight into the library.
  */
-async function renderMaterialChoice(
-  deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
-  editMessageId?: number,
-): Promise<void> {
-  const ownerId = actor.userId!;
-  const [targets, chosen] = await Promise.all([
-    selectedGroups(deps.db, draft.id),
-    listDraftMaterials(deps.db, draft.id),
-  ]);
-  const eligible = await eligibleMaterials(
-    deps.db, ownerId, targets.map((g) => g.id), LIBRARY_SCREEN_LIMIT,
-  );
-  const lines = [
-    h('chooseMaterialsTitle', actor.lang, { n: targets.length }),
-    chosen.length ? h('pickerTitle', actor.lang, { n: chosen.length }) : '',
-  ];
-  if (!eligible.length) lines.push(h('noMaterialsForGroups', actor.lang));
-  lines.push(h('pickerHint', actor.lang));
-  const buttons: Btn[][] = [];
-  if (eligible.length) {
-    buttons.push([b(h('chooseSaved', actor.lang, { n: eligible.length }),
-      await cb(deps, ownerId, { a: 'mtl', d: draft.id }))]);
-  }
-  buttons.push([b(h('uploadNewMaterial', actor.lang), await cb(deps, ownerId, { a: 'mup', d: draft.id }))]);
-  buttons.push([b(h('continueWithout', actor.lang), await cb(deps, ownerId, { a: 'msc', d: draft.id }))]);
-  buttons.push([
-    b(h('libraryBtn', actor.lang), await cb(deps, ownerId, { a: 'lib', x: 'home' })),
-    b(h('back', actor.lang), await cb(deps, ownerId, { a: 'bk', d: draft.id })),
-  ]);
-  buttons.push([b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id }))]);
-  await editOrSend(deps.api, chatId, editMessageId, lines.filter(Boolean).join('\n'), buttons);
-}
-
-/** The saved books of THIS draft's groups, most recently used first; multi-select. */
 async function renderMaterialPicker(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
   editMessageId?: number,
@@ -225,35 +232,13 @@ async function renderMaterialPicker(
       await cb(deps, ownerId, { a: 'mtg', d: draft.id, m: m.id }),
     )]);
   }
-  if (chosen.length) {
-    buttons.push([b(h('pickerContinue', actor.lang, { n: chosen.length }),
-      await cb(deps, ownerId, { a: 'min', d: draft.id }))]);
-  }
-  buttons.push([b(h('continueWithout', actor.lang), await cb(deps, ownerId, { a: 'msc', d: draft.id }))]);
+  buttons.push([b(h('backToHomework', actor.lang, { n: chosen.length }),
+    await cb(deps, ownerId, { a: 'mbk', d: draft.id }))]);
   buttons.push([
     b(h('uploadNewMaterial', actor.lang), await cb(deps, ownerId, { a: 'mup', d: draft.id })),
-    b(h('back', actor.lang), await cb(deps, ownerId, { a: 'mbk', d: draft.id })),
+    b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id })),
   ]);
-  buttons.push([b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id }))]);
   await editOrSend(deps.api, chatId, editMessageId, lines.join('\n'), buttons);
-}
-
-/** «Что нужно выполнить?» — the teacher's own words, the only instruction the AI gets. */
-async function renderInstructionPrompt(
-  deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
-  editMessageId?: number,
-): Promise<void> {
-  const ownerId = actor.userId!;
-  const chosen = await listDraftMaterials(deps.db, draft.id);
-  const names = chosen.map((m) => m.title).join(', ') || h('noInstruction', actor.lang);
-  const buttons: Btn[][] = [
-    [b(h('skipInstruction', actor.lang), await cb(deps, ownerId, { a: 'msc', d: draft.id }))],
-    [
-      b(h('materialsBtn', actor.lang), await cb(deps, ownerId, { a: 'mtr', d: draft.id })),
-      b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id })),
-    ],
-  ];
-  await editOrSend(deps.api, chatId, editMessageId, h('instructionPrompt', actor.lang, { m: names }), buttons);
 }
 
 async function renderClarification(
@@ -335,6 +320,10 @@ async function renderPreview(
   parts.push('', h('previewNoPublish', actor.lang));
 
   const v = String(draft.updatedAt.getTime());
+  /*
+   * Step 4 — one confirmation and the three things she can still change: the words, more
+   * materials, the groups. Nothing else. Publication never starts by itself.
+   */
   const buttons: Btn[][] = [];
   if (targets.length) {
     buttons.push([b(h('publishBtn', actor.lang), await cb(deps, ownerId, { a: 'pub', d: draft.id, v }))]);
@@ -344,37 +333,64 @@ async function renderPreview(
     b(h('addBtn', actor.lang), await cb(deps, ownerId, { a: 'add', d: draft.id, v })),
   ]);
   buttons.push([
-    b(h('materialsBtn', actor.lang), await cb(deps, ownerId, { a: 'mtr', d: draft.id, v })),
     b(h('changeGroups', actor.lang), await cb(deps, ownerId, { a: 'chg', d: draft.id })),
+    b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id })),
   ]);
-  buttons.push([b(h('cancel', actor.lang), await cb(deps, ownerId, { a: 'cancel', d: draft.id }))]);
-  buttons.push([b(h('historyBtn', actor.lang), await cb(deps, ownerId, { a: 'hist' }))]);
   await editOrSend(deps.api, chatId, editMessageId, parts.join('\n'), buttons);
 }
 
+/**
+ * Step 5 — what really happened, part by part.
+ *
+ * The old headline counted GROUPS and said «0 of 1 sent» for a homework whose text was
+ * sitting in the group and whose file had been refused. The parts are what the teacher can
+ * act on, so each one is named: the text, then every attachment, each with its own outcome.
+ */
 async function renderResult(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
 ): Promise<void> {
   const ownerId = actor.userId!;
   const rows = await publicationsOf(deps.db, draft.id);
-  const ok = rows.filter((r) => r.status === 'sent').length;
-  const anyUnknown = rows.some((r) => r.status === 'uncertain');
-  const lines = [h('publishResultTitle', actor.lang, { ok, n: rows.length })];
+  const lines: string[] = [h('publishResultTitle', actor.lang)];
+  let needsReupload = false;
   for (const row of rows.slice(0, 25)) {
     const g = clip(row.groupTitle, 60);
+    const parts = row.parts ?? [];
+    const ok = parts.filter((p) => p.status === 'sent').length;
+    const bad = parts.filter((p) => p.status === 'failed').length;
+    const unknown = parts.filter((p) => p.status === 'unknown').length;
+    if (!parts.length) {
+      // a row written before per-part tracking existed: say what the row itself guarantees
+      if (row.status === 'sent') lines.push(h('pubSent', actor.lang, { g }));
+      else if (row.status === 'failed') lines.push(h('pubFailed', actor.lang, { g, r: clip(row.error || h('sendFailed', actor.lang), 80) }));
+      else lines.push(h('pubCheckGroup', actor.lang, { g }));
+      continue;
+    }
     if (row.status === 'sent') lines.push(h('pubSent', actor.lang, { g }));
-    else if (row.status === 'uncertain' || row.status === 'sending') {
-      lines.push(h('pubUncertain', actor.lang, { g }));
-    } else {
-      lines.push(h('pubFailed', actor.lang, { g, r: clip(row.error || h('sendFailed', actor.lang), 80) }));
+    else if (unknown > 0) lines.push(h('pubCheckGroup', actor.lang, { g }));
+    else if (ok === 0) lines.push(h('pubFailed', actor.lang, { g, r: clip(row.error || h('sendFailed', actor.lang), 80) }));
+    else lines.push(h('pubPartial', actor.lang, { g, ok, bad }));
+    for (const p of parts) {
+      if (p.status === 'sent' && row.status === 'sent') continue; // nothing to explain
+      const label = p.kind === 'text' ? h('partText', actor.lang) : clip(p.label, 40);
+      const state = p.status === 'sent' ? h('partSent', actor.lang)
+        : p.status === 'unknown' ? h('partUnknown', actor.lang)
+          : h('partFailed', actor.lang, { r: clip(p.error, 70) });
+      lines.push(h('partLine', actor.lang, { l: label, s: state }));
+      if (p.status === 'failed' && p.kind !== 'text') needsReupload = true;
     }
   }
   lines.push('');
-  if (rows.length && ok === rows.length) lines.push(h('publishedAll', actor.lang));
-  else if (anyUnknown) lines.push(h('publishedUnknown', actor.lang));
+  const all = rows.length > 0 && rows.every((r) => r.status === 'sent');
+  if (all) lines.push(h('publishedAll', actor.lang));
+  else if (rows.some((r) => r.status === 'uncertain' || r.status === 'sending')) lines.push(h('publishedUnknown', actor.lang));
   else lines.push(h('publishedSome', actor.lang));
+  if (needsReupload) lines.push(h('reuploadHint', actor.lang));
+
   const buttons: Btn[][] = [];
-  if (draft.status === 'failed' && canRetry(rows)) {
+  // Retry only what is provably missing: a definite refusal, or a run whose every part has a
+  // definite outcome. An unknown part never gets a button — the teacher looks at the group.
+  if (canRetry(rows)) {
     buttons.push([b(h('retryBtn', actor.lang), await cb(deps, ownerId, { a: 'retry', d: draft.id }))]);
   }
   buttons.push([b(h('newDraftBtn', actor.lang), await cb(deps, ownerId, { a: 'new' }))]);
@@ -441,6 +457,15 @@ export async function homeworkCommand(
       deps.db, teacher.userId, from?.id ?? chatIdNumber(chatId), chatId,
       from?.username ?? '', displayName,
     );
+    /*
+     * English command labels for THIS chat, whenever the account is English. Telegram draws
+     * the menu from the CLIENT language, so an English account with a Russian app was shown
+     * «Библиотека материалов» beside English screens (live test 2026-10-23). `setMyCommands`
+     * is idempotent and sends no message; a failure here must not break /homework.
+     */
+    if (actor.lang === 'en') {
+      await applyEnglishMenu(deps.api, 'teacher', chatId).catch(() => undefined);
+    }
   }
   let draft = await latestActiveDraft(deps.db, teacher.userId);
   if (!draft) draft = await createDraft(deps.db, teacher.userId);
@@ -455,16 +480,23 @@ function chatIdNumber(chatId: string): number {
 
 async function renderDraft(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow,
+  editMessageId?: number,
 ): Promise<void> {
+  // The two library screens of the old flow are gone (live test: too many steps). A draft
+  // left in one of them by the previous version is moved to the single collecting screen.
+  if (draft.status === 'choosing_materials' || draft.status === 'awaiting_instruction') {
+    const moved = await transitionDraft(
+      deps.db, draft.id, actor.userId!, ['choosing_materials', 'awaiting_instruction'], 'collecting',
+    );
+    return renderCollecting(deps, chatId, actor, moved ?? draft, editMessageId);
+  }
   switch (draft.status) {
-    case 'selecting': return renderSelection(deps, chatId, actor, draft);
-    case 'choosing_materials': return renderMaterialChoice(deps, chatId, actor, draft);
-    case 'awaiting_instruction': return renderInstructionPrompt(deps, chatId, actor, draft);
-    case 'collecting': return renderCollecting(deps, chatId, actor, draft);
+    case 'selecting': return renderSelection(deps, chatId, actor, draft, editMessageId);
+    case 'collecting': return renderCollecting(deps, chatId, actor, draft, editMessageId);
     case 'formatting':
       return send(deps.api, chatId, h('formatting', actor.lang));
     case 'needs_clarification': return renderClarification(deps, chatId, actor, draft);
-    case 'preview': return renderPreview(deps, chatId, actor, draft);
+    case 'preview': return renderPreview(deps, chatId, actor, draft, editMessageId);
     case 'publishing': {
       const rows = await publicationsOf(deps.db, draft.id);
       return send(deps.api, chatId, h('publishing', actor.lang, { n: rows.length || 1 }));
@@ -500,10 +532,13 @@ interface IngestResult {
 }
 
 async function ingest(
-  deps: HomeworkDeps, draft: HwDraftRow, actor: HwActor, m: HwIncoming,
+  deps: HomeworkDeps, chatId: string, draft: HwDraftRow, actor: HwActor, m: HwIncoming,
 ): Promise<IngestResult> {
   const { db } = deps;
   const sourceMessageId = m.message_id;
+  // Where the message physically is: publication copies THIS message into the group, so a
+  // photo stays a photo, a file keeps its name, and no byte ever touches Render.
+  const source = { sourceChatId: chatId, sourceMessageId, sourceMediaGroupId: m.media_group_id ?? null };
   const forwarded = isForwarded(m);
   const caption = (m.caption ?? '').slice(0, 1024);
   const text = (m.text ?? '').trim();
@@ -516,7 +551,7 @@ async function ingest(
     }
     input = {
       kind: 'photo', fileId: photo.file_id, fileUniqueId: photo.file_unique_id,
-      fileSize: photo.file_size ?? null, caption, sourceMessageId, forwarded,
+      fileSize: photo.file_size ?? null, caption, ...source, forwarded,
     };
   } else if (m.document) {
     const doc = m.document;
@@ -526,13 +561,13 @@ async function ingest(
     input = {
       kind: 'document', fileId: doc.file_id, fileUniqueId: doc.file_unique_id,
       fileName: doc.file_name ?? null, mimeType: doc.mime_type ?? null,
-      fileSize: doc.file_size ?? null, caption, sourceMessageId, forwarded,
+      fileSize: doc.file_size ?? null, caption, ...source, forwarded,
     };
   } else if (text) {
     if (text.length > MAX_ITEM_TEXT) return { ok: false, reason: 'tooLong' };
     input = isSingleLink(text)
-      ? { kind: 'link', url: text, sourceMessageId, forwarded }
-      : { kind: 'text', text, sourceMessageId, forwarded };
+      ? { kind: 'link', url: text, ...source, forwarded }
+      : { kind: 'text', text, ...source, forwarded };
   } else if (unsupported(m)) {
     return { ok: false, reason: 'unsupported' };
   } else {
@@ -552,7 +587,7 @@ async function ingest(
 async function ingestAndAck(
   deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow, m: HwIncoming,
 ): Promise<void> {
-  const result = await ingest(deps, draft, actor, m);
+  const result = await ingest(deps, chatId, draft, actor, m);
   if (result.ok) {
     await send(deps.api, chatId, h('collectAck', actor.lang, {
       kind: kindLabel(result.kind!, actor.lang), n: result.count ?? 0,
@@ -751,31 +786,21 @@ export async function homeworkInput(
   }
   if (text.startsWith('/')) return false;
 
-  if (draft.status === 'awaiting_instruction') {
-    await instructionInput(deps, chatId, actor, draft, text);
-    return true;
+  /*
+   * A draft sitting in one of the two removed screens still takes her words: it moves to
+   * collecting first, then the message is stored like any other material.
+   */
+  if (draft.status === 'awaiting_instruction' || draft.status === 'choosing_materials') {
+    const moved = await transitionDraft(
+      deps.db, draft.id, teacher.userId,
+      ['awaiting_instruction', 'choosing_materials'], 'collecting',
+    );
+    if (moved) await renderCollecting(deps, chatId, actor, moved);
   }
-  if (draft.status !== 'collecting' && draft.status !== 'needs_clarification') return false;
+  // Her first message may arrive before she presses Continue; the draft is the same draft.
+  if (!INGESTIBLE.includes(draft.status)) return false;
   await ingestAndAck(deps, chatId, actor, draft, m);
   return true;
-}
-
-/** The teacher answers «what to do»; the words are stored as they came. */
-async function instructionInput(
-  deps: HomeworkDeps, chatId: string, actor: HwActor, draft: HwDraftRow, text: string,
-): Promise<void> {
-  const teacher = teacherOf(actor)!;
-  if (!text) { await renderInstructionPrompt(deps, chatId, actor, draft); return; }
-  if (text.length > MAX_INSTRUCTION_TEXT) {
-    await send(deps.api, chatId, h('instructionTooLong', actor.lang, { n: MAX_INSTRUCTION_TEXT }));
-    return;
-  }
-  const moved = await transitionDraft(
-    deps.db, draft.id, teacher.userId, ['awaiting_instruction'], 'collecting', { instruction: text },
-  );
-  if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-  await send(deps.api, chatId, h('instructionSaved', actor.lang));
-  await renderCollecting(deps, chatId, actor, moved);
 }
 
 // ─── callbacks ───────────────────────────────────────────────────────────────
@@ -832,28 +857,24 @@ export async function homeworkCallback(
         // groups may have changed since a book was chosen — a snapshot for the old set is
         // not a decision about these groups, so it goes back to the picker
         const dropped = await pruneDraftMaterials(deps.db, draft.id, ownerId);
-        const moved = await transitionDraft(deps.db, draft.id, ownerId, ['selecting'], 'choosing_materials');
+        const moved = await transitionDraft(deps.db, draft.id, ownerId, ['selecting'], 'collecting');
         if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
         if (dropped.length) {
           await send(deps.api, chatId, h('materialsUnlinked', actor.lang, { m: clip(dropped.join(', '), 200) }));
         }
-        await renderMaterialChoice(deps, chatId, actor, moved, messageId);
+        await renderCollecting(deps, chatId, actor, moved, messageId);
         return;
       }
+      /** Every status a draft may be edited from — the picker and the upload dialog work there. */
+      case 'mtr':
       case 'mtl': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials']);
+        const draft = await draftForAction(deps, payload, ownerId, PICKABLE);
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
         await renderMaterialPicker(deps, chatId, actor, draft, messageId);
         return;
       }
-      case 'mbk': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials']);
-        if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        await renderMaterialChoice(deps, chatId, actor, draft, messageId);
-        return;
-      }
       case 'mtg': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials']);
+        const draft = await draftForAction(deps, payload, ownerId, PICKABLE);
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
         const result = await toggleDraftMaterial(deps.db, draft.id, ownerId, payload.m ?? '');
         if (result === 'limit') {
@@ -866,7 +887,7 @@ export async function homeworkCallback(
         return;
       }
       case 'mup': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials']);
+        const draft = await draftForAction(deps, payload, ownerId, PICKABLE);
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
         const targets = await selectedGroups(deps.db, draft.id);
         if (!targets.length) { await send(deps.api, chatId, h('noTargets', actor.lang)); return; }
@@ -875,39 +896,14 @@ export async function homeworkCallback(
         );
         return;
       }
-      case 'min': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials', 'awaiting_instruction']);
-        if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        if (!(await listDraftMaterials(deps.db, draft.id)).length) {
-          await renderMaterialPicker(deps, chatId, actor, draft, messageId);
-          return;
-        }
-        if (draft.status === 'choosing_materials') {
-          const moved = await transitionDraft(deps.db, draft.id, ownerId,
-            ['choosing_materials'], 'awaiting_instruction');
-          if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-          await renderInstructionPrompt(deps, chatId, actor, moved);
-          return;
-        }
-        await renderInstructionPrompt(deps, chatId, actor, draft, messageId);
-        return;
-      }
+      /** Back from the picker: the screen the teacher came from, whatever the draft's status. */
+      case 'mbk':
+      case 'min':
       case 'msc': {
-        const draft = await draftForAction(deps, payload, ownerId, ['choosing_materials', 'awaiting_instruction']);
+        const draft = await draftForAction(deps, payload, ownerId, PICKABLE);
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        const moved = await transitionDraft(deps.db, draft.id, ownerId,
-          ['choosing_materials', 'awaiting_instruction'], 'collecting');
-        if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        await renderCollecting(deps, chatId, actor, moved, messageId);
-        return;
-      }
-      case 'mtr': {
-        const from = ['awaiting_instruction', 'collecting', 'needs_clarification', 'preview'] as const;
-        const draft = await draftForAction(deps, payload, ownerId, from);
-        if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        const moved = await transitionDraft(deps.db, draft.id, ownerId, [...from], 'choosing_materials');
-        if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        await renderMaterialChoice(deps, chatId, actor, moved, messageId);
+        // the picker message itself turns back into her screen — one message, not two
+        await renderDraft(deps, chatId, actor, draft, messageId);
         return;
       }
       case 'gm': {
@@ -950,12 +946,10 @@ export async function homeworkCallback(
       case 'bk': {
         const draft = await draftForAction(deps, payload, ownerId, ['selecting', 'choosing_materials']);
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        if (draft.status === 'choosing_materials') {
-          const back = await transitionDraft(deps.db, draft.id, ownerId, ['choosing_materials'], 'selecting');
-          if (back) await renderSelection(deps, chatId, actor, back, messageId);
-          return;
-        }
-        await renderSelection(deps, chatId, actor, draft, messageId);
+        const back = draft.status === 'choosing_materials'
+          ? await transitionDraft(deps.db, draft.id, ownerId, ['choosing_materials'], 'selecting')
+          : draft;
+        if (back) await renderSelection(deps, chatId, actor, back, messageId);
         return;
       }
       case 'done':
@@ -973,8 +967,8 @@ export async function homeworkCallback(
         if (!draft) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
         const moved = await transitionDraft(deps.db, draft.id, ownerId, ['preview'], 'collecting');
         if (!moved) { await send(deps.api, chatId, h('badButton', actor.lang)); return; }
-        await send(deps.api, chatId, h('addPrompt', actor.lang));
-        await renderCollecting(deps, chatId, actor, moved);
+        // the preview screen itself turns into the collecting screen: one message, not two
+        await renderCollecting(deps, chatId, actor, moved, messageId);
         return;
       }
       case 'chg': {
@@ -996,15 +990,6 @@ export async function homeworkCallback(
         await editOrSend(deps.api, chatId, messageId,
           h('publishing', actor.lang, { n: targets.length }));
         const outcome = await publishDraft(deps.db, deps.api, draft.id, ownerId);
-        if (outcome.kind === 'fileMissing') {
-          // Nothing was sent. The book that Telegram refuses is dropped from the draft so
-          // the teacher can upload it again; the library row itself stays untouched.
-          await send(deps.api, chatId, h('fileUnavailable', actor.lang, {
-            m: clip(outcome.missing.join(', ') || '—', 200),
-          }));
-          if (outcome.draft) await renderPreview(deps, chatId, actor, outcome.draft);
-          return;
-        }
         if (outcome.draft) {
           if (outcome.kind === 'done' || outcome.draft.status !== 'preview') {
             await renderResult(deps, chatId, actor, outcome.draft);
@@ -1015,20 +1000,16 @@ export async function homeworkCallback(
         return;
       }
       case 'retry': {
-        const draft = await draftForAction(deps, payload, ownerId, ['failed']);
+        // `publish_unknown` is included: with per-part outcomes a teacher may press retry for
+        // the parts Telegram definitely refused, while the unknown ones stay unsendable
+        const draft = await draftForAction(deps, payload, ownerId, ['failed', 'publish_unknown']);
         if (!draft) { await send(deps.api, chatId, h('retryAlready', actor.lang)); return; }
-        const failed = (await publicationsOf(deps.db, draft.id)).filter((r) => r.status === 'failed');
-        if (!failed.length) { await send(deps.api, chatId, h('retryNone', actor.lang)); return; }
+        const rows = await publicationsOf(deps.db, draft.id);
+        const retryableCount = rows.filter(isRetryableRow).length;
+        if (!retryableCount) { await send(deps.api, chatId, h('retryNone', actor.lang)); return; }
         await editOrSend(deps.api, chatId, messageId,
-          h('publishing', actor.lang, { n: failed.length }));
+          h('publishing', actor.lang, { n: retryableCount }));
         const outcome = await retryFailedPublications(deps.db, deps.api, draft.id, ownerId);
-        if (outcome.kind === 'fileMissing') {
-          await send(deps.api, chatId, h('fileUnavailable', actor.lang, {
-            m: clip(outcome.missing.join(', ') || '—', 200),
-          }));
-          if (outcome.draft) await renderResult(deps, chatId, actor, outcome.draft);
-          return;
-        }
         if (outcome.kind === 'noTargets') {
           await send(deps.api, chatId, h('retryNone', actor.lang));
           return;
@@ -1144,7 +1125,13 @@ export async function homeworkGroupBind(
   const parts = text.trim().split(/\s+/);
   const cmd = (parts[0] ?? '').split('@')[0]?.toLowerCase() ?? '';
   if (cmd !== '/bind') return false;
-  const fallback: HwLang = 'ru';
+  /*
+   * English: these four answers go out BEFORE the owner's account is known, so there is no
+   * locale to read — and the live test showed a Russian line inside an otherwise English
+   * screen. The group reply is the teacher's product language, and after the bind succeeds the
+   * messages follow the owner's own locale again.
+   */
+  const fallback: HwLang = 'en';
 
   if (!(await isGroupAdmin(chatId, senderTelegramId))) {
     await send(deps.api, chatId, h('bindNotAdmin', fallback));

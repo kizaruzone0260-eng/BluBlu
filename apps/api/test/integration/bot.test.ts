@@ -357,7 +357,7 @@ suite('telegram bot (mocked api)', () => {
     await t.db.delete(botSessions).where(eq(botSessions.chatId, String(sender)));
   });
 
-  it('link applies the role menu (3 languages, chat scope); unlink removes it', async () => {
+  it('link applies the role menu (chat scope); an English account gets English under every language', async () => {
     const [stu2] = await t.db.insert(users).values({
       role: 'student', name: 'Меню', lastName: 'Тест', email: `botm${Date.now()}@x.io`,
       passwordHash: await hashPassword('Secret1234'), profileCompletedAt: new Date(),
@@ -367,9 +367,17 @@ suite('telegram bot (mocked api)', () => {
     clear();
     await go(msg(960, `/start ${token}`));
     const cmds = api.calls.filter((c) => c.kind === 'cmds');
-    expect(cmds.length).toBe(3); // ru + uz + en, chat scope
+    // This account has no chosen locale, so it is the English default — and the menu of THIS
+    // chat is installed under ru, uz, en and the language-less fallback (4 slots). Telegram
+    // picks the menu by the CLIENT language: leaving a Russian slot here would show Russian
+    // labels beside English answers, which is exactly what the live test reported.
+    expect(cmds.length).toBe(4);
     expect(cmds.every((c) => c.chatId === '960')).toBe(true);
+    expect(cmds.map((c) => c.lang).sort()).toEqual(['', 'en', 'ru', 'uz']);
     expect(JSON.stringify(cmds.find((c) => c.lang === 'en')?.commands)).toContain('stop');
+    for (const c of cmds) {
+      expect(JSON.stringify(c.commands)).not.toMatch(/[А-Яа-яЁё]/);
+    }
     // unlink via the API route → deleteMyCommands + basic menu
     const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: (await t.db.select().from(users).where(eq(users.id, stu2!.id)).limit(1))[0]!.email, password: 'Secret1234' } });
     const tok = login.json().accessToken as string;

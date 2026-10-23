@@ -23,7 +23,7 @@ import { buildApp } from '../../src/app.js';
 import { botUpdates, tgDrafts, tgMaterials, tgPublications, telegramLinks } from '../../src/db/schema.js';
 import { env } from '../../src/env.js';
 import { capturingApi, drainBotUpdates } from '../../src/routes/telegram.js';
-import { addGroup } from '../../src/services/homework/store.js';
+import { addGroup, listItems as listDraftItems } from '../../src/services/homework/store.js';
 import { listDraftMaterials } from '../../src/services/homework/libraryStore.js';
 import pino from 'pino';
 import type { FastifyInstance } from 'fastify';
@@ -71,17 +71,24 @@ suite('вебхук: домашнее задание и библиотека ч�
     },
   });
 
-  const sendDocument = (fileId: string, name: string, caption = '') => post({
-    update_id: ++uid,
-    message: {
-      message_id: 960 + uid, chat: { id: TEACHER_CHAT, type: 'private' }, from: { id: TEACHER_CHAT },
-      document: {
-        file_id: fileId, file_unique_id: `${fileId}-u`, file_name: name,
-        mime_type: 'application/pdf', file_size: 2_000_000,
+  /** Posts a document into the teacher's chat and returns the Telegram message id it used. */
+  const sendDocument = async (fileId: string, name: string, caption = '') => {
+    const next = ++uid;
+    await post({
+      update_id: next,
+      message: {
+        message_id: 960 + next, chat: { id: TEACHER_CHAT, type: 'private' },
+        from: { id: TEACHER_CHAT },
+        document: {
+          file_id: fileId, file_unique_id: `${fileId}-u`, file_name: name,
+          mime_type: 'application/pdf', file_size: 2_000_000,
+        },
+        ...(caption ? { caption } : {}),
       },
-      ...(caption ? { caption } : {}),
-    },
-  });
+    });
+    // a copy is addressed by (chat, message), so the tests assert exactly this pair
+    return 960 + next;
+  };
 
   /** The newest button whose label contains `label` — exactly what Telegram would show. */
   function button(label: string, chatId: number | string = TEACHER_CHAT): string {
@@ -99,6 +106,8 @@ suite('вебхук: домашнее задание и библиотека ч�
   const textsTo = (chatId: number | string) =>
     api().calls.filter((c) => c.chatId === String(chatId) && c.text !== undefined).map((c) => c.text as string);
   const docsTo = (chatId: string) => api().calls.filter((c) => c.chatId === chatId && c.kind === 'doc');
+  const photosTo = (chatId: string) => api().calls.filter((c) => c.chatId === chatId && c.kind === 'photo');
+  const copiesTo = (chatId: string) => api().calls.filter((c) => c.chatId === chatId && c.kind === 'copy');
 
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
@@ -133,7 +142,7 @@ suite('вебхук: домашнее задание и библиотека ч�
     await pressButton(button('Добавить материал'));
     await pressButton(button('IELTS B2 (тест)'));
     await pressButton(button('✅ Продолжить ('));
-    await sendDocument('egau-file', 'English Grammar in Use 5th.pdf');
+    const uploadMessageId = await sendDocument('egau-file', 'English Grammar in Use 5th.pdf');
     await sendText('English Grammar in Use');
     await pressButton(button('📕 Книга'));
     await pressButton(button('💾 Сохранить в библиотеку'));
@@ -145,15 +154,15 @@ suite('вебхук: домашнее задание и библиотека ч�
     // в группу на складе книги не ушло ни сообщения
     expect(textsTo(GROUP_CHAT)).toHaveLength(0);
 
-    // ── задание: /homework → группа → библиотека → книга → инструкция → готово
+    // ── задание: /homework → группа → библиотека → книга → свои слова → готово
     await sendText('/homework');
     await pressButton(button('IELTS B2 (тест)'));
-    await pressButton(button('✅ Начать сбор'));
-    await pressButton(button('📚 Использовать сохранённый материал'));
+    await pressButton(button('✅ Продолжить'));
+    await pressButton(button('📚 Библиотека материалов'));
     await pressButton(button('English Grammar in Use'));
-    await pressButton(button('✅ Продолжить ('));
+    await pressButton(button('К заданию'));
     await sendText('Unit 1, Exercises 1–5.');
-    await pressButton(button('Готово — оформить задание'));
+    await pressButton(button('Готово — подготовить задание'));
 
     const [draft] = await t.db.select().from(tgDrafts).where(eq(tgDrafts.ownerId, teacherId))
       .orderBy(tgDrafts.updatedAt);
@@ -167,7 +176,8 @@ suite('вебхук: домашнее задание и библиотека ч�
     expect(preview).toContain('📎 «IELTS B2 (тест)»');
     expect(preview).toContain('Публикация не начнётся без нажатия');
     expect(draft?.status).toBe('preview');
-    expect(draft?.instruction).toBe('Unit 1, Exercises 1–5.');
+    // her own words are a collected material of the draft, not a separate screen
+    expect((await listDraftItems(t.db, draft!.id)).map((i) => i.text)).toEqual(['Unit 1, Exercises 1–5.']);
     expect((await listDraftMaterials(t.db, draft!.id))[0]?.title).toBe('English Grammar in Use');
     // the group has still received nothing
     expect(textsTo(GROUP_CHAT)).toHaveLength(0);
@@ -177,7 +187,12 @@ suite('вебхук: домашнее задание и библиотека ч�
     expect(textsTo(GROUP_CHAT)).toHaveLength(1);
     expect(textsTo(GROUP_CHAT)[0]).toContain('ДОМАШНЕЕ ЗАДАНИЕ');
     expect(textsTo(GROUP_CHAT)[0]).toContain('Unit 1, Exercises 1–5.');
-    expect(docsTo(GROUP_CHAT).map((c) => c.fileId)).toEqual(['egau-file']);
+    // the book was uploaded in the teacher's own chat ⇒ Telegram COPIES that message: no
+    // download, no re-upload, and the file keeps the type it really has
+    expect(copiesTo(GROUP_CHAT).map((c) => `${c.fromChatId}:${c.messageId}`))
+      .toEqual([`${TEACHER_CHAT}:${uploadMessageId}`]);
+    expect(docsTo(GROUP_CHAT)).toHaveLength(0);
+    expect(photosTo(GROUP_CHAT)).toHaveLength(0);
     const after = await t.db.select().from(tgDrafts).where(eq(tgDrafts.id, draft!.id));
     expect(after[0]?.status).toBe('published');
     const [pub] = await t.db.select().from(tgPublications).where(eq(tgPublications.draftId, draft!.id));
@@ -189,10 +204,9 @@ suite('вебхук: домашнее задание и библиотека ч�
   it('повторная доставка того же update_id не публикует задание дважды', async () => {
     await sendText('/homework');
     await pressButton(button('IELTS B2 (тест)'));
-    await pressButton(button('✅ Начать сбор'));
-    await pressButton(button('Продолжить без материала'));
+    await pressButton(button('✅ Продолжить'));
     await sendText('Прочитать параграф 5');
-    await pressButton(button('Готово — оформить задание'));
+    await pressButton(button('Готово — подготовить задание'));
     const [draft] = await t.db.select().from(tgDrafts).where(eq(tgDrafts.ownerId, teacherId));
     const publishToken = button('Опубликовать в группы');
 

@@ -11,7 +11,9 @@
  *    explicit confirmation;
  *  • archiving removes a book from NEW homeworks and keeps past sends readable; deleting a
  *    material does not rewrite history either;
- *  • a `file_id` Telegram refuses aborts the publication BEFORE anything is sent;
+ *  • an attachment is COPIED out of the teacher's own message, so its type is never guessed;
+ *  • a file Telegram refuses is reported as that one part failing, after the parts that did
+ *    arrive — never as «nothing was sent» (live test 2026-10-23);
  *  • only the owner can add, rename, link, archive or delete her materials.
  *
  * Each test gets its own teacher and private chat: the dispatcher's in-process rate limit
@@ -49,9 +51,15 @@ class FakeAi implements HomeworkAi {
     questions: [], warnings: [], provider: 'test-fake',
   };
 
+  /**
+   * The teacher's own words are the task. Since the simplified flow she types them into the
+   * collecting screen (they arrive as a text material), so the fake reads them from the items
+   * when there is no separate instruction.
+   */
   async format(req: HwAiRequest): Promise<HwAiResult> {
     this.requests.push(req);
-    return { ...this.result, formatted: `ЗАДАНИЕ: ${req.instruction || '—'}` };
+    const words = req.instruction || req.items.find((i) => i.kind === 'text')?.text || '';
+    return { ...this.result, formatted: `ЗАДАНИЕ: ${words || '—'}` };
   }
 }
 
@@ -167,6 +175,9 @@ suite('telegram material library', () => {
   const sendsTo = (chatId: number | string) => callsTo(chatId).filter((c) => c.kind === 'send');
   const docsTo = (chatId: number | string) => callsTo(chatId).filter((c) => c.kind === 'doc');
   const photosTo = (chatId: number | string) => callsTo(chatId).filter((c) => c.kind === 'photo');
+  /** Copies are the preferred send: the original message is re-posted, no bytes move. */
+  const copiesTo = (chatId: number | string) => callsTo(chatId).filter((c) => c.kind === 'copy');
+  const copiesManyTo = (chatId: number | string) => callsTo(chatId).filter((c) => c.kind === 'copyMany');
 
   // ─── database helpers ──────────────────────────────────────────────────────
 
@@ -207,14 +218,14 @@ suite('telegram material library', () => {
     return res.row;
   }
 
-  /** /homework → groups → library step → choose books → the teacher writes the instruction. */
+  /** /homework → groups → Continue → 📚 Materials → tick books → back → she writes her words. */
   async function startHomeworkWithBooks(groups: string[], books: string[], instruction: string) {
     await go(msg(T_CHAT, '/homework'));
     for (const g of groups) await press(g);
-    await press('Начать сбор');
-    await press('Использовать сохранённый материал');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     for (const book of books) await press(book);
-    await press('✅ Продолжить (');
+    await press('К заданию');
     await go(msg(T_CHAT, instruction));
   }
 
@@ -364,28 +375,30 @@ suite('telegram material library', () => {
     // group B alone: offered
     await go(msg(T_CHAT, '/homework'));
     await press('Grammar A2');
-    await press('Начать сбор');
-    await press('Использовать сохранённый материал');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     expect(hasButton('Essential Grammar in Use')).toBe(true);
     await press('Отмена');
 
     // group A alone: the same book is not a recommendation for it
     await go(msg(T_CHAT, '/homework'));
     await press('IELTS B2');
-    await press('Начать сбор');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     expect(lastTextTo(T_CHAT)).toContain('Для выбранных групп сохранённых материалов нет.');
-    expect(hasButton('Использовать сохранённый материал')).toBe(false);
-    await press('Отмена');
+    expect(hasButton('Essential Grammar in Use')).toBe(false);
+    // an empty library is not a dead end: back to collecting, nothing forces a book
+    await press('К заданию');
+    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
 
     // A + B together: only books attached to BOTH may go to both groups
     await go(msg(T_CHAT, '/homework'));
     await press('IELTS B2');
     await press('Grammar A2');
-    await press('Начать сбор');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     expect(lastTextTo(T_CHAT)).toContain('Для выбранных групп сохранённых материалов нет.');
-    // and continuing without a material is still allowed — nothing forces a book
-    await press('Продолжить без материала');
-    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
+    await press('К заданию');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
     expect(draft.status).toBe('collecting');
   });
@@ -395,18 +408,19 @@ suite('telegram material library', () => {
 
     // first homework: Unit 1
     await startHomeworkWithBooks(['IELTS B2'], ['English Grammar in Use'], 'Unit 1');
-    expect(saidAtSomePoint(T_CHAT, 'Инструкция сохранена')).toBe(true);
-    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
-    await press('Готово — оформить задание');
+    expect(saidAtSomePoint(T_CHAT, 'Получено — 1')).toBe(true);
+    expect(saidAtSomePoint(T_CHAT, 'Сбор материалов')).toBe(true);
+    await press('Готово — подготовить задание');
     const preview = lastTextTo(T_CHAT);
     expect(preview).toContain('Материалы: English Grammar in Use');
-    expect(preview).toContain('Инструкция: Unit 1');
+    expect(preview).toContain('ЗАДАНИЕ: Unit 1');
     expect(preview).toContain('📎 «IELTS B2» — 📕 Книга: English Grammar in Use');
 
     // what the formatter was given — and what it was NOT given
     expect(ai.requests).toHaveLength(1);
     const req = ai.requests[0]!;
-    expect(req.instruction).toBe('Unit 1');
+    expect(req.items.map((i) => i.kind)).toEqual(['text']);
+    expect(req.items[0]!.text).toBe('Unit 1');
     expect(req.materials).toEqual([{
       title: 'English Grammar in Use', kind: 'book', fileName: 'English Grammar in Use.pdf',
     }]);
@@ -435,14 +449,14 @@ suite('telegram material library', () => {
     // second homework in the same group: the book is offered again, no re-upload
     await press('Новое задание');
     await press('IELTS B2');
-    await press('Начать сбор');
-    await press('Использовать сохранённый материал');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     expect(hasButton('English Grammar in Use')).toBe(true);
     await press('English Grammar in Use');
-    await press('✅ Продолжить (');
+    await press('К заданию');
     await go(msg(T_CHAT, 'Unit 2, Exercises 1–5'));
-    await press('Готово — оформить задание');
-    expect(lastTextTo(T_CHAT)).toContain('Инструкция: Unit 2, Exercises 1–5');
+    await press('Готово — подготовить задание');
+    expect(lastTextTo(T_CHAT)).toContain('ЗАДАНИЕ: Unit 2, Exercises 1–5');
     const second = (await latestActiveDraft(t.db, teacherId))!;
     expect(second.id).not.toBe(draft.id);
 
@@ -463,29 +477,50 @@ suite('telegram material library', () => {
     assertShortCallbacks();
   });
 
-  it('drops a publication whose file Telegram refuses BEFORE anything is sent', async () => {
+  it('reports a refused attachment as THAT part, and a retry re-sends only the file', async () => {
+    // This is the live scenario of 2026-10-23: the homework text reached the group, the file
+    // did not. The old answer was «Publication result (0 of 1 sent)», which was simply untrue.
     await seedMaterial('Cambridge IELTS 18', 'dead-file', [A_CHAT]);
     await startHomeworkWithBooks(['IELTS B2'], ['Cambridge IELTS 18'], 'Unit 3');
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
-    api.missingFiles.add('dead-file');
 
-    // the token must be taken BEFORE the conversation is cleared: clearing removes the very
-    // screen the publish button lives on
     const publishToken = button('Опубликовать в группы');
     clearApi();
+    api.rejectDocumentChats.add(A_CHAT);
     await go(rawCb(T_CHAT, publishToken));
-    expect(textsTo(A_CHAT)).toHaveLength(0);
-    expect(docsTo(A_CHAT)).toHaveLength(0);
-    expect(saidAtSomePoint(T_CHAT, 'больше недоступен для повторной отправки')).toBe(true);
-    expect(await draftStatus(draft.id)).toBe('preview');
-    // the snapshot left the draft, the library row stayed (it needs a new upload, not a purge)
-    expect(await listDraftMaterials(t.db, draft.id)).toHaveLength(0);
-    const kept = await materialByTitle('Cambridge IELTS 18');
-    expect(kept).not.toBeNull();
-    expect(kept!.telegramFileId).toBe('dead-file');
 
-    // the same upload path repairs it: saving the file replaces the dead file_id in place
+    // the text really arrived, the file really did not — and that is what the screen says
+    expect(sendsTo(A_CHAT)).toHaveLength(1);
+    expect(docsTo(A_CHAT)).toHaveLength(0); // refused before it became a message: nothing recorded
+    expect(lastTextTo(T_CHAT)).toContain('⚠ IELTS B2 — доставлено 1, не доставлено 1');
+    expect(lastTextTo(T_CHAT)).toContain('• текст — отправлено');
+    expect(lastTextTo(T_CHAT)).toContain('• Cambridge IELTS 18 — не отправлено');
+    expect(saidAtSomePoint(T_CHAT, 'пришлите его снова')).toBe(true);
+    const row1 = await t.db.select().from(tgPublications).where(eq(tgPublications.draftId, draft.id));
+    expect(row1[0]!.status).toBe('uncertain');
+    expect(row1[0]!.parts.map((p) => `${p.kind}:${p.status}`)).toEqual(['text:sent', 'material:failed']);
+    expect(await draftStatus(draft.id)).toBe('publish_unknown');
+    // the library row is untouched: it needs a new upload, not a purge
+    expect((await materialByTitle('Cambridge IELTS 18'))!.telegramFileId).toBe('dead-file');
+
+    // the retry button appears because every part has a DEFINITE outcome — and it sends only
+    // the missing file: the group never gets a second copy of the same homework text
+    expect(hasButton('Повторить неудачные')).toBe(true);
+    api.rejectDocumentChats.delete(A_CHAT);
+    // the token must be taken BEFORE the conversation is cleared: clearing removes the very
+    // screen the retry button lives on
+    const retryToken = button('Повторить неудачные');
+    clearApi();
+    await go(rawCb(T_CHAT, retryToken));
+    expect(sendsTo(A_CHAT)).toHaveLength(0);
+    expect(docsTo(A_CHAT).map((c) => c.fileId)).toEqual(['dead-file']);
+    const row2 = await t.db.select().from(tgPublications).where(eq(tgPublications.draftId, draft.id));
+    expect(row2[0]!.status).toBe('sent');
+    expect(row2[0]!.attempts).toBe(2);
+    expect(await draftStatus(draft.id)).toBe('published');
+
+    // the same upload path repairs the library row in place: the file_id is replaced, not the book
     const repaired = await saveMaterial(t.db, teacherId, {
       title: 'Cambridge IELTS 18', kind: 'book', fileId: 'fresh-file',
       fileUniqueId: 'dead-file-u', fileName: 'Cambridge IELTS 18.pdf',
@@ -501,7 +536,7 @@ suite('telegram material library', () => {
     await seedMaterial('Workbook 1', 'wb-file', [A_CHAT], 'workbook', 'Workbook 1.docx',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     await startHomeworkWithBooks(['IELTS B2'], ['Workbook 1'], 'Pages 24–27');
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
     api.failDocumentChats.add(A_CHAT);
 
@@ -510,9 +545,10 @@ suite('telegram material library', () => {
     const publishToken = button('Опубликовать в группы');
     clearApi();
     await go(rawCb(T_CHAT, publishToken));
-    // the text went out, the file did not: the result is unknown, never silently retried
+    // the text went out, the file may or may not have: unknown, and never silently retried
     expect(sendsTo(A_CHAT)).toHaveLength(1);
-    expect(lastTextTo(T_CHAT)).toContain('результат неизвестен');
+    expect(lastTextTo(T_CHAT)).toContain('статус доставки неизвестен');
+    expect(lastTextTo(T_CHAT)).toContain('• Workbook 1');
     expect(hasButton('Повторить неудачные')).toBe(false);
     const [pub] = await t.db.select().from(tgPublications).where(eq(tgPublications.draftId, draft.id));
     expect(pub?.status).toBe('uncertain');
@@ -525,10 +561,13 @@ suite('telegram material library', () => {
   it('uploads a new book in the middle of a homework and attaches it at once', async () => {
     await go(msg(T_CHAT, '/homework'));
     await press('IELTS B2');
-    await press('Начать сбор');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     await press('Загрузить новый материал');
     expect(lastTextTo(T_CHAT)).toContain('Пришлите файл одним сообщением');
-    await go(docMsg(T_CHAT, 'unit-file', 'My grammar book.pdf'));
+    const upload = docMsg(T_CHAT, 'unit-file', 'My grammar book.pdf');
+    const uploadMessageId = (upload.message as { message_id: number }).message_id;
+    await go(upload);
     expect(lastTextTo(T_CHAT)).toContain('Предложено: My grammar book');
     await go(msg(T_CHAT, 'Grammar in Use — Local Edition'));
     await press('Рабочая тетрадь');
@@ -537,13 +576,16 @@ suite('telegram material library', () => {
     expect(lastTextTo(T_CHAT)).toContain('добавлен в библиотеку и выбран для этого задания');
     expect(textsTo(A_CHAT)).toHaveLength(0); // nothing published while filing a book
 
+    // one button back, and she is on the same collecting screen she left
     await press('К заданию');
-    expect(lastTextTo(T_CHAT)).toContain('Что нужно выполнить?');
+    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
     await go(msg(T_CHAT, 'Unit 4'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('Материалы: Grammar in Use — Local Edition');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
-    expect(draft.instruction).toBe('Unit 4');
+    expect(draft.status).toBe('preview');
+    // her own words are a collected material now, not a separate screen
+    expect(ai.requests[0]!.items.filter((i) => i.kind === 'text').map((i) => i.text)).toEqual(['Unit 4']);
     expect(ai.requests[0]!.materials[0]!.kind).toBe('workbook');
 
     // the token must be taken BEFORE the conversation is cleared: clearing removes the very
@@ -551,7 +593,10 @@ suite('telegram material library', () => {
     const publishToken = button('Опубликовать в группы');
     clearApi();
     await go(rawCb(T_CHAT, publishToken));
-    expect(docsTo(A_CHAT).map((c) => c.fileId)).toEqual(['unit-file']);
+    // the book was uploaded in THIS chat, so it is copied from that message — no re-upload
+    expect(copiesTo(A_CHAT).map((c) => `${c.fromChatId}:${c.messageId}`))
+      .toEqual([`${T_CHAT}:${uploadMessageId}`]);
+    expect(docsTo(A_CHAT)).toHaveLength(0);
     const book = await materialByTitle('Grammar in Use — Local Edition');
     expect(book!.kind).toBe('workbook');
     expect(book!.lastUsedAt).toBeInstanceOf(Date);
@@ -622,12 +667,12 @@ suite('telegram material library', () => {
     await seedMaterial('Persistent Book', 'keep-file', [A_CHAT]);
     await go(msg(T_CHAT, '/homework'));
     await press('IELTS B2');
-    await press('Начать сбор');
-    await press('Использовать сохранённый материал');
+    await press('Продолжить');
+    await press('📚 Библиотека материалов');
     await press('Persistent Book');
-    await press('✅ Продолжить (');
+    await press('К заданию');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
-    expect(draft.status).toBe('awaiting_instruction');
+    expect(draft.status).toBe('collecting');
 
     // a new process: a new transport and new deps over the same database
     const api2 = new CapturingApi();
@@ -639,9 +684,10 @@ suite('telegram material library', () => {
     await go(msg(T_CHAT, '/library'));
     expect(lastTextTo(T_CHAT)).toContain('Сохранено: 1');
     await go(msg(T_CHAT, '/homework'));
-    expect(lastTextTo(T_CHAT)).toContain('Что нужно выполнить?');
+    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
+    expect(lastTextTo(T_CHAT)).toContain('Выбрано из библиотеки: Persistent Book');
     await go(msg(T_CHAT, 'Unit 5'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('Материалы: Persistent Book');
     // the token must be taken BEFORE the conversation is cleared: clearing removes the very
     // screen the publish button lives on
@@ -682,10 +728,10 @@ suite('telegram material library', () => {
     await seedMaterial('Book Two', 'two-file', [A_CHAT], 'workbook', 'two.docx',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     await startHomeworkWithBooks(['IELTS B2'], ['Book One', 'Book Two'], 'Unit 6 и Unit 7');
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const req = ai.requests[0]!;
     expect(req.materials.map((m) => m.title)).toEqual(['Book One', 'Book Two']);
-    expect(req.instruction).toBe('Unit 6 и Unit 7');
+    expect(req.items.filter((i) => i.kind === 'text').map((i) => i.text)).toEqual(['Unit 6 и Unit 7']);
     expect(JSON.stringify(req)).not.toContain('bytes');
     const preview = lastTextTo(T_CHAT);
     expect(preview).toContain('Book One, Book Two');
@@ -703,25 +749,19 @@ suite('telegram material library', () => {
 
   it('prunes a chosen book when the groups of the draft change', async () => {
     await seedMaterial('Only For A', 'only-a', [A_CHAT]);
-    await go(msg(T_CHAT, '/homework'));
-    await press('IELTS B2');
-    await press('Начать сбор');
-    await press('Использовать сохранённый материал');
-    await press('Only For A');
-    await press('✅ Продолжить (');
+    await startHomeworkWithBooks(['IELTS B2'], ['Only For A'], 'Unit 8');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
     expect(await listDraftMaterials(t.db, draft.id)).toHaveLength(1);
 
-    // «Материалы» → back to the groups → add B as well: the book that never belonged to B is
-    // dropped, and the teacher is told instead of meeting a half-attachment
-    await go(msg(T_CHAT, '/homework'));
-    await press('📚 Материалы');
-    await press('Назад');
+    // preview → Change groups → add B: the book that never belonged to B is dropped, and the
+    // teacher is told instead of meeting a half-attachment
+    await press('Готово — подготовить задание');
+    await press('Изменить группы');
     await press('Grammar A2');
-    await press('Начать сбор');
+    await press('Продолжить');
     expect(saidAtSomePoint(T_CHAT, 'эти материалы убраны из черновика')).toBe(true);
     expect(await listDraftMaterials(t.db, draft.id)).toHaveLength(0);
-    expect(await draftStatus(draft.id)).toBe('choosing_materials');
+    expect(await draftStatus(draft.id)).toBe('collecting');
   });
 
   it('refuses another teacher’s material instead of pretending it exists', async () => {
@@ -749,7 +789,7 @@ suite('telegram material library', () => {
     // a draft in the library step, then a half-finished “add material” dialog on top of it
     await go(msg(T_CHAT, '/homework'));
     await press('IELTS B2');
-    await press('Начать сбор');
+    await press('Продолжить');
     await go(msg(T_CHAT, '/library'));
     await press('Добавить материал');
     await press('IELTS B2');
@@ -758,7 +798,7 @@ suite('telegram material library', () => {
 
     // leaving for /homework must not leave the dialog stealing the next message
     await go(msg(T_CHAT, '/homework'));
-    expect(lastTextTo(T_CHAT)).toContain('Группы выбраны');
+    expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
     await go(docMsg(T_CHAT, 'stray-file', 'stray.pdf'));
     expect(saidAtSomePoint(T_CHAT, 'Как назвать материал?')).toBe(false);
     expect(await materialsOfTeacher()).toHaveLength(0);

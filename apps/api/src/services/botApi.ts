@@ -28,6 +28,16 @@ export interface BotApi {
   /** Send an already-uploaded photo/document by its Telegram file_id. */
   sendPhoto(chatId: string, fileId: string): Promise<number | null>;
   sendDocument(chatId: string, fileId: string): Promise<number | null>;
+  /**
+   * Re-post one existing message into another chat. This is the primary way an attachment
+   * leaves the bot: Telegram copies the original message, so the media keeps its real type
+   * (a PNG sent as a file stays a file), its caption and its file name — and nothing is
+   * downloaded, re-uploaded or read. Throws with `error_code` when Telegram refuses (4xx),
+   * which is how the caller learns the source message is gone.
+   */
+  copyMessage(chatId: string, fromChatId: string, messageId: number): Promise<number | null>;
+  /** Copy several messages at once; an album copied this way stays an album. */
+  copyMessages(chatId: string, fromChatId: string, messageIds: number[]): Promise<number[]>;
   /** Preflight of a stored `file_id` before a publication sends anything. */
   checkFile(fileId: string): Promise<FileCheck>;
   /** scope: undefined = default (global) scope, a chat id = per-chat menu */
@@ -56,6 +66,17 @@ export function grammyApi(bot: { api: any }): BotApi {
       // Sending by file_id keeps Telegram's original file name; no re-upload happens.
       const m = await bot.api.sendDocument(chatId, fileId);
       return typeof m?.message_id === 'number' ? m.message_id : null;
+    },
+    async copyMessage(chatId, fromChatId, messageId) {
+      // No bytes move: Telegram re-posts the message it already has.
+      const m = await bot.api.copyMessage(chatId, fromChatId, messageId);
+      return typeof m?.message_id === 'number' ? m.message_id : null;
+    },
+    async copyMessages(chatId, fromChatId, messageIds) {
+      const sent = await bot.api.copyMessages(chatId, fromChatId, messageIds);
+      return Array.isArray(sent)
+        ? sent.map((s: { message_id?: unknown }) => (typeof s?.message_id === 'number' ? s.message_id : 0)).filter((n: number) => n > 0)
+        : [];
     },
     async checkFile(fileId) {
       if (!env.TELEGRAM_BOT_TOKEN) return 'unknown';
@@ -93,7 +114,7 @@ function extra(opts?: SendOpts) {
 export class CapturingApi implements BotApi {
   calls: {
     kind: string; chatId: string; text?: string; messageId?: number; opts?: SendOpts;
-    commands?: unknown; lang?: string; fileId?: string;
+    commands?: unknown; lang?: string; fileId?: string; fromChatId?: string; messageIds?: number[];
   }[] = [];
   failNext = false;
   /** Chat ids whose sends throw — used to prove per-group publication outcomes. */
@@ -102,8 +123,19 @@ export class CapturingApi implements BotApi {
   rejectChats = new Set<string>();
   failPhotoChats = new Set<string>();
   failDocumentChats = new Set<string>();
+  /**
+   * Only the photo (or only the document) send is refused, with Telegram's 4xx — the shape of
+   * the live failure «can't use file of type Document as Photo». The text still goes out, so
+   * a test can prove that a refused attachment is reported as that attachment and nothing else.
+   */
+  rejectPhotoChats = new Set<string>();
+  rejectDocumentChats = new Set<string>();
   /** `file_id`s Telegram would refuse to re-send: the library's unavailable-file path. */
   missingFiles = new Set<string>();
+  /** `fromChat:messageId` pairs Telegram refuses to copy — the teacher deleted that message. */
+  missingSources = new Set<string>();
+  /** Copies that die in transit (no answer at all): the outcome must stay unknown. */
+  failCopyChats = new Set<string>();
   private nextMessageId = 7000;
 
   private fail(chatId: string, photosOnly = false, docsOnly = false) {
@@ -116,6 +148,12 @@ export class CapturingApi implements BotApi {
       throw new Error('fictitious telegram transport failure');
     }
   }
+  /** Telegram's own answer when the message to copy no longer exists. */
+  private missingSource(fromChatId: string, messageId: number) {
+    if (this.missingSources.has(`${fromChatId}:${messageId}`)) {
+      throw Object.assign(new Error('Bad Request: message to copy not found'), { error_code: 400 });
+    }
+  }
   async sendMessage(chatId: string, text: string, opts?: SendOpts) {
     this.fail(chatId);
     this.calls.push({ kind: 'send', chatId, text, opts });
@@ -124,14 +162,34 @@ export class CapturingApi implements BotApi {
   async editMessageText(chatId: string, messageId: number, text: string, opts?: SendOpts) { this.calls.push({ kind: 'edit', chatId, messageId, text, opts }); }
   async deleteMessage(chatId: string, messageId: number) { this.calls.push({ kind: 'del', chatId, messageId }); }
   async sendPhoto(chatId: string, fileId: string) {
+    if (this.rejectPhotoChats.has(chatId)) {
+      throw Object.assign(new Error("Bad Request: can't use file of type Document as Photo"), { error_code: 400 });
+    }
     this.fail(chatId, true);
     this.calls.push({ kind: 'photo', chatId, fileId });
     return ++this.nextMessageId;
   }
   async sendDocument(chatId: string, fileId: string) {
+    if (this.rejectDocumentChats.has(chatId)) {
+      throw Object.assign(new Error('Bad Request: file to send is not available'), { error_code: 400 });
+    }
     this.fail(chatId, false, true);
     this.calls.push({ kind: 'doc', chatId, fileId });
     return ++this.nextMessageId;
+  }
+  async copyMessage(chatId: string, fromChatId: string, messageId: number) {
+    if (this.failCopyChats.has(chatId)) throw new Error('fictitious telegram transport failure');
+    this.fail(chatId);
+    this.missingSource(fromChatId, messageId);
+    this.calls.push({ kind: 'copy', chatId, fromChatId, messageId });
+    return ++this.nextMessageId;
+  }
+  async copyMessages(chatId: string, fromChatId: string, messageIds: number[]) {
+    if (this.failCopyChats.has(chatId)) throw new Error('fictitious telegram transport failure');
+    this.fail(chatId);
+    for (const id of messageIds) this.missingSource(fromChatId, id);
+    this.calls.push({ kind: 'copyMany', chatId, fromChatId, messageIds });
+    return messageIds.map(() => ++this.nextMessageId);
   }
   async checkFile(fileId: string) {
     return this.missingFiles.has(fileId) ? 'missing' : 'ok';
@@ -233,10 +291,46 @@ export async function applyMenu(api: BotApi, role: 'teacher' | 'student' | 'basi
   }
 }
 
+/**
+ * The language codes a chat-scope menu is stored under, including `''` — Telegram's
+ * "whatever language the client has" variant.
+ */
+const MENU_LANGS = ['ru', 'uz', 'en', ''] as const;
+
+const srcFor = (role: 'teacher' | 'student' | 'basic') =>
+  role === 'teacher' ? TEACHER_COMMANDS : role === 'student' ? STUDENT_COMMANDS : BASIC_COMMANDS;
+
+/**
+ * English command labels for ONE chat, under every language code.
+ *
+ * Live test of 2026-10-23: the teacher's BluBlu account is English (so every message the bot
+ * writes is English), but her Telegram client is Russian — and the client picks the menu by
+ * its own language, so she saw «Библиотека материалов» next to English screens. A per-chat
+ * scope is more specific than the client language, and installing the English list under
+ * ru/uz/en/'' leaves no Russian variant for that chat to fall back to. Only this chat
+ * changes: other users keep the trilingual menus of `applyMenu`.
+ */
+export async function applyEnglishMenu(
+  api: BotApi, role: 'teacher' | 'student' | 'basic', chatId: string,
+): Promise<void> {
+  const english = menuFor(srcFor(role), 'en');
+  for (const lang of MENU_LANGS) await api.setMyCommands(english, lang, chatId);
+}
+
+/**
+ * One chat, one language: when the account itself is English, every menu of that chat becomes
+ * English (otherwise an English account with a Russian client sees Russian labels beside
+ * English messages). A Russian or Uzbek account keeps the trilingual menu it had.
+ */
+export async function applyMenuForChat(
+  api: BotApi, role: 'teacher' | 'student' | 'basic', chatId: string, lang: 'ru' | 'uz' | 'en',
+): Promise<void> {
+  if (lang === 'en') await applyEnglishMenu(api, role, chatId);
+  else await applyMenu(api, role, chatId);
+}
+
 export async function removeMenu(api: BotApi, chatId: string): Promise<void> {
-  for (const lang of ['ru', 'uz', 'en'] as const) {
-    await api.deleteMyCommands(lang, chatId);
-  }
+  for (const lang of MENU_LANGS) await api.deleteMyCommands(lang, chatId);
 }
 
 /** HTML-escape user text — nothing the user typed is ever markup (bot task). */

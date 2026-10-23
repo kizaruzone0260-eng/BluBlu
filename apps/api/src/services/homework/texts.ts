@@ -48,6 +48,16 @@ export const H = {
   },
   addGroup: { ru: '➕ Подключить группу', uz: '➕ Guruh ulash', en: '➕ Connect a group' },
   startCollect: { ru: '✅ Начать сбор (%{n})', uz: '✅ Yig‘ishni boshlash (%{n})', en: '✅ Start collecting (%{n})' },
+  continueBtn: {
+    ru: '✅ Продолжить (%{n})',
+    uz: '✅ Davom etish (%{n})',
+    en: '✅ Continue (%{n})',
+  },
+  backToHomework: {
+    ru: '✅ К заданию (%{n})',
+    uz: '✅ Vazifaga qaytish (%{n})',
+    en: '✅ Back to the homework (%{n})',
+  },
   online: { ru: 'онлайн', uz: 'onlayn', en: 'online' },
   offline: { ru: 'офлайн', uz: 'oflayn', en: 'offline' },
   groupRemoved: {
@@ -145,19 +155,24 @@ export const H = {
     en: 'Collecting materials. Saved: %{n}.',
   },
   collectHint: {
-    ru: 'Присылайте по одному: текст, ссылку, фото, документ или пересланное сообщение.\nКаждое сообщение я подтвержу. Ничего не публикуется, пока вы не нажмёте «Готово» и не подтвердите отправку.',
-    uz: 'Birma-bir yuboring: matn, havola, foto, hujjat yoki forward xabar.\nHar bir xabarni tasdiqlayman. «Tayyor» tugmasini bosib yuborishni tasdiqlamaguningizcha hech narsa e’lon qilinmaydi.',
-    en: 'Send one at a time: text, a link, a photo, a document or a forwarded message.\nI confirm every message. Nothing is published until you press “Done” and confirm sending.',
+    ru: 'Присылайте текстом, фото, файлом или пересланное сообщение — всё попадёт в черновик.\nПосле каждого сообщения я коротко подтверждаю, сколько материалов собрано.',
+    uz: 'Matn, foto, fayl yoki forward qilingan xabar yuboring — hammasi qoralamaga tushadi.\nHar xabardan keyin yig‘ilgan materiallar sonini qisqacha tasdiqlayman.',
+    en: 'Send text, a photo, a file or a forwarded message — everything lands in the draft.\nAfter each one I confirm briefly how many materials are collected.',
+  },
+  collectMaterials: {
+    ru: 'Выбрано из библиотеки: %{m}',
+    uz: 'Kutubxonadan tanlandi: %{m}',
+    en: 'From the library: %{m}',
   },
   doneCta: {
-    ru: 'Готово — оформить задание',
-    uz: 'Tayyor — vazifani rasmiylashtirish',
-    en: 'Done — format the homework',
+    ru: 'Готово — подготовить задание',
+    uz: 'Tayyor — vazifani tayyorlash',
+    en: 'Done — prepare homework',
   },
   collectAck: {
-    ru: '✓ Сохранено: %{kind}. Всего: %{n}. Ничего не опубликовано.',
-    uz: '✓ Saqlandi: %{kind}. Jami: %{n}. Hech narsa e’lon qilinmadi.',
-    en: '✓ Saved: %{kind}. Total: %{n}. Nothing has been published.',
+    ru: '✓ Получено — %{n}',
+    uz: '✓ Qabul qilindi — %{n}',
+    en: '✓ Received — %{n}',
   },
   collectUnsupported: {
     ru: 'Этот тип пока не поддерживается. Пришлите текст, ссылку, фото или документ.',
@@ -210,10 +225,15 @@ export const H = {
   },
   changeGroups: { ru: 'Изменить группы', uz: 'Guruhlarni o‘zgartirish', en: 'Change groups' },
 
+  /*
+   * One short line, no instructions. The old text told the teacher not to press again — the
+   * server already handles a repeated press (compare-and-swap on the draft, a unique row per
+   * draft and group), and a warning she cannot act on is noise.
+   */
   formatting: {
-    ru: 'Оформляю задание. Это может занять до минуты — ничего не отправляйте повторно.',
-    uz: 'Vazifa rasmiylashtirilmoqda. Bir daqiqagacha vaqt oladi — qayta yubormang.',
-    en: 'Formatting the homework. This can take up to a minute — do not resend.',
+    ru: 'Готовлю задание…',
+    uz: 'Vazifa tayyorlanmoqda…',
+    en: 'Preparing the homework…',
   },
   formatFailed: {
     ru: 'Не удалось оформить задание: %{reason}\nМатериалы сохранены. Попробуйте «Готово» ещё раз.',
@@ -306,15 +326,15 @@ export const H = {
     en: 'This draft is already being sent or was sent — there will be no duplicate send.',
   },
   publishing: {
-    ru: 'Публикую в %{n} групп. Не закрывайте черновик и не нажимайте кнопку повторно.',
-    uz: '%{n} guruhga e’lon qilinmoqda. Qoralamani yopmang va tugmani qayta bosmang.',
-    en: 'Publishing to %{n} groups. Do not close the draft or press the button again.',
+    ru: 'Публикую в %{n} групп…',
+    uz: '%{n} guruhga e’lon qilinmoqda…',
+    en: 'Publishing to %{n} groups…',
   },
 
   publishResultTitle: {
-    ru: 'Результат публикации (отправлено %{ok} из %{n}):',
-    uz: 'E’lon natijasi (%{n} dan %{ok} yuborildi):',
-    en: 'Publication result (%{ok} of %{n} sent):',
+    ru: 'Результат публикации:',
+    uz: 'E’lon natijasi:',
+    en: 'Publication result:',
   },
   pubSent: { ru: '✓ %{g} — отправлено', uz: '✓ %{g} — yuborildi', en: '✓ %{g} — sent' },
   pubFailed: { ru: '✗ %{g} — ошибка: %{r}', uz: '✗ %{g} — xato: %{r}', en: '✗ %{g} — failed: %{r}' },
@@ -322,6 +342,34 @@ export const H = {
     ru: '? %{g} — результат неизвестен: отправка оборвалась. Повторять автоматически нельзя.',
     uz: '? %{g} — natija noma’lum: yuborish uzildi. Avtomatik takrorlash mumkin emas.',
     en: '? %{g} — result unknown: the send was interrupted. It must not be retried automatically.',
+  },
+  /**
+   * What the live test was missing: text and file have DIFFERENT outcomes, and one number
+   * cannot describe both. `%{ok}` parts arrived, `%{bad}` did not — nothing is hidden.
+   */
+  pubPartial: {
+    ru: '⚠ %{g} — доставлено %{ok}, не доставлено %{bad}',
+    uz: '⚠ %{g} — %{ok} yetib bordi, %{bad} bormadi',
+    en: '⚠ %{g} — %{ok} delivered, %{bad} not delivered',
+  },
+  pubCheckGroup: {
+    ru: '? %{g} — статус доставки неизвестен; проверьте группу и не отправляйте повторно.',
+    uz: '? %{g} — yetib borishi noma’lum; guruhni tekshiring va qayta yubormang.',
+    en: '? %{g} — delivery status unknown; check the group and do not send it again.',
+  },
+  partText: { ru: 'текст', uz: 'matn', en: 'text' },
+  partSent: { ru: 'отправлено', uz: 'yuborildi', en: 'sent' },
+  partFailed: { ru: 'не отправлено: %{r}', uz: 'yuborilmadi: %{r}', en: 'not sent: %{r}' },
+  partUnknown: {
+    ru: 'статус неизвестен — проверьте группу',
+    uz: 'holati noma’lum — guruhni tekshiring',
+    en: 'delivery status unknown — check the group',
+  },
+  partLine: { ru: '   • %{l} — %{s}', uz: '   • %{l} — %{s}', en: '   • %{l} — %{s}' },
+  reuploadHint: {
+    ru: 'Файл не дошёл: пришлите его снова в этот чат или выберите другой в «📚 Materials».',
+    uz: 'Fayl bormadi: shu chatga qayta yuboring yoki «📚 Materials» dan boshqasini tanlang.',
+    en: 'The file did not arrive: send it here again, or pick another one under “📚 Materials”.',
   },
   publishedAll: {
     ru: 'Готово: задание опубликовано во все выбранные группы.',

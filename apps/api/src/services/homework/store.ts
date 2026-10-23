@@ -20,10 +20,18 @@ export type HwGroupRow = typeof tgGroups.$inferSelect;
 export type HwItemRow = typeof tgDraftItems.$inferSelect;
 export type HwPublicationRow = typeof tgPublications.$inferSelect;
 
-/** `published`/`cancelled` are final; every other state still owns the teacher's attention. */
+/**
+ * A draft the teacher is still working on.
+ *
+ * `failed` and `publish_unknown` are deliberately NOT here. They are outcomes, not tasks: the
+ * live test of 2026-10-23 showed that treating them as active made every new `/homework` open
+ * with the report of the PREVIOUS send, which read as “my last homework is still being sent”.
+ * The report belongs to History, and the retry button belongs to the result screen that opens
+ * right after a publication — both address the draft by its id, so nothing is lost here.
+ */
 export const ACTIVE_DRAFT_STATUSES = [
   'selecting', 'choosing_materials', 'awaiting_instruction', 'collecting', 'formatting',
-  'needs_clarification', 'preview', 'publishing', 'failed', 'publish_unknown',
+  'needs_clarification', 'preview', 'publishing',
 ] as const satisfies readonly HwDraftStatus[];
 
 type DraftPatch = Partial<Pick<
@@ -260,6 +268,10 @@ export interface NewItem {
   fileSize?: number | null;
   caption?: string;
   sourceMessageId: number;
+  /** The chat the message came from — with `sourceMessageId` this is what `copyMessage` needs. */
+  sourceChatId?: string | null;
+  /** Telegram's album id: messages sharing it are copied with one `copyMessages` call. */
+  sourceMediaGroupId?: string | null;
   forwarded?: boolean;
 }
 
@@ -294,6 +306,8 @@ export async function addItem(db: DB, draftId: string, item: NewItem): Promise<H
     fileSize: item.fileSize ?? null,
     caption: item.caption ?? '',
     sourceMessageId: item.sourceMessageId,
+    sourceChatId: item.sourceChatId ?? null,
+    sourceMediaGroupId: item.sourceMediaGroupId ?? null,
     forwarded: item.forwarded ?? false,
   }).onConflictDoNothing({
     target: [tgDraftItems.draftId, tgDraftItems.sourceMessageId],

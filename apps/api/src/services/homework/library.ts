@@ -19,7 +19,7 @@ import type { DB } from '../../db/index.js';
 import type { BotApi, InlineButton } from '../botApi.js';
 import { h, materialKindLabel } from './texts.js';
 import { makeHomeworkCallback } from './tokens.js';
-import { listGroups, transitionDraft } from './store.js';
+import { listGroups } from './store.js';
 import {
   LIBRARY_SCREEN_LIMIT, MAX_FILE_MB, MAX_MATERIALS, MAX_MATERIAL_TITLE,
 } from './constants.js';
@@ -93,10 +93,15 @@ export function suggestMaterialTitle(
 
 interface UploadedFile {
   fileId: string; fileUniqueId: string; fileName: string; mimeType: string; fileSize: number | null;
+  /** Which Telegram slot the file really occupies: photo and document ids are not swappable. */
+  mediaType: 'photo' | 'document';
+  /** The teacher's own message — `copyMessage` reads the file from these coordinates. */
+  sourceChatId: string;
+  sourceMessageId: number;
 }
 
 /** The file part of an incoming message: a document, or the largest size of a photo. */
-function fileOf(m: HwIncoming): { file: UploadedFile; isPhoto: boolean } | null {
+function fileOf(m: HwIncoming, chatId: string): { file: UploadedFile; isPhoto: boolean } | null {
   if (m.document) {
     const d = m.document;
     if (!d.file_id || !d.file_unique_id) return null;
@@ -105,6 +110,7 @@ function fileOf(m: HwIncoming): { file: UploadedFile; isPhoto: boolean } | null 
       file: {
         fileId: d.file_id, fileUniqueId: d.file_unique_id, fileName: d.file_name ?? '',
         mimeType: d.mime_type ?? '', fileSize: d.file_size ?? null,
+        mediaType: 'document', sourceChatId: chatId, sourceMessageId: m.message_id,
       },
     };
   }
@@ -116,6 +122,7 @@ function fileOf(m: HwIncoming): { file: UploadedFile; isPhoto: boolean } | null 
       file: {
         fileId: p.file_id, fileUniqueId: p.file_unique_id, fileName: '',
         mimeType: 'image/jpeg', fileSize: p.file_size ?? null,
+        mediaType: 'photo', sourceChatId: chatId, sourceMessageId: m.message_id,
       },
     };
   }
@@ -306,6 +313,9 @@ async function finishAdd(
     fileName: file.fileName,
     mimeType: file.mimeType,
     fileSize: file.fileSize,
+    mediaType: file.mediaType,
+    sourceChatId: file.sourceChatId,
+    sourceMessageId: file.sourceMessageId,
     groupIds: (data.groups as string[] | undefined) ?? [],
   });
   if (saved.status === 'limit') {
@@ -328,14 +338,15 @@ async function finishAdd(
   await clearLibrarySession(db, chatId);
 
   if (data.source === 'homework' && data.draftId) {
+    // The draft keeps its own status: the teacher is dropped back on the screen she came from
+    // (collecting, or preview when she pressed «Add materials»). No extra confirmation screen.
     const draftId = String(data.draftId);
     await attachDraftMaterial(db, draftId, material);
-    const moved = await transitionDraft(db, draftId, ownerId, ['choosing_materials'], 'awaiting_instruction');
     await send(deps, chatId, [
       lines,
       h('materialAttached', actor.lang, { t: material.title }),
     ].join('\n\n'), [[
-      b(h('toHomeworkBtn', actor.lang), await cb(db, ownerId, { a: moved ? 'min' : 'home', d: draftId })),
+      b(h('toHomeworkBtn', actor.lang), await cb(db, ownerId, { a: 'home', d: draftId })),
     ]]);
     return;
   }
@@ -547,7 +558,7 @@ export async function libraryInput(
   if (text.startsWith('/')) return false;
 
   if (data.step === 'add-file') {
-    const found = fileOf(m);
+    const found = fileOf(m, chatId);
     if (!found) {
       const junk = Boolean(m.video || m.voice || m.sticker || m.animation || m.audio
         || m.video_note || m.poll || m.contact || m.location);

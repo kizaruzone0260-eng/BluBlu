@@ -36,6 +36,14 @@ export interface MaterialInput {
   mimeType: string;
   fileSize: number | null;
   groupIds: string[];
+  /**
+   * Where the file physically is in Telegram: the teacher's own message. Publication copies
+   * THAT message instead of re-sending a `file_id`, so the media keeps the type it arrived
+   * with — `mediaType` is recorded, never guessed from the MIME type.
+   */
+  mediaType?: 'photo' | 'document' | null;
+  sourceChatId?: string | null;
+  sourceMessageId?: number | null;
 }
 
 export type SaveMaterialResult =
@@ -90,13 +98,18 @@ export async function saveMaterial(
     ownerId, title, kind: input.kind, telegramFileId: input.fileId,
     fileUniqueId: input.fileUniqueId, fileName: input.fileName.slice(0, 300),
     mimeType: input.mimeType.slice(0, 120), fileSize: input.fileSize,
+    mediaType: input.mediaType ?? null,
+    sourceChatId: input.sourceChatId ?? null,
+    sourceMessageId: input.sourceMessageId ?? null,
     status: 'active' as const, updatedAt: now,
   };
+  // A re-upload is a NEW message in a NEW place: the copy coordinates move with the file.
   const saved = existing
     ? await db.update(tgMaterials).set({
       title: values.title, kind: values.kind, telegramFileId: values.telegramFileId,
       fileName: values.fileName, mimeType: values.mimeType, fileSize: values.fileSize,
-      status: 'active', updatedAt: now,
+      mediaType: values.mediaType, sourceChatId: values.sourceChatId,
+      sourceMessageId: values.sourceMessageId, status: 'active', updatedAt: now,
     }).where(eq(tgMaterials.id, existing.id)).returning()
     : await db.insert(tgMaterials).values(values).returning();
   const row = saved[0];
@@ -299,6 +312,8 @@ export async function toggleDraftMaterial(
     title: material.title, kind: material.kind, telegramFileId: material.telegramFileId,
     fileUniqueId: material.fileUniqueId, fileName: material.fileName,
     mimeType: material.mimeType, fileSize: material.fileSize,
+    mediaType: material.mediaType, sourceChatId: material.sourceChatId,
+    sourceMessageId: material.sourceMessageId,
   }).onConflictDoNothing().returning();
   return inserted.length ? 'added' : 'missing';
 }
@@ -315,6 +330,8 @@ export async function attachDraftMaterial(
     title: material.title, kind: material.kind, telegramFileId: material.telegramFileId,
     fileUniqueId: material.fileUniqueId, fileName: material.fileName,
     mimeType: material.mimeType, fileSize: material.fileSize,
+    mediaType: material.mediaType, sourceChatId: material.sourceChatId,
+    sourceMessageId: material.sourceMessageId,
   }).onConflictDoNothing().returning({ id: tgDraftMaterials.id });
   return inserted.length ? 'added' : 'exists';
 }

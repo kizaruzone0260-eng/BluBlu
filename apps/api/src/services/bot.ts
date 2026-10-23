@@ -22,7 +22,7 @@ import {
 } from '../db/schema.js';
 import { listEventsInRange } from './events.js';
 import { consumeLinkToken, getPrefs, hashToken, siteUrl, unlinkUser, enqueueNotification } from './notify.js';
-import { applyMenu, esc, removeMenu, verifyCb, signCb, type BotApi, type InlineButton } from './botApi.js';
+import { applyMenu, applyMenuForChat, esc, removeMenu, verifyCb, signCb, type BotApi, type InlineButton } from './botApi.js';
 import {
   homeworkCallback, homeworkCommand, homeworkDone, homeworkGroupBind, homeworkInput,
 } from './homework/flow.js';
@@ -471,7 +471,7 @@ async function onStart(deps: BotDeps, chatId: string, id: Identity, arg: string)
     const ok = await consumeLinkToken(db, arg, chatId);
     if (!ok) { await send(deps, chatId, 'badLink', {}, id.lang); return; }
     const nid = await identify(db, chatId, DEFAULT_LOCALE);
-    await applyMenu(api, nid.role ?? 'basic', chatId);
+    await applyMenuForChat(api, nid.role ?? 'basic', chatId, nid.lang);
     await send(deps, chatId, 'linked', {}, nid.lang);
     await send(deps, chatId, nid.role === 'teacher' ? 'helloTeacher' : 'helloStudent', {}, nid.lang);
     return;
@@ -881,7 +881,7 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
         // choosing in the bot IS choosing — the profile says so, and the web app then
         // honours it on every device instead of falling back to the browser
         await db.update(users).set({ locale: lang, localeExplicit: true }).where(eq(users.id, id.userId));
-        await applyMenu(api, id.role ?? 'basic', chatId);
+        await applyMenuForChat(api, id.role ?? 'basic', chatId, lang);
       } else {
         const s = await loadSession(db, chatId);
         await saveSession(db, chatId, s?.state ?? '', { ...(s?.data ?? {}), lang }, 15);

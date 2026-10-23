@@ -7,13 +7,14 @@
  *  • only a linked teacher gets the surface — checked on the server, not in the UI;
  *  • text, links, photos and documents are collected once, and a redelivered
  *    Telegram message cannot be stored twice;
- *  • the library step after the groups is optional and cancelable;
+ *  • one screen collects everything (text, files, saved library books) behind three buttons;
  *  • the formatter never receives a byte of a file — only text, titles and names;
  *  • material collection never sends anything to a group;
  *  • only the explicit Publish button sends; the same button cannot send twice;
  *  • editing invalidates buttons rendered from the old revision;
  *  • a definite refusal is retryable and is retried without touching delivered groups;
  *  • an ambiguous failure is `uncertain` and is never retried;
+ *  • the result is reported per part: text and each attachment have their own outcome;
  *  • every callback_data value fits Telegram's 64-byte limit.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -191,15 +192,13 @@ suite('telegram homework assistant', () => {
   };
 
   /**
-   * /homework → tick the named groups → Start → «continue without a saved material».
-   * The library step is part of the flow now; these scenarios test the classic path where
-   * every material is collected by hand.
+   * /homework → tick the named groups → Continue. One step: the draft goes straight to
+   * collecting, where text, files and saved library books are all handled together.
    */
   async function openHomework(groups: string[]): Promise<void> {
     await go(msg(T_CHAT, '/homework'));
     for (const name of groups) await press(name);
-    await press('Начать сбор');
-    await press('Продолжить без материала');
+    await press('Продолжить');
   }
 
   // ─── lifecycle ─────────────────────────────────────────────────────────────
@@ -256,19 +255,21 @@ suite('telegram homework assistant', () => {
     const code = lastTextTo(T_CHAT).match(/Код для подключения группы: ([A-Z2-9]{8})/)?.[1];
     expect(code).toBeTruthy();
 
-    // not an administrator
+    // not an administrator. These four answers go out BEFORE the owner's account is known,
+    // so they are English by design (live test: a Russian line inside an English screen);
+    // the messages after a successful bind follow the owner's own locale again.
     await go(groupMsg(`/bind ${code}`, 'Офлайн группа', T_CHAT));
-    expect(lastTextTo(C_CHAT)).toContain('только администратор');
+    expect(lastTextTo(C_CHAT)).toContain('Only an administrator of this group');
 
     // administrator, but this Telegram account has no BluBlu link
     admins.add(`${C_CHAT}:999`);
     await go(groupMsg(`/bind ${code}`, 'Офлайн группа', 999));
-    expect(lastTextTo(C_CHAT)).toContain('Код создан другим аккаунтом');
+    expect(lastTextTo(C_CHAT)).toContain('created by another account');
 
     // administrator linked to a DIFFERENT teacher: the code must survive
     admins.add(`${C_CHAT}:${F_CHAT}`);
     await go(groupMsg(`/bind ${code}`, 'Офлайн группа', F_CHAT));
-    expect(lastTextTo(C_CHAT)).toContain('Код создан другим аккаунтом');
+    expect(lastTextTo(C_CHAT)).toContain('created by another account');
     expect(await t.db.select().from(tgGroups).where(and(
       eq(tgGroups.ownerId, teacherId), eq(tgGroups.telegramChatId, String(C_CHAT)),
     ))).toHaveLength(0);
@@ -286,10 +287,10 @@ suite('telegram homework assistant', () => {
 
     // one-time: the same code cannot connect a second group
     await go(groupMsg(`/bind ${code}`, 'Офлайн группа', T_CHAT));
-    expect(lastTextTo(C_CHAT)).toContain('Код не найден');
+    expect(lastTextTo(C_CHAT)).toContain('Code not found');
 
     await go(groupMsg('/bind', 'Офлайн группа', T_CHAT));
-    expect(lastTextTo(C_CHAT)).toContain('Формат: /bind');
+    expect(lastTextTo(C_CHAT)).toContain('Format: /bind CODE');
 
     // the historical group silence is intact for everything but /bind
     const before = api.calls.length;
@@ -332,13 +333,13 @@ suite('telegram homework assistant', () => {
 
     const photoUpdate = photoMsg(T_CHAT, 'photo-big', 512_000, 'Схема к задаче');
     await go(msg(T_CHAT, 'стр. 42, упражнение 7'));
-    expect(lastTextTo(T_CHAT)).toContain('Сохранено: текст. Всего: 1');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 1');
     await go(msg(T_CHAT, 'https://example.com/lesson-7'));
-    expect(lastTextTo(T_CHAT)).toContain('Сохранено: ссылка. Всего: 2');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 2');
     await go(photoUpdate);
-    expect(lastTextTo(T_CHAT)).toContain('Сохранено: фото. Всего: 3');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 3');
     await go(docMsg(T_CHAT, 'doc-1', 'task.pdf', 128_000));
-    expect(lastTextTo(T_CHAT)).toContain('Сохранено: документ. Всего: 4');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 4');
 
     // Telegram redelivers the SAME message with a new update_id: nothing is duplicated
     const acks = textsTo(T_CHAT).length;
@@ -357,21 +358,31 @@ suite('telegram homework assistant', () => {
     assertShortCallbacks();
   });
 
-  it('offers the library step right after the groups and can be cancelled from it', async () => {
+  it('collects on ONE screen with three actions and can be cancelled there', async () => {
     await go(msg(T_CHAT, '/homework'));
     await press('Группа А');
-    await press('Начать сбор');
+    await press('Продолжить');
     const screen = lastTextTo(T_CHAT);
-    expect(screen).toContain('Группы выбраны (1)');
-    // an empty library is not a dead end: the teacher is told and may continue without
-    expect(screen).toContain('Для выбранных групп сохранённых материалов нет.');
-    expect(lastScreenButtons()).toContain('➕ Загрузить новый материал');
-    expect(lastScreenButtons()).toContain('Продолжить без материала');
-    expect(lastScreenButtons()).toContain('📚 Библиотека материалов');
+    expect(screen).toContain('Сбор материалов');
+    // the live test complained about screens and buttons; this is the whole screen: three
+    // actions, nothing else — Done, the library, Cancel
+    expect(lastScreenButtons()).toEqual([
+      'Готово — подготовить задание', '📚 Библиотека материалов', 'Отмена',
+    ]);
     const draft = (await latestActiveDraft(t.db, teacherId))!;
-    expect(draft.status).toBe('choosing_materials');
+    expect(draft.status).toBe('collecting');
     expect(textsTo(A_CHAT)).toHaveLength(0);
     assertShortCallbacks();
+
+    // the library opens from here and returns to the same screen
+    await press('📚 Библиотека материалов');
+    expect(lastTextTo(T_CHAT)).toContain('Для выбранных групп сохранённых материалов нет.');
+    expect(lastScreenButtons()).toContain('➕ Загрузить новый материал');
+    expect(lastScreenButtons().join('|')).toContain('К заданию');
+    await press('К заданию');
+    expect(lastScreenButtons()).toEqual([
+      'Готово — подготовить задание', '📚 Библиотека материалов', 'Отмена',
+    ]);
 
     await press('Отмена');
     expect(lastTextTo(T_CHAT)).toContain('Черновик отменён');
@@ -384,7 +395,7 @@ suite('telegram homework assistant', () => {
     await go(photoMsg(T_CHAT, 'photo-big', 200_000, 'Чертёж'));
     await go(docMsg(T_CHAT, 'doc-1', 'task.pdf', 100_000));
 
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const screen = lastTextTo(T_CHAT);
     expect(screen).toContain('Предпросмотр задания для групп (1)');
     expect(screen).toContain('Кому: Группа А');
@@ -416,7 +427,7 @@ suite('telegram homework assistant', () => {
   it('publishes only on the explicit button, exactly once, and shows history', async () => {
     await openHomework(['Группа А']);
     await go(msg(T_CHAT, 'Упражнение 5'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const draft = (await latestActiveDraft(t.db, teacherId))!;
     const publishToken = button('Опубликовать в группы');
 
@@ -429,7 +440,7 @@ suite('telegram homework assistant', () => {
     const pubs = await pubsOf(draft.id);
     expect(pubs).toHaveLength(1);
     expect(pubs[0]!.status).toBe('sent');
-    expect(lastTextTo(T_CHAT)).toContain('отправлено 1 из 1');
+    expect(lastTextTo(T_CHAT)).toContain('✓ Группа А — отправлено');
     expect(lastTextTo(T_CHAT)).toContain('Готово: задание опубликовано во все выбранные группы');
 
     // the very same button is one-time: a double press cannot duplicate the send
@@ -453,7 +464,7 @@ suite('telegram homework assistant', () => {
   it('edits the final text and adds materials; buttons from the old preview are refused', async () => {
     await openHomework(['Группа А']);
     await go(msg(T_CHAT, 'Черновой текст'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const stalePublish = button('Опубликовать в группы');
     const staleAdd = button('Добавить материалы');
 
@@ -487,10 +498,10 @@ suite('telegram homework assistant', () => {
     await go(rawCb(T_CHAT, freshAdd));
     expect(lastTextTo(T_CHAT)).toContain('Сбор материалов');
     await go(msg(T_CHAT, 'Дополнительно: задача 9'));
-    expect(lastTextTo(T_CHAT)).toContain('Всего: 2');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 2');
 
     ai.result = { ...ai.result, formatted: 'ОБНОВЛЁННОЕ ЗАДАНИЕ\n\nвсе материалы' };
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('ОБНОВЛЁННОЕ ЗАДАНИЕ');
     expect((await draftRow(draft.id)).status).toBe('preview');
   });
@@ -500,14 +511,14 @@ suite('telegram homework assistant', () => {
     await go(msg(T_CHAT, 'Сделать проект'));
 
     ai.failNext = true;
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('Не удалось оформить задание');
     const failedDraft = (await latestActiveDraft(t.db, teacherId))!;
     expect(failedDraft.status).toBe('collecting');
     expect(failedDraft.lastError).not.toBe('');
     expect(await itemCount(t.db, failedDraft.id)).toBe(1); // materials are not lost
 
-    await press('Готово — оформить задание'); // the fresh Done button in the failure message
+    await press('Готово — подготовить задание'); // the fresh Done button in the failure message
     expect(lastTextTo(T_CHAT)).toContain('Предпросмотр задания для групп (1)');
 
     await press('Отмена');
@@ -519,13 +530,13 @@ suite('telegram homework assistant', () => {
       status: 'needs_clarification', title: 'Проект', formatted: 'Проект',
       questions: ['Какой срок сдачи?'], warnings: [], provider: 'test-fake',
     };
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('Нужно уточнение');
     expect(lastTextTo(T_CHAT)).toContain('Какой срок сдачи?');
 
     // the answer becomes another material; nothing is published at this point
     await go(msg(T_CHAT, 'Срок — пятница'));
-    expect(lastTextTo(T_CHAT)).toContain('Всего: 2');
+    expect(lastTextTo(T_CHAT)).toContain('Получено — 2');
     const clarified = (await latestActiveDraft(t.db, teacherId))!;
     expect(clarified.status).toBe('needs_clarification');
 
@@ -533,7 +544,7 @@ suite('telegram homework assistant', () => {
       status: 'ok', title: 'Проект', formatted: 'ПРОЕКТ\n\nСрок — пятница',
       questions: [], warnings: [], provider: 'test-fake',
     };
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     expect(lastTextTo(T_CHAT)).toContain('Предпросмотр задания для групп (1)');
     expect(textsTo(A_CHAT)).toHaveLength(0);
   });
@@ -541,7 +552,7 @@ suite('telegram homework assistant', () => {
   it('retries only a definite refusal; an ambiguous failure is never retried', async () => {
     await openHomework(['Группа А', 'Группа Б']);
     await go(msg(T_CHAT, 'Задание для двух групп'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const first = (await latestActiveDraft(t.db, teacherId))!;
     const publishToken = button('Опубликовать в группы');
 
@@ -551,7 +562,9 @@ suite('telegram homework assistant', () => {
     await go(rawCb(T_CHAT, publishToken));
     expect(textsTo(A_CHAT)).toHaveLength(1);
     expect(textsTo(B_CHAT)).toHaveLength(0);
-    expect(lastTextTo(T_CHAT)).toContain('отправлено 1 из 2');
+    // each group gets its own honest line — not one number for the whole run
+    expect(lastTextTo(T_CHAT)).toContain('✓ Группа А — отправлено');
+    expect(lastTextTo(T_CHAT)).toContain('✗ Группа Б — ошибка');
     let rows = await pubsOf(first.id);
     expect(rows.find((r) => r.telegramChatId === String(B_CHAT))?.status).toBe('failed');
     expect((await draftRow(first.id)).status).toBe('failed');
@@ -563,7 +576,7 @@ suite('telegram homework assistant', () => {
     await go(rawCb(T_CHAT, retryToken));
     expect(textsTo(A_CHAT)).toHaveLength(0); // a delivered group is not sent again
     expect(textsTo(B_CHAT)).toHaveLength(1);
-    expect(lastTextTo(T_CHAT)).toContain('отправлено 2 из 2');
+    expect(lastTextTo(T_CHAT)).toContain('✓ Группа Б — отправлено');
     expect((await draftRow(first.id)).status).toBe('published');
     rows = await pubsOf(first.id);
     // attempts counts the first send too: one refusal + one retry
@@ -572,13 +585,13 @@ suite('telegram homework assistant', () => {
     // second scenario: the transport breaks in a way that does not prove a refusal
     await openHomework(['Группа А']);
     await go(msg(T_CHAT, 'Неоднозначная отправка'));
-    await press('Готово — оформить задание');
+    await press('Готово — подготовить задание');
     const second = (await latestActiveDraft(t.db, teacherId))!;
     const publish2 = button('Опубликовать в группы');
     api.failChats.add(String(A_CHAT));
     clearApi();
     await go(rawCb(T_CHAT, publish2));
-    expect(lastTextTo(T_CHAT)).toContain('результат неизвестен');
+    expect(lastTextTo(T_CHAT)).toContain('статус доставки неизвестен');
     expect(lastScreenButtons()).not.toContain('Повторить неудачные');
     expect((await draftRow(second.id)).status).toBe('publish_unknown');
     const uncertainRows = await pubsOf(second.id);
