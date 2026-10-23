@@ -232,6 +232,22 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .board-frame .default-sidebar-trigger,
 .board-frame .help-icon,
 .board-frame .layer-ui__wrapper__top-right { display: none !important; }
+/*
+ * Часть A (2026-10-23): панель стилей. У Excalidraw 0.18.1 НЕТ пропса или пункта `UIOptions` для
+ * неё, а `appState.openMenu` на десктопе видимость не решает (контейнер показывает панель по
+ * предикату «есть чего показать»), поэтому рычаг один — класс контейнера панели:
+ * `.selected-shape-actions` (десктоп, островок слева от полотна) и `.App-mobile-menu` (тот же
+ * набор на узких экранах, внизу). Открыта она или нет решает наше состояние `data-styles` на
+ * рамке, а не сцена библиотеки — так `aria-pressed` на кнопке не может разойтись с полотном.
+ * Классы живые: за них отвечает test/unit/excalidraw-styles-panel.test.ts.
+ */
+.board-frame[data-styles="closed"] .selected-shape-actions,
+.board-frame[data-styles="closed"] .App-mobile-menu { display: none !important; }
+/* Нажатое состояние той же кнопки: панель открыта. `--accent-soft` существует в обеих темах. */
+.board-styles-toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+/* Ячейка глифа: 🎨 и ✕ одинаковой ширины, чтобы нажатие не двигало полотно (см. Board.tsx). */
+.board-styles-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.board-styles-glyph { display: inline-block; width: 1.15em; text-align: center; }
 /* drawing fullscreen (ink task §6) */
 .ink-editor:fullscreen { background: var(--bg); padding: var(--sp-3); overflow: auto; }
 .ink-editor .note-ink.ink-full { width: 100%; }

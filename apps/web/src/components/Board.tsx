@@ -5,6 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { api, getToken, wsTicket } from '../lib/api';
 import { usePopover } from '../lib/popover';
 import { useAuth } from '../App';
+import {
+  STYLES_PANEL_MIN_WIDTH, boardStylesRole, resolveStylesPanel, stylesPanelKey, stylesPanelStored,
+} from '@klass/shared';
 
 /**
  * Task 2: the PDF dialog — and with it `pdf-lib` and the export code — is loaded only when
@@ -259,6 +262,74 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(msg));
   };
 
+  /*
+   * Часть A (2026-10-23): панель стилей перекрывает полотно, поэтому её показом решает ОДНО наше
+   * состояние, а не сцена Excalidraw.
+   *
+   * Почему не пропсы. У установленной 0.18.1 (проверено по `dist/types/excalidraw/types.d.ts`)
+   * в `UIOptions` есть только `canvasActions`, `tools` и `dockedSidebarBreakpoint` — записи про
+   * панель стилей нет. Поле `appState.openMenu` («shape» | «canvas» | null), которое переключается
+   * собственной кнопкой тулбара, на десктопе видимость НЕ решает: контейнер показывает панель по
+   * предикату «есть чего показать» (в собранном коде `O && N()`), а `openMenu === "shape"` входит
+   * только в мобильную ветку. Значит единственный честный рычаг — CSS по классу контейнера
+   * панели, и состояние держим у себя: тогда кнопка не может соврать (`aria-pressed` и полотно
+   * читвляются из одного места). Тест `excalidraw-styles-panel.test.ts` падает, если библиотека
+   * потеряет эти классы, — вместе с ним падает и проверка, что наш CSS называет те же классы.
+   */
+  const stylesRole = boardStylesRole(me?.role);
+  const [stylesOpen, setStylesOpen] = useState(false);
+  const [wideEnough, setWideEnough] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerWidth >= STYLES_PANEL_MIN_WIDTH);
+  const stylesBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  /** Приватный режим умеет отказывать и на чтение, и на запись — это не повод ронять доску. */
+  const readStoredStyles = (): string | null => {
+    try { return localStorage.getItem(stylesPanelKey(stylesRole)); } catch { return null; }
+  };
+  const writeStoredStyles = (open: boolean) => {
+    try { localStorage.setItem(stylesPanelKey(stylesRole), stylesPanelStored(open)); } catch { /* память недоступна */ }
+  };
+
+  /** Нажатие человека (помним) против правила ширины (не помним: узкое окно — не его выбор). */
+  function toggleStyles() {
+    const next = !stylesOpen;
+    setStylesOpen(next);
+    writeStoredStyles(next);
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia(`(min-width: ${STYLES_PANEL_MIN_WIDTH}px)`);
+    const on = () => setWideEnough(mq.matches);
+    on();
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+
+  // при смене ширины панель прячется сама, а сохранённый выбор роли остаётся нетронутым
+  useEffect(() => {
+    if (!wideEnough) setStylesOpen(false);
+    else setStylesOpen(resolveStylesPanel({
+      width: typeof window === 'undefined' ? 0 : window.innerWidth,
+      stored: readStoredStyles(),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wideEnough, stylesRole]);
+
+  /**
+   * Esc закрывает панель. Фокус возвращается на кнопку ТОЛЬКО если он был внутри панели: иначе
+   * клавиатура полотна (V, P, E, Ctrl+Z) осталась бы на холсте и продолжала работать, что и
+   * требует проверка. Никакого `preventDefault` — Excalidraw обрабатывает Esc сам.
+   */
+  function onBoardKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== 'Escape' || !stylesOpen) return;
+    const panel = e.currentTarget.querySelector('.selected-shape-actions, .App-mobile-menu');
+    const focusWasInside = !!panel && panel.contains(document.activeElement);
+    setStylesOpen(false);
+    writeStoredStyles(false);
+    if (focusWasInside) stylesBtnRef.current?.focus();
+  }
+
   /** task 4: the ONLY canvas action we expose — teacher clears the current board.
    * Elements are soft-deleted so the WS delta sync propagates the wipe to all. */
   function clearPage() {
@@ -391,6 +462,31 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     }
   }
 
+  /**
+   * Кнопка «Стили» — одна на обе ветки шапки (учитель и разрешённый ученик): цвет и толщину
+   * выбирают и те и другие, а без этой кнопки при закрытой панели до них было бы не добраться.
+   *
+   * Открытая панель показывает на этой же кнопке крестик: своего «крестика» внутри контейнера
+   * Excalidraw нам поставить некуда (DOM панели библиотечный, и слота в него нет), а закрывать
+   * панель чем-то надо не только Esc. Кнопка остаётся той же самой — тот же `aria-pressed`, тот же
+   * фокус, никаких новых слоёв над полотном.
+   */
+  const stylesButton = canDraw ? (
+    <button type="button" className="secondary board-styles-toggle" style={{ marginTop: 0 }}
+      ref={stylesBtnRef} data-testid="board-styles-toggle"
+      aria-pressed={stylesOpen} aria-label={t('lesson.boardStylesAria')}
+      title={t('lesson.boardStylesHint')} onClick={toggleStyles}>
+      {/*
+        Глиф в ячейке фиксированной ширины (styles.css): без неё смена 🎨 → ✕ меняла бы ширину
+        кнопки, а строка шапки — flex с переносом, и на средней ширине это сдвинуло бы полотно на
+        несколько пикселей ровно в момент нажатия. Состояние при этом читается и без картинки, по
+        `aria-pressed`.
+      */}
+      <span className="board-styles-glyph" aria-hidden="true">{stylesOpen ? '✕' : '🎨'}</span>
+      {t('lesson.boardStyles')}
+    </button>
+  ) : null;
+
   return (
     <div className="card" data-testid="board">
       <div className="row">
@@ -467,6 +563,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
               onClick={() => send({ type: 'newpage' })}>
               + {t('lesson.boardNew')}
             </button>
+            {stylesButton}
             <div className="spacer" />
             <button className="secondary" style={{ marginTop: 0 }} data-testid="board-clear" onClick={clearPage}>
               🗑 {t('lesson.boardClear')}
@@ -533,6 +630,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
                 ? <span className="board-draw-badge" data-testid="board-draw-badge">✏️ {t('lesson.boardYouCanDraw')}</span>
                 : <span className="muted" data-testid="board-readonly">👁 {t('lesson.readonly')}</span>}
             </span>
+            {stylesButton}
           </>
         )}
       </div>
@@ -558,7 +656,13 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
         {notice && <p className="muted" data-testid="board-notice">{notice}</p>}
         {error && <p className="error">{error}</p>}
       </div>
-      <div style={{ height }} className="board-frame">
+      {/*
+        `data-styles` — единственный переключатель панели стилей (см. CSS-правило в styles.css),
+        `onKeyDown` — Esc. Новый дочерний элемент при этом не появляется: слушатель висит на том же
+        div, внутри которого рисует Excalidraw.
+      */}
+      <div style={{ height }} className="board-frame" data-styles={stylesOpen ? 'open' : 'closed'}
+        onKeyDown={onBoardKeyDown}>
         <Excalidraw
           viewModeEnabled={!canDraw}
           zenModeEnabled={!canDraw}

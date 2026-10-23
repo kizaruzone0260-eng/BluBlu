@@ -15,5 +15,7 @@ export * from './caps.js';
 export * from './editorDraft.js';
 export * from './authErrors.js';
 export * from './browserContext.js';
+// часть A: правила панели стилей доски — чистые, чтобы проверяться без браузера
+export * from './boardStylesPanel.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';
