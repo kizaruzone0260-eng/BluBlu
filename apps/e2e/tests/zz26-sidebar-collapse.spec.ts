@@ -42,7 +42,17 @@ async function setTheme(page: Page, theme: typeof THEMES[number]): Promise<void>
  */
 type RailItem = { name: string; x: number; y: number; w: number; h: number };
 
-function railParts(page: Page): Promise<{ error: string | null; railW: number; railH: number; items: RailItem[] }> {
+async function railParts(page: Page): Promise<{ error: string | null; railW: number; railH: number; items: RailItem[] }> {
+  /*
+   * Сначала дождаться самой рейки (2026-10-24, прогон 40072031487). `setTheme` перезагружает
+   * страницу и ждёт `html[data-theme]` — а этот атрибут ставится до того, как React успевает
+   * отрисовать панель, поэтому сырой `page.evaluate` снимал замеры с документа, где рейки ещё
+   * нет, и спек падал с «нет [data-testid=sidebar]» при полностью нарисованном скриншоте.
+   * Гонка жила здесь с самого появления спека и вылезала тогда, когда машина была медленнее;
+   * ожидание ничего не ослабляет: измерение по-прежнему берёт реальные координаты, просто
+   * начинает мерить после того, как мерить стало на что.
+   */
+  await page.locator('[data-testid=sidebar]').waitFor({ state: 'attached', timeout: 20_000 });
   return page.evaluate(() => {
     const out: { error: string | null; railW: number; railH: number; items: { name: string; x: number; y: number; w: number; h: number }[] }
       = { error: null, railW: 0, railH: 0, items: [] };
