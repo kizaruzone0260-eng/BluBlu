@@ -55,7 +55,7 @@ describe('the styles-panel toggle is the only control and touches nothing but it
     expect(src, 'состояние библиотеки отсюда не пишется').not.toMatch(/setAppState/);
     expect(src, 'openMenu только читается, ему никогда не присваивается').not.toMatch(/openMenu\s*=[^=]/);
     // наше собственное контекстное меню вкладки доски называется так же — не должно утечь сюда
-    expect(src).not.toMatch(/appState\.openMenu\s*=/);
+    expect(src).not.toMatch(/appState\.openMenu\s*=(?!=)/);
   });
 
   it('the click changes one state and one preference key — no scene, no socket', () => {
@@ -109,47 +109,66 @@ describe('the styles-panel toggle is the only control and touches nothing but it
     /*
      * Примирение с раскладкой полотна (правка 2026-10-24): в мобильной ветке панель создаётся
      * полем `openMenu`, и без этого нажатие «Стили» прячет узел, которого нет, — ровно тот
-     * «ненадёжный» симптом. Эффект обязан:
+     * «ненадёжный» симптом. `reconcileMenu` обязана:
      *  • работать только в мобильной раскладке и только там, где есть право рисовать;
-     *  • сначала свериться с полотном (`shown === stylesOpen` → выход), иначе клик породит петлю;
+     *  • сначала свериться с полотном (`shown === stylesOpenRef` → выход), иначе клик породит петлю;
      *  • искать кнопку нижнего бара по её aria-метке: рядом `duplicate`/`delete`, и промахнуться
      *    по ним значит удалить ученический рисунок.
      */
-    const fx = src.match(/useEffect\(\(\) => \{([\s\S]{0,900}?)\}, \[mobileChrome, stylesOpen, canDraw, menuCanShow\]\);/);
-    expect(fx, 'эффект-примиритель потерян').toBeTruthy();
-    const body = fx![1];
+    const rec = src.match(/function reconcileMenu\(\): void \{([\s\S]{0,900}?)\n  \}/);
+    expect(rec, 'примирение с раскладкой полотна потеряно').toBeTruthy();
+    const body = rec![1];
     expect(body).toMatch(/if \(!mobileChrome \|\| !canDraw\) return;/);
-    expect(body, 'без сверки с полотном эффект завертится').toMatch(/if \(shown === stylesOpen\) return;/);
+    expect(body, 'без сверки с полотном цикл вернётся').toMatch(/if \(shown === stylesOpenRef\.current\) return;/);
     expect(body).toMatch(/getAppState\(\)\.openMenu === 'shape'/);
     expect(body).toMatch(/\.App-bottom-bar \.App-toolbar-content button\[aria-label="Edit"\]/);
-    expect(body).toMatch(/trigger\?\.click\(\)/);
+    expect(body).toMatch(/\)\?\.click\(\);/);
     // и никаких прямых записей в полотно/сцену
-    expect(body).not.toMatch(/updateScene|send\(|addElements/);
+    expect(body).not.toMatch(/updateScene|send\(|addElements|setAppState/);
+    // вызов из фазы React — ровно один, и только по нашим состояниям (не по каждому рендеру)
+    expect(src.match(/reconcileMenu\(\);/g)?.length, 'примирение зовётся из эффекта и из наблюдения').toBe(2);
+    const fx = src.match(/useEffect\(\(\) => \{\s*reconcileMenu\(\);[\s\S]{0,200}?\}, \[mobileChrome, stylesOpen, canDraw\]\);/);
+    expect(fx, 'эффект примирения потерян или висит на чужих зависимостях').toBeTruthy();
   });
 
-  it('the library button stays honest: our state follows the canvas back', () => {
+  it('the canvas is observed, but state is raised OUTSIDE the commit phase — once, and only on change', () => {
     /*
      * Если человек нажал собственную кнопку нижнего бара, а мы сделали вид, что не заметили,
-     * `aria-expanded` соврёт, и следующий эффект вернёт панель туда, где её уже не было. Поэтому
-     * `onChange` обязан читать `openMenu` — но только в мобильной раскладке: на десктопе это поле
-     * принадлежит меню «canvas» и к панели отношения не имеет.
+     * `aria-expanded` соврёт, и следующее примирение вернёт панель туда, где её уже не было.
+     * Поэтому `onChange` обязан читать `openMenu` — но только в мобильной раскладке: на десктопе
+     * это поле принадлежит меню «canvas» и к панели отношения не имеет.
+     *
+     * И главное, из-за чего прогон 40062924647 упал экраном 500 (React #185, «maximum update
+     * depth»): библиотека вызывает `onChange` из своего `componentDidUpdate` на КАЖДЫЙ рендер
+     * полотна. `setState` прямо оттуда перерисовывает родителя, родитель перерисовывает полотно,
+     * полотно зовёт `onChange` снова — петля. Значит наблюдение обязано осесть в ref, а
+     * `setState` уйти в микрозадачу И произойти только если наблюдение изменилось.
      */
-    const change = src.match(/function onChange\([\s\S]{0,2000}?\n  \}/);
+    const change = src.match(/function onChange\([\s\S]{0,2600}?\n  \}/);
     expect(change, 'onChange не найден').toBeTruthy();
     const body = change![0];
-    expect(body).toMatch(/if \(canDraw && mobileChrome\) \{/);
-    expect(body).toMatch(/const menuOpen = appState\?\.openMenu === 'shape';/);
-    expect(body).toMatch(/if \(menuOpen !== stylesOpenRef\.current && \(menuOpen \|\| menuSeenRef\.current\)\) \{/);
+    expect(body).toMatch(/if \(canDraw && mobileChrome && appState\) \{/);
+    expect(body).toMatch(/const open = appState\.openMenu === 'shape';/);
+    // сигнал «есть что форматировать»: без него панель не появлялась бы после выбора инструмента
+    expect(body).toMatch(/const can = draws \|\| Object\.keys\(appState\.selectedElementIds \?\? \{\}\)\.length > 0;/);
+    expect(body, 'без сверки с предыдущим наблюдением петля вернётся')
+      .toMatch(/if \(!prev \|\| prev\.open !== open \|\| prev\.can !== can\) \{/);
+    expect(body).toMatch(/menuObservedRef\.current = \{ open, can \};/);
     // «закрыто» принимается только если панель этим переключателем уже открывалась: иначе первый
     // же onChange после загрузки стёр бы сохранённый выбор учителя
-    expect(body).toMatch(/if \(menuOpen\) menuSeenRef\.current = true;/);
-    // сигнал «есть что форматировать»: без него панель не появлялась бы после выбора инструмента
-    expect(body).toMatch(/const can = draws \|\| selected;/);
-    expect(body).toMatch(/setMenuCanShow\(\(prev\) => \(prev === can \? prev : can\)\);/);
-    // обратный sync не имеет права трогать сеть до того, как отработает throttle
-    const mirrored = body.indexOf('stylesOpenRef.current = menuOpen');
+    expect(body).toMatch(/if \(open\) menuSeenRef\.current = true;/);
+    const deferred = body.indexOf('queueMicrotask(');
+    expect(deferred, 'состояние поднимается синхронно из коммит-фазы React — это петля').toBeGreaterThanOrEqual(0);
+    for (const call of ['setStylesOpen(', 'reconcileMenu();']) {
+      const at = body.indexOf(call);
+      expect(at, `${call} не найден`).toBeGreaterThanOrEqual(0);
+      expect(at, `${call} обязан вызываться из микрозадачи`).toBeGreaterThan(deferred);
+    }
+    expect(body).toMatch(/if \(seen\.open !== stylesOpenRef\.current && \(seen\.open \|\| menuSeenRef\.current\)\) \{/);
+    // наблюдение не имеет права трогать сеть до того, как отработает throttle отправки чернил
+    const mirrored = body.indexOf('menuObservedRef.current = { open, can };');
     const throttled = body.indexOf('lastSentRef.current = now');
-    expect(mirrored, 'обратное зеркало не присваивает состояние').toBeGreaterThanOrEqual(0);
+    expect(mirrored, 'наблюдение за полотном не записано в ref').toBeGreaterThanOrEqual(0);
     expect(throttled, 'отправка изменений с полотна потерялась').toBeGreaterThanOrEqual(0);
     expect(mirrored).toBeLessThan(throttled);
   });

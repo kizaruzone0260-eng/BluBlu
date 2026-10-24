@@ -252,38 +252,49 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     /*
      * Обратное зеркало мобильной раскладки (правка 2026-10-24): человек мог нажать собственную
      * кнопку нижнего бара, и тогда наше состояние обязано последовать за полотном — иначе кнопка
-     * «Стили» соврёт про `aria-expanded`, а эффект-примиритель ниже молча вернёт панель туда,
-     * где её уже не было. В десктопной раскладке `openMenu` панель не решает (там он у меню
-     * «canvas»), поэтому и смотрим на него только в мобильной.
+     * «Стили» соврёт про `aria-expanded`, а следующее примирение (`reconcileMenu`) молча вернёт
+     * панель туда, где её уже не было. В десктопной раскладке `openMenu` панель не решает (там он
+     * у меню «canvas»), поэтому и смотрим на него только в мобильной.
+     *
+     * ПОЧЕМУ ЧЕРЕЗ МИКРОЗАДАЧУ. `onChange` библиотека вызывает из `componentDidUpdate`
+     * (`index.js:30535-30538` установленной 0.18.1) — то есть в фазе коммита React, причём БЕЗУСЛОВНО
+     * на каждый рендер полотна. `setState` отсюда поднимает родителя, родитель перерисовывает
+     * полотно, полотно снова зовёт `onChange` — и цикл замыкается до «Maximum update depth
+     * exceeded» (React #185; именно так и упал прогон 40062924647: страница урока вставала на
+     * экран 500). Поэтому здесь пишется только ref, а состояние поднимается микрозадачей — уже
+     * после того, как React доделал свою работу, и только если наблюдение правда изменилось.
      */
-    if (canDraw && mobileChrome) {
-      const menuOpen = appState?.openMenu === 'shape';
+    if (canDraw && mobileChrome && appState) {
+      const open = appState.openMenu === 'shape';
       /*
-       * «Открыто» от полотна принимаем всегда — это человек нажал кнопку нижнего бара. А «закрыто»
-       * принимаем ТОЛЬКО если панель этим самым переключателем уже открывалась: иначе первый же
-       * `onChange` после загрузки стёр бы сохранённый выбор («полотно говорит «null», а оно просто
-       * ещё ничего не показывало»), и эффект-примиритель не успел бы ничего нажать.
+       * Может ли полотно показать панель ПРЯМО СЕЙЧАС: переключателя нижнего бара нет, пока нечего
+       * форматировать (активен рисующий инструмент или есть выделение). Без этого сигнала выбор
+       * инструмента после «открыто, но показывать было нечего» оставил бы панель спрятанной до
+       * следующего нажатия — тот же симптом, только с другой стороны. Предикат библиотеки
+       * (`showSelectedShapeActions`) повторяется здесь приближённо и намеренно щедро: ложное
+       * срабатывание стоит один лишний проход примирения, ложный отказ — молчавшую кнопку.
        */
-      if (menuOpen) menuSeenRef.current = true;
-      if (menuOpen !== stylesOpenRef.current && (menuOpen || menuSeenRef.current)) {
-        stylesOpenRef.current = menuOpen;
-        setStylesOpen(menuOpen);
-        writeStoredStyles(menuOpen);
-      }
-      /*
-       * Может ли полотно показать панель ПРЯМО СЕЙЧАС: переключатель нижнего бара существует
-       * только когда есть что форматировать (активен рисующий инструмент или есть выделение).
-       * Без этого сигнала выбор инструмента после «открыто, но показывать было нечего» оставил бы
-       * панель спрятанной до следующего нажатия — тот же симптом, только с другой стороны.
-       * Предикат библиотеки (`showSelectedShapeActions`) здесь повторяется приближённо и намеренно
-       * щедро: ложное срабатывание стоит один лишний проход эффекта, ложный отказ — молчавшую
-       * кнопку.
-       */
-      const tool = appState?.activeTool?.type;
+      const tool = appState.activeTool?.type;
       const draws = !!tool && !['selection', 'eraser', 'hand', 'laser', 'custom'].includes(tool);
-      const selected = Object.keys(appState?.selectedElementIds ?? {}).length > 0;
-      const can = draws || selected;
-      setMenuCanShow((prev) => (prev === can ? prev : can));
+      const can = draws || Object.keys(appState.selectedElementIds ?? {}).length > 0;
+      const prev = menuObservedRef.current;
+      if (!prev || prev.open !== open || prev.can !== can) {
+        menuObservedRef.current = { open, can };
+        // «открыто» от полотна принимаем всегда; «закрыто» — только если панель этим переключателем
+        // уже открывалась, иначе первый же onChange стёр бы сохранённый выбор учителя
+        if (open) menuSeenRef.current = true;
+        queueMicrotask(() => {
+          const seen = menuObservedRef.current;
+          if (!seen) return;
+          if (seen.open !== stylesOpenRef.current && (seen.open || menuSeenRef.current)) {
+            stylesOpenRef.current = seen.open;
+            setStylesOpen(seen.open);
+            writeStoredStyles(seen.open);
+          }
+          // полотно только что изменилось — возможно, именно теперь ему есть что показывать
+          reconcileMenu();
+        });
+      }
     }
     if (!canDraw) return;
     const now = Date.now();
@@ -338,14 +349,38 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   stylesOpenRef.current = stylesOpen;
   /** Открывалась ли панель самим переключателем нижнего бара — см. обратное зеркало в `onChange`. */
   const menuSeenRef = useRef(false);
+  /** Последнее наблюдение за полотном: «показывает ли панель» и «есть ли что показывать». */
+  const menuObservedRef = useRef<{ open: boolean; can: boolean } | null>(null);
   /** Размер РАМКИ доски в пикселях (0 — ещё не померена): решает и место для панели, и раскладку полотна. */
   const [frameBox, setFrameBox] = useState({ w: 0, h: 0 });
   /** В мобильной ли раскладке сейчас Excalidraw — то есть создаётся ли панель полем `openMenu`. */
   const mobileChrome = excalidrawMobileChrome(frameBox.w, frameBox.h);
-  /** Есть ли на полотне что форматировать: без этого переключателя нижнего бара просто нет. */
-  const [menuCanShow, setMenuCanShow] = useState(false);
   const stylesBtnRef = useRef<HTMLButtonElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Примирение с мобильной раскладкой: там панель — дочерний узел нижнего бара, и появляется он
+   * только при `appState.openMenu === 'shape'`. Записать это поле снаружи нечем (у императивного
+   * API 0.18.1 есть `getAppState`, но нет `setAppState`), поэтому остаётся ровно тот же жест,
+   * которым пользуется человек: нажатие кнопки `aria-label="Edit"` в нижнем баре. Рядом в этом же
+   * ряду стоят `duplicate` и `delete`, и промах по ним удалил бы ученический рисунок, поэтому
+   * ищем строго по метке, а не «первую кнопку».
+   *
+   * Функция идемпотентна: если полотно уже показывает ровно то, что решает наше состояние, она
+   * ничего не нажимает — из-за этого её можно звать и из эффекта, и из наблюдения за canvas.
+   * Вызывать её разрешено ТОЛЬКО вне фазы рендера/коммита React (см. `onChange`).
+   */
+  function reconcileMenu(): void {
+    if (!mobileChrome || !canDraw) return;
+    const api = apiRef.current;
+    if (!api) return;
+    let shown = false;
+    try { shown = api.getAppState().openMenu === 'shape'; } catch { return; }
+    if (shown === stylesOpenRef.current) return;
+    frameRef.current?.querySelector<HTMLElement>(
+      '.App-bottom-bar .App-toolbar-content button[aria-label="Edit"]',
+    )?.click();
+  }
 
   /** Приватный режим умеет отказывать и на чтение, и на запись — это не повод ронять доску. */
   const readStoredStyles = (): string | null => {
@@ -415,27 +450,15 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   }, [frameBox.w]);
 
   /*
-   * Примирение с мобильной раскладкой: там панель — это дочерний узел нижнего бара, и появляется
-   * он только при `appState.openMenu === 'shape'`. Записать это поле снаружи нечем (у API 0.18.1
-   * нет `setAppState`), остаётся ровно тот же жест, что делает человек: нажатие кнопки «styles»
-   * в нижнем баре полотна. Кнопку ищем по её aria-метке — `duplicate`/`delete` идут сразу за ней,
-   * и промахнуться по ним нельзя: лишний клик удалил бы ученический рисунок.
-   *
-   * Эффект работает в обе стороны (открыть ⟹ нажать, закрыть ⟹ нажать снова) и вызывается только
-   * когда состояние библиотеки уже разошлось с нашим, — поэтому он не может устроить петлю.
+   * Единственный вызов примирения из фазы React: после нажатия «Стили», после закрытия по Esc,
+   * после того как рамка переехала из одной раскладки в другую. `reconcileMenu` объявлена в теле
+   * компонента намеренно — она читает свежие ref-ы, поэтому зависимость от неё в списке ниже
+   * сознательно опущена.
    */
   useEffect(() => {
-    if (!mobileChrome || !canDraw) return;
-    const api = apiRef.current;
-    if (!api) return;
-    let shown = false;
-    try { shown = api.getAppState().openMenu === 'shape'; } catch { return; }
-    if (shown === stylesOpen) return;
-    const trigger = frameRef.current?.querySelector<HTMLElement>(
-      '.App-bottom-bar .App-toolbar-content button[aria-label="Edit"]',
-    );
-    trigger?.click();
-  }, [mobileChrome, stylesOpen, canDraw, menuCanShow]);
+    reconcileMenu();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileChrome, stylesOpen, canDraw]);
 
   /**
    * Esc закрывает панель. Фокус возвращается на кнопку ТОЛЬКО если он был внутри панели: иначе
