@@ -226,6 +226,43 @@ suite('students drawing on the lesson board (part 3)', () => {
     s.ws.close(); teacher.ws.close();
   });
 
+  it('a mixed batch keeps the student’s own accepted stroke in the snapshot sent back to them', async () => {
+    /*
+     * Регресс на порядок «отказ → снимок» (разбор прогона 40075097179 и локальный повтор
+     * 2026-10-24). Клиент, который переставил сцену с сервера, шлёт обратно ВСЮ её состав — свой
+     * новый штрих и чужой элемент учителя вместе. Сервер чужое отвергает и возвращает
+     * «авторитетный» кадр страницы; раньше этот кадр собирался ДО применения принятых правок,
+     * поэтому в нём собственного штриха ещё не было. Клиент на `current` переставляет полотно
+     * целиком — и человек видел, как его собственная рисовка исчезает с его же экрана. Это и есть
+     * второй симптом zz20: метка у учителя есть (чернила дошли), а на полотне автора их нет.
+     */
+    await allow(aId, true);
+    const teacher = await openBoard(teacherTok);
+    const witness = await openBoard(teacherTok);
+    send(teacher.ws, { type: 'edits', page: 1, elements: [el('t-mix', 1, { x: 21 })] });
+    await witness.until((f) => f.type === 'edits' && (f.elements ?? []).some((e) => e.id === 't-mix'), 't-mix на доске');
+    witness.ws.close();
+
+    const s = await openBoard(aTok);
+    send(s.ws, {
+      type: 'edits', page: 1,
+      elements: [el('t-mix', 99, { x: 777 }), el('a-mine', 3, { x: 42 })],
+    });
+    await s.until((f) => f.type === 'notice' && f.code === 'boardForeign', 'отказ: чужой элемент в кадре');
+    const back = await s.until((f) => f.type === 'current', 'авторитетный снимок страницы');
+
+    const ids2 = (back.elements ?? []).map((e) => e.id);
+    expect(ids2, 'принятый сервером собственный штрих обязан быть в снимке, который вернули автору')
+      .toContain('a-mine');
+    expect(back.elements!.find((e) => e.id === 'a-mine')!.x, 'и с теми координатами, что принял сервер').toBe(42);
+    expect(back.elements!.find((e) => e.id === 'a-mine')!.locked, 'своё не блокируется').not.toBe(true);
+    const kept = back.elements!.find((e) => e.id === 't-mix')!;
+    expect(kept.x, 'чужое остаётся учительским значением').toBe(21);
+    expect(kept.locked, 'чужое ученику приезжает заблокированным').toBe(true);
+    expect(await liveIds(), 'оба элемента на серверной доске').toEqual(expect.arrayContaining(['t-mix', 'a-mine']));
+    s.ws.close(); teacher.ws.close();
+  });
+
   it('one student cannot delete another student’s element', async () => {
     await allow(bId, true);
     const b = await openBoard(bTok);

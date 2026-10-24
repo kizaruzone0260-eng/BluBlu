@@ -473,7 +473,10 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
               incoming: els, scene: r.elements, authors: r.authors,
               userId: who.userId, teacher: isTeacherMsg,
             });
-            if (gate.rejected.length && (isTeacherMsg ? gate.overScene : true)) {
+            const refuse = !!gate.rejected.length && (isTeacherMsg ? gate.overScene : true);
+            const { changed } = mergeElements(r.elements, gate.accepted);
+            if (changed.length) queueBroadcast(db, r, changed, socket);
+            if (refuse) {
               // Отказанному возвращаем авторитетный снимок ВСЕЙ страницы: версии у его локальной
               // копии уже выше, чем у отброшенных элементов, поэтому точечная доставка ничего бы
               // не исправила — клиент обязан переставить сцену целиком.
@@ -481,10 +484,21 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
                 : gate.overLimit ? 'boardStudentLimit' : 'boardForeign',
               gate.overScene ? { maxBytes: MAX_SCENE_BYTES }
                 : gate.overLimit ? { maxElements: MAX_STUDENT_ELEMENTS, maxBytes: MAX_STUDENT_BYTES } : {});
+              /*
+               * СНИМОК — ПОСЛЕ merge, а не до. Порядок здесь и был вторым дефектом цикла
+               * `boardForeign` (разбор прогона 40075097179 и локальный повтор 2026-10-24): кадр
+               * собирался по `r.elements` ДО того, как в них попали принятые правки этого же
+               * сообщения. Ученик, чей кадр содержал и свой штрих, и чужой элемент, получал в
+               * ответ «авторитетную» страницу БЕЗ собственного штриха; `current` на клиенте
+               * переставляет сцену целиком (`replaceScene`), то есть его собственная рисовка
+               * исчезала с его же экрана — именно это видно на финальном кадре 39034112298
+               * («виден лишь штрих учителя, её прямоугольника в слоте C нет»). Принятое сервером
+               * обязано оставаться на полотне принявшего его клиента. Красным это ловится в
+               * `test/integration/board-students.test.ts` («a mixed batch…»): без порядка
+               * возвращаемый снимок = ['t-mix'] без 'a-mine'.
+               */
               sendSceneTo(r, socket, who);
             }
-            const { changed } = mergeElements(r.elements, gate.accepted);
-            if (changed.length) queueBroadcast(db, r, changed, socket);
             return;
           }
           /**

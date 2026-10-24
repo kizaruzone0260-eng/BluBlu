@@ -104,7 +104,6 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
             setPages(msg.pages ?? [1]);
             setTitles(msg.titles ?? {});
             setCurrentPage(msg.page ?? 1);
-            sentRef.current.clear();
             replaceScene(msg.elements ?? []);
           } else if (msg.type === 'perms') {
             // часть 3: учитель выдал или отозвал право рисовать, не перекладывая страницу
@@ -127,16 +126,15 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
             setCurrentPage(msg.page ?? 1);
             setInkChip(null);
             if (msg.title !== undefined) setTitles((cur) => ({ ...cur, [msg.page ?? 1]: msg.title as string }));
-            sentRef.current.clear();
             replaceScene(msg.elements ?? []);
           } else if (msg.type === 'pages') {
             setPages(msg.pages ?? [1]);
             if (msg.titles) setTitles(msg.titles);
             setCurrentPage(msg.page ?? msg.current ?? msg.pages?.[0] ?? 1);
             setInkChip(null);
-            sentRef.current.clear();
             // an empty array is a real instruction here: the new board has no ink to show
             if (Array.isArray(msg.elements)) replaceScene(msg.elements);
+            else sentRef.current.clear();
           } else if (msg.type === 'titles') {
             setTitles(msg.titles ?? {});
           } else if (msg.type === 'notice' && msg.code) {
@@ -178,7 +176,33 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
 
   function replaceScene(elements: RawEl[]) {
     knownRef.current = new Set(elements.map((e) => e.id));
+    // сервер отдал страницу целиком — значит именно эти версии он и имеет, см. `rememberAsSent`
+    rememberAsSent(elements, true);
     apiRef.current?.updateScene({ elements: elements as never });
+  }
+
+  /**
+   * «Что сервер уже имеет» (docs: `sentRef` — база для дельты в `onChange`).
+   *
+   * Раньше на каждом `init`/`current`/`pages` карта очищалась, и первый же `onChange` после
+   * этого отправлял НАРУЖУ ВСЮ сцену — включая элементы, которые человек не трогал и которых у
+   * него нет права касаться. Для ученика это гарантированный отказ (`boardForeign` в
+   * `services/board.ts:213`), отказ порождает ответный `current`, `current` снова очищает карту —
+   * и круг замыкается: замер 2026-10-24 даёт один обмен «edits → notice → current» каждые
+   * 250 мс, пока открыта доска, плюс ложный тост «это чужой рисунок» человеку, который чертил
+   * только своё. Вторая цена — ответный снимок переставлял локальную сцену и стирал с экрана
+   * собственный штрих автора (это и есть красный `zz20` в прогонах 39034112298, 40075097179).
+   *
+   * Права это не меняет: гейт по-прежнему на сервере, и отвергнутым чужой элемент остаётся
+   * отвергнутым — просто мы перестаём его предлагать.
+   */
+  function rememberAsSent(elements: RawEl[], replace = false) {
+    const map = replace ? new Map<string, { version: number; versionNonce: number }>() : sentRef.current;
+    for (const e of elements) {
+      if (typeof e.version !== 'number') continue;
+      map.set(e.id, { version: e.version, versionNonce: e.versionNonce });
+    }
+    if (replace) sentRef.current = map;
   }
 
   // the active tab is kept in view — the strip scrolls horizontally at 390 px (task 1б)
@@ -239,6 +263,9 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     }
     if (changed) a.updateScene({ elements: [...byId.values()] as never });
     for (const el of incoming) knownRef.current.add(el.id);
+    // версии, которые нам только что назвал сервер. Своя более новая правка от этого не
+    // теряется: её локальная версия отличается от записанной, и `onChange` отправит её ещё раз.
+    rememberAsSent(incoming);
   }
 
   function onChange(
@@ -282,6 +309,12 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     lastSentRef.current = now;
     const changed: RawEl[] = [];
     for (const el of elements) {
+      // Чужой элемент наружу не предлагается. `locked` навешивает сервер (см. `lockForeign` в
+      // `services/board.ts`) именно на те, что принадлежат НЕ этому ученику; отправить такой
+      // назад — значит гарантированно получить отказ, а отказ отвечает целым снимком страницы,
+      // который снова переставляет сцену. Один «чужой» элемент на доске превращал каждый обмен
+      // в новый обмен и показывал человеку тост про чужой рисунок, которого он не касался.
+      if (el.locked === true) continue;
       const prev = sentRef.current.get(el.id);
       if (!prev || prev.version !== el.version || prev.versionNonce !== el.versionNonce) {
         changed.push(el);
@@ -404,6 +437,62 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     const ro = new window.ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+
+  /*
+   * Полотно обязано знать, где оно СТОИТ, а не только какого оно размера.
+   *
+   * Excalidraw не берёт `getBoundingClientRect()` на каждое движение указателя: смещение холста
+   * живёт в её собственном состоянии (`updateDOMRect` пишет `offsetTop`/`offsetLeft`, а координата
+   * события считается как `event.clientY - this.state.offsetTop` — установленная сборка 0.18.1,
+   * index.js:26998). Перечитывает она их по трём поводам: `ResizeObserver` на контейнере, `resize`
+   * окна и прокрутка. Все три — про РАЗМЕР или про скролл. Урок же двигает доску, НЕ меняя её
+   * размера: сетка участников вырастает, когда приезжают треки (замер 2026-10-24: canvas y
+   * 444 → 399 → 447 → 420 при неизменных 894×480), открывается панель справа, меняется строка
+   * подсказки над холстом.
+   *
+   * Цена — штрих рисуется не там, где курсор. В том же замере: холст стоит в viewport y=343,
+   * указатель нажат в canvas-y=250, а прямоугольник рождается в сцене на y=-494 — на 744 px выше
+   * курсора, за верхней границей видимой области. Это и есть красный `zz20`: элемент существует,
+   * выбран, отправлен и дошёл до всех (учитель получает метку «нарисовал(а), показать»), но на
+   * собственном холсте автора его не нарисовано — считать нечего, `inkAll` = 0, а Excalidraw
+   * показывает «Scroll back to content» над пустым полотном.
+   */
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || typeof MutationObserver === 'undefined' || typeof requestAnimationFrame !== 'function') return;
+    let last = el.getBoundingClientRect();
+    let queued = false;
+    const check = () => {
+      queued = false;
+      const r = el.getBoundingClientRect();
+      if (r.top === last.top && r.left === last.left && r.width === last.width && r.height === last.height) return;
+      last = r;
+      /*
+       * `refresh` — публичный способ сказать библиотеке «перечитай смещение холста»
+       * (App.refresh = setState({...getCanvasOffsets()})). Состояние поднимает сама Excalidraw из
+       * пользовательского события, а не из нашего `onChange`, поэтому цикла обновлений (React #185,
+       * прогон 40062924647) здесь быть не может: наше состояние от этого не зависит.
+       */
+      apiRef.current?.refresh();
+    };
+    const schedule = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(check);
+    };
+    // Урок сдвигает доску только через перерисовку React, то есть через изменения в DOM; заодно
+    // перепроверяем на скролле и resize — там библиотека тоже обязана быть актуальной.
+    const mo = new MutationObserver(schedule);
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    window.addEventListener('scroll', schedule, true);
+    window.addEventListener('resize', schedule);
+    schedule();
+    return () => {
+      mo.disconnect();
+      window.removeEventListener('scroll', schedule, true);
+      window.removeEventListener('resize', schedule);
+    };
   }, []);
 
   /*
