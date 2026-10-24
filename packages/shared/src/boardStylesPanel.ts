@@ -25,6 +25,32 @@
  */
 export const STYLES_PANEL_MIN_FRAME = 560;
 
+/**
+ * Пороги СОБСТВЕННОЙ раскладки Excalidraw (0.18.1). Библиотека сама решает, какой ей быть, и
+ * решает это по размеру своего контейнера, а не окна: в собранном коде
+ * `isMobileBreakpoint(w, h) = w < MQ_MAX_WIDTH_PORTRAIT || (h < MQ_MAX_HEIGHT_LANDSCAPE &&
+ * w < MQ_MAX_WIDTH_LANDSCAPE)` с константами 730 / 500 / 1000 (проверено по
+ * `dist/dev/chunk-4FTI6OG3.js:315-317` установленной версии).
+ *
+ * Это важно ровно потому, что панель форматирования в двух раскладках живёт в разных узлах:
+ *  • десктоп — `.selected-shape-actions` слева сверху; узел создаётся, когда «есть чего показать»
+ *    (активен инструмент или есть выделение), и дальше видимостью распоряжается наш CSS;
+ *  • мобильная — `.App-mobile-menu` в нижнем баре, и появляется она только при
+ *    `appState.openMenu === 'shape'`, то есть по кнопке самой библиотеки.
+ * На ноутбуке 1280×720 полотно урока выходит ~925×432 px — это вторая раскладка, и именно поэтому
+ * нажатие «Стили» казалось пустым: CSS прятал узел, которого в такой раскладке просто нет.
+ */
+export const EXCALIDRAW_MOBILE_MAX_WIDTH = 730;
+export const EXCALIDRAW_MOBILE_MAX_HEIGHT_LANDSCAPE = 500;
+export const EXCALIDRAW_MOBILE_MAX_WIDTH_LANDSCAPE = 1000;
+
+/** В мобильной ли раскладке рисует Excalidraw при таком размере СВОЕГО контейнера. */
+export function excalidrawMobileChrome(width: number, height: number): boolean {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return false;
+  return width < EXCALIDRAW_MOBILE_MAX_WIDTH
+    || (height < EXCALIDRAW_MOBILE_MAX_HEIGHT_LANDSCAPE && width < EXCALIDRAW_MOBILE_MAX_WIDTH_LANDSCAPE);
+}
+
 export type BoardStylesRole = 'teacher' | 'student';
 
 /** Ключ localStorage: выбор учителя и выбор ученика не должны перетекать друг в друга. */

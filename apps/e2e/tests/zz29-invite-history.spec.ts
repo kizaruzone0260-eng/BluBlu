@@ -12,11 +12,16 @@
  *
  * RTC здесь не нужен: только страница класса. Данные создаются теми же эндпоинтами, чем
  * пользуется сам экран, — чтобы спек не зависел от порядка прогонов и от чужих классов.
+ *
+ * Вход — в КАЖДОМ тесте. Playwright выдаёт новый контекст на тест (куки и localStorage не
+ * переносятся), а `/classes/<id>` без сессии — это редирект на «Вход»: тест, который этого не
+ * учитывает, ждёт кнопку `add-student` на экране логина и падает с «element(s) not found»
+ * (именно так первый прогон и споткнулся).
  */
 import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { BASE } from './boardFixtures';
+import { BASE, loginUi } from './boardFixtures';
 
 /** `.stack.json` появляется на полсекунды позже health-check'а — читаем терпеливо, как flow.spec. */
 function readStack() {
@@ -52,6 +57,16 @@ test.describe.serial('invitation history behind a button', () => {
   let linkId = '';
   let codeId = '';
 
+  /**
+   * Вход + страница класса одним шагом. Без входа `/classes/<id>` отдаёт экран «Вход», и любой
+   * локатор внутри страницы класса висит до таймаута с «element(s) not found».
+   */
+  async function openClass(page: import('@playwright/test').Page, id?: string): Promise<void> {
+    await loginUi(page, stack.teacherEmail, stack.teacherPassword);
+    await page.goto(`/classes/${id ?? classId}`);
+    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+  }
+
   test('teacher: fresh class with one link and one code, both through the real endpoints', async () => {
     const api = await pw.newContext({ baseURL: BASE });
     const token = await apiLogin(api);
@@ -76,14 +91,7 @@ test.describe.serial('invitation history behind a button', () => {
   });
 
   test('the class screen shows a button, not the records', async ({ page }) => {
-    await page.goto('/login');
-    await page.getByTestId('email').fill(stack.teacherEmail);
-    await page.getByTestId('password').fill(stack.teacherPassword);
-    await page.getByTestId('login-submit').click();
-    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
-
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     // записей на экране нет: ни одной строки истории и самого окна
     await expect(page.locator('[data-testid^="invite-record-"]')).toHaveCount(0);
     await expect(page.getByTestId('invite-history')).toHaveCount(0);
@@ -91,8 +99,7 @@ test.describe.serial('invitation history behind a button', () => {
   });
 
   test('the button opens the view, and both kinds of invitation are there with their facts', async ({ page }) => {
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     await page.getByTestId('invite-history-open').click();
 
     const dialog = page.getByTestId('invite-history');
@@ -123,8 +130,7 @@ test.describe.serial('invitation history behind a button', () => {
   });
 
   test('revoke works from the view and the record stays readable', async ({ page }) => {
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     await page.getByTestId('invite-history-open').click();
     page.once('dialog', (d) => void d.accept());
     await page.getByTestId(`invite-revoke-${linkId}`).click();
@@ -135,8 +141,7 @@ test.describe.serial('invitation history behind a button', () => {
   });
 
   test('the view closes and leaves the class screen as it was', async ({ page }) => {
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     const open = page.getByTestId('invite-history-open');
     await open.click();
     await expect(page.getByTestId('invite-history')).toBeVisible();
@@ -152,7 +157,7 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.getByTestId('invite-history')).toHaveCount(0);
   });
 
-  test('a class without invitations says so', async ({ page, browser }) => {
+  test('a class without invitations says so', async ({ page }) => {
     const api = await pw.newContext({ baseURL: BASE });
     const token = await apiLogin(api);
     const cls = await (await api.post('/api/classes', {
@@ -160,16 +165,14 @@ test.describe.serial('invitation history behind a button', () => {
     })).json();
     await api.dispose();
 
-    await page.goto(`/classes/${cls.id as string}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page, cls.id as string);
     await page.getByTestId('invite-history-open').click();
     await expect(page.getByTestId('invite-history-empty')).toBeVisible();
     await expect(page.locator('[data-testid^="invite-record-"]')).toHaveCount(0);
   });
 
   test('creating a link and a code from the card still works after the move', async ({ page }) => {
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     // ссылка
     await page.getByTestId('invite-link-label').fill('Бека');
     await page.getByTestId('create-invite-link').click();
@@ -187,8 +190,7 @@ test.describe.serial('invitation history behind a button', () => {
 
   test('a phone-sized screen reaches the view too, and does not scroll sideways', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/classes/${classId}`);
-    await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
+    await openClass(page);
     const overflow = await page.evaluate(() => ({
       doc: document.documentElement.scrollWidth, win: window.innerWidth,
     }));

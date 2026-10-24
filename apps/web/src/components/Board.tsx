@@ -6,8 +6,8 @@ import { api, getToken, wsTicket } from '../lib/api';
 import { usePopover } from '../lib/popover';
 import { useAuth } from '../App';
 import {
-  STYLES_PANEL_MIN_FRAME, boardStylesRole, resolveStylesPanel, stylesPanelKey,
-  stylesPanelLabels, stylesPanelStored,
+  STYLES_PANEL_MIN_FRAME, boardStylesRole, excalidrawMobileChrome, resolveStylesPanel,
+  stylesPanelKey, stylesPanelLabels, stylesPanelStored,
 } from '@klass/shared';
 
 /**
@@ -241,7 +241,50 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     for (const el of incoming) knownRef.current.add(el.id);
   }
 
-  function onChange(elements: readonly RawEl[]) {
+  function onChange(
+    elements: readonly RawEl[],
+    appState?: {
+      openMenu: 'canvas' | 'shape' | null;
+      activeTool: { type: string };
+      selectedElementIds: Record<string, boolean>;
+    },
+  ) {
+    /*
+     * Обратное зеркало мобильной раскладки (правка 2026-10-24): человек мог нажать собственную
+     * кнопку нижнего бара, и тогда наше состояние обязано последовать за полотном — иначе кнопка
+     * «Стили» соврёт про `aria-expanded`, а эффект-примиритель ниже молча вернёт панель туда,
+     * где её уже не было. В десктопной раскладке `openMenu` панель не решает (там он у меню
+     * «canvas»), поэтому и смотрим на него только в мобильной.
+     */
+    if (canDraw && mobileChrome) {
+      const menuOpen = appState?.openMenu === 'shape';
+      /*
+       * «Открыто» от полотна принимаем всегда — это человек нажал кнопку нижнего бара. А «закрыто»
+       * принимаем ТОЛЬКО если панель этим самым переключателем уже открывалась: иначе первый же
+       * `onChange` после загрузки стёр бы сохранённый выбор («полотно говорит «null», а оно просто
+       * ещё ничего не показывало»), и эффект-примиритель не успел бы ничего нажать.
+       */
+      if (menuOpen) menuSeenRef.current = true;
+      if (menuOpen !== stylesOpenRef.current && (menuOpen || menuSeenRef.current)) {
+        stylesOpenRef.current = menuOpen;
+        setStylesOpen(menuOpen);
+        writeStoredStyles(menuOpen);
+      }
+      /*
+       * Может ли полотно показать панель ПРЯМО СЕЙЧАС: переключатель нижнего бара существует
+       * только когда есть что форматировать (активен рисующий инструмент или есть выделение).
+       * Без этого сигнала выбор инструмента после «открыто, но показывать было нечего» оставил бы
+       * панель спрятанной до следующего нажатия — тот же симптом, только с другой стороны.
+       * Предикат библиотеки (`showSelectedShapeActions`) здесь повторяется приближённо и намеренно
+       * щедро: ложное срабатывание стоит один лишний проход эффекта, ложный отказ — молчавшую
+       * кнопку.
+       */
+      const tool = appState?.activeTool?.type;
+      const draws = !!tool && !['selection', 'eraser', 'hand', 'laser', 'custom'].includes(tool);
+      const selected = Object.keys(appState?.selectedElementIds ?? {}).length > 0;
+      const can = draws || selected;
+      setMenuCanShow((prev) => (prev === can ? prev : can));
+    }
     if (!canDraw) return;
     const now = Date.now();
     if (now - lastSentRef.current < 30) return; // §3.7 throttle ≈30 ms
@@ -264,23 +307,43 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   };
 
   /*
-   * Часть A (2026-10-23): панель стилей перекрывает полотно, поэтому её показом решает ОДНО наше
-   * состояние, а не сцена Excalidraw.
+   * Часть A (2026-10-23, правка 2026-10-24): панель стилей перекрывает полотно, поэтому её показом
+   * решает ОДНО наше состояние — `stylesOpen`.
+   *
+   * Почему ОДНО, а не два. Excalidraw рисует панель форматирования в двух разных узлах и сам
+   * выбирает узел по размеру своего контейнера (`excalidrawMobileChrome`, см. shared):
+   *  • десктоп — `.selected-shape-actions` слева сверху: узел создаётся библиотекой, а прячет или
+   *    показывает его наш CSS по `data-styles` на рамке;
+   *  • мобильная — `.App-mobile-menu` в нижнем баре: узла в DOM НЕТ, пока библиотека держит
+   *    `appState.openMenu !== 'shape'`, то есть пока не нажата её собственная кнопка.
+   * Прежний код умел только первое, и на ноутбуке 1280×720 (полотно ~925×432 px — это уже
+   * мобильная раскладка) нажатие «Стили» прятало узел, которого не существовало: отсюда и
+   * «кнопка работает ненадёжно».
    *
    * Почему не пропсы. У установленной 0.18.1 (проверено по `dist/types/excalidraw/types.d.ts`)
    * в `UIOptions` есть только `canvasActions`, `tools` и `dockedSidebarBreakpoint` — записи про
-   * панель стилей нет. Поле `appState.openMenu` («shape» | «canvas» | null), которое переключается
-   * собственной кнопкой тулбара, на десктопе видимость НЕ решает: контейнер показывает панель по
-   * предикату «есть чего показать» (в собранном коде `O && N()`), а `openMenu === "shape"` входит
-   * только в мобильную ветку. Значит единственный честный рычаг — CSS по классу контейнера
-   * панели, и состояние держим у себя: тогда кнопка не может соврать (`aria-pressed` и полотно
-   * читвляются из одного места). Тест `excalidraw-styles-panel.test.ts` падает, если библиотека
-   * потеряет эти классы, — вместе с ним падает и проверка, что наш CSS называет те же классы.
+   * панель стилей нет. А в `ExcalidrawImperativeAPI` (там же, строки 604-635) есть `getAppState`,
+   * но НЕТ `setAppState`: снаружи нельзя ни прочитать, ни тем более записать `openMenu` иначе как
+   * тем же жестом, которым он вообще меняется, — нажатием кнопки нижнего бара. Поэтому состояние
+   * держим у себя, наружу его отражает эффект-примиритель, а обратно — `onChange`. Тест
+   * `excalidraw-styles-panel.test.ts` падает, если библиотека потеряет эти классы.
+   *
+   * Сцены это не касается: `openMenu` — часть appState, не элементов, значит мутации в комнату на
+   * переключение панели уйти не может (проверяет zz30 геометрией полотна).
    */
   const stylesRole = boardStylesRole(me?.role);
   const [stylesOpen, setStylesOpen] = useState(false);
-  /** Ширина РАМКИ доски в пикселях: именно она решает, есть ли место для панели (0 — ещё не померена). */
-  const [frameWidth, setFrameWidth] = useState(0);
+  /** Зеркало состояния для колбэков, которые React не пересоздаёт на каждый рендер. */
+  const stylesOpenRef = useRef(stylesOpen);
+  stylesOpenRef.current = stylesOpen;
+  /** Открывалась ли панель самим переключателем нижнего бара — см. обратное зеркало в `onChange`. */
+  const menuSeenRef = useRef(false);
+  /** Размер РАМКИ доски в пикселях (0 — ещё не померена): решает и место для панели, и раскладку полотна. */
+  const [frameBox, setFrameBox] = useState({ w: 0, h: 0 });
+  /** В мобильной ли раскладке сейчас Excalidraw — то есть создаётся ли панель полем `openMenu`. */
+  const mobileChrome = excalidrawMobileChrome(frameBox.w, frameBox.h);
+  /** Есть ли на полотне что форматировать: без этого переключателя нижнего бара просто нет. */
+  const [menuCanShow, setMenuCanShow] = useState(false);
   const stylesBtnRef = useRef<HTMLButtonElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
 
@@ -295,7 +358,8 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   /**
    * Нажатие человека: меняет ровно одно наше состояние и ровно один ключ в localStorage.
    * Ни `apiRef`, ни `updateScene`, ни `send(…)` — панели нет в сцене, значит и мутации в комнату
-   * на этот клик уйти не может (проверяет zz30 вместе с геометрией полотна).
+   * на этот клик уйти не может (проверяет zz30 вместе с геометрией полотна). Полотно в мобильной
+   * раскладке подстраивается отдельным эффектом-примирителем ниже, а не этим кликом.
    */
   function toggleStyles() {
     const next = !stylesOpen;
@@ -308,12 +372,17 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
    * порог 1280 px, хотя полотно живёт внутри `.container { max-width: 960px }`: рамка доски
    * такой ширины не достигает никогда, поэтому на ноутбуке 1366 px правило отвечало «места
    * хватает», а панель ложилась почти на весь холст. Наблюдаем за тем же элементом, который
-   * панель и перекрывает.
+   * панель и перекрывает, — и по ширине, и по высоте: высота нужна, чтобы отличить десктопную
+   * раскладку Excalidraw от мобильной (у той свои пороги, см. excalidrawMobileChrome).
    */
   useEffect(() => {
     const el = frameRef.current;
     if (!el || typeof window === 'undefined') return;
-    const measure = () => setFrameWidth(el.getBoundingClientRect().width);
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      // новый объект на каждый кадр resize = лишний рендер; сравниваем и возвращаем prev, если не изменилось
+      setFrameBox((prev) => (prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }));
+    };
     measure();
     if (typeof window.ResizeObserver === 'undefined') {
       window.addEventListener('resize', measure);
@@ -342,8 +411,31 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   }, [stylesRole]);
 
   useEffect(() => {
-    if (frameWidth > 0 && frameWidth < STYLES_PANEL_MIN_FRAME) setStylesOpen(false);
-  }, [frameWidth]);
+    if (frameBox.w > 0 && frameBox.w < STYLES_PANEL_MIN_FRAME) setStylesOpen(false);
+  }, [frameBox.w]);
+
+  /*
+   * Примирение с мобильной раскладкой: там панель — это дочерний узел нижнего бара, и появляется
+   * он только при `appState.openMenu === 'shape'`. Записать это поле снаружи нечем (у API 0.18.1
+   * нет `setAppState`), остаётся ровно тот же жест, что делает человек: нажатие кнопки «styles»
+   * в нижнем баре полотна. Кнопку ищем по её aria-метке — `duplicate`/`delete` идут сразу за ней,
+   * и промахнуться по ним нельзя: лишний клик удалил бы ученический рисунок.
+   *
+   * Эффект работает в обе стороны (открыть ⟹ нажать, закрыть ⟹ нажать снова) и вызывается только
+   * когда состояние библиотеки уже разошлось с нашим, — поэтому он не может устроить петлю.
+   */
+  useEffect(() => {
+    if (!mobileChrome || !canDraw) return;
+    const api = apiRef.current;
+    if (!api) return;
+    let shown = false;
+    try { shown = api.getAppState().openMenu === 'shape'; } catch { return; }
+    if (shown === stylesOpen) return;
+    const trigger = frameRef.current?.querySelector<HTMLElement>(
+      '.App-bottom-bar .App-toolbar-content button[aria-label="Edit"]',
+    );
+    trigger?.click();
+  }, [mobileChrome, stylesOpen, canDraw, menuCanShow]);
 
   /**
    * Esc закрывает панель. Фокус возвращается на кнопку ТОЛЬКО если он был внутри панели: иначе
@@ -724,7 +816,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
             tools: { image: false },
           }}
           excalidrawAPI={(a) => { apiRef.current = a; }}
-          onChange={(elements) => onChange(elements as unknown as RawEl[])}
+          onChange={(elements, appState) => onChange(elements as unknown as RawEl[], appState)}
           initialData={{ elements: [], appState: { viewModeEnabled: !canDraw, showWelcomeScreen: false }, scrollToContent: false }}
         />
       </div>

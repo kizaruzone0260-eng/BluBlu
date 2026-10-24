@@ -40,6 +40,8 @@ const bundleCss = cssFiles.map((p) => readFileSync(p, 'utf8')).join('\n');
 
 /** Те же имена, что стоят в нашем правиле `.board-frame[data-styles="closed"] …`. */
 const OUR_CSS = readFileSync(path.join(webDir, 'src/styles.css'), 'utf8');
+/** Компонент, который этим CSS-рычагом пользуется, — заодно проверяем его договор с библиотекой. */
+const BOARD_TSX = readFileSync(path.join(webDir, 'src/components/Board.tsx'), 'utf8');
 
 describe('the styles-panel CSS hook matches the installed Excalidraw', () => {
   it('the package the app builds against is resolved from apps/web', () => {
@@ -74,6 +76,41 @@ describe('the styles-panel CSS hook matches the installed Excalidraw', () => {
     const rule = OUR_CSS.match(/\.board-frame\[data-styles="closed"\][^}]*\{[^}]*\}/);
     expect(rule, 'the hide rule is missing').toBeTruthy();
     expect(rule![0]).toMatch(/display:\s*none\s*!important/);
+  });
+
+  it(`Excalidraw ${version} still renders the bottom-bar styles trigger our effect clicks`, () => {
+    /*
+     * Правка 2026-10-24: в мобильной раскладке панели в DOM нет, пока полотно не переведёт
+     * `appState.openMenu` в «shape», а записать это поле снаружи нечем — у императивного API
+     * 0.18.1 есть `getAppState`, но нет `setAppState`. Остался единственный рычаг: клик по
+     * кнопке нижнего бара, которую нажимает человек. Распознаём её по aria-метке из
+     * `buttons.edit` и по контейнеру `App-toolbar-content` — если библиотека переименует что-то
+     * из этого, тест падает здесь, а не молча «теряя» панель на уроке.
+     */
+    expect(bundleJs).toContain('App-bottom-bar');
+    expect(bundleJs).toContain('App-toolbar-content');
+    expect(bundleJs).toMatch(/name:"toggleEditMenu"/);
+    expect(bundleJs, 'кнопка потеряла aria-метку, по которой её находит Board.tsx')
+      .toMatch(/"aria-label":\s*[A-Za-z_$]+\("buttons\.edit"\)/);
+    /*
+     * Метка печатается на языке, которого у нашей кнопки нет: `<Excalidraw>` в Board.tsx не
+     * получает `langCode`, поэтому `buttons.edit` остаётся «Edit» и локатор `[aria-label="Edit"]`
+     * честен. Как только сюда придёт локализация полотна, локатор обязан стать списком меток.
+     */
+    expect(BOARD_TSX, 'полотно локализовали — локатор переключателя в Board.tsx больше не точен')
+      .not.toMatch(/langCode=\{/);
+  });
+
+  it(`Excalidraw ${version} still decides its chrome by «width < X or (height < Y and width < Z)»`, () => {
+    /*
+     * Тот самый предикат, который мы повторяем в `excalidrawMobileChrome` (730 / 500 / 1000 —
+     * константы того же бандла). Проверяется ФОРМА, а не числа: минификатор меняет имена, а вот
+     * если библиотека поменяет саму логику («только ширина»), наш расчёт раскладки станет ложью,
+     * и панель снова начнёт исчезать не по кнопке.
+     */
+    const fn = bundleJs.match(/"isMobileBreakpoint",\((\w+),(\w+)\)=>(.{0,80}?)\);/);
+    expect(fn, 'предикат раскладки исчез из бандла').toBeTruthy();
+    expect(fn![3], 'форма предиката раскладки изменилась').toMatch(/^\w+<\w+\|\|\w+<\w+&&\w+<\w+$/);
   });
 
   it('the class still labels the shape-actions panel, not something else', () => {

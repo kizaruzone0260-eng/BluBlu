@@ -12,8 +12,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  STYLES_PANEL_MIN_FRAME, boardStylesRole, resolveStylesPanel, stylesPanelKey,
-  stylesPanelLabels, stylesPanelStored,
+  STYLES_PANEL_MIN_FRAME, EXCALIDRAW_MOBILE_MAX_HEIGHT_LANDSCAPE, EXCALIDRAW_MOBILE_MAX_WIDTH,
+  EXCALIDRAW_MOBILE_MAX_WIDTH_LANDSCAPE, boardStylesRole, excalidrawMobileChrome, resolveStylesPanel,
+  stylesPanelKey, stylesPanelLabels, stylesPanelStored,
 } from '@klass/shared';
 import ru from '@klass/shared/locales/ru.json';
 import uz from '@klass/shared/locales/uz.json';
@@ -123,5 +124,48 @@ describe('board styles panel defaults', () => {
     // подпись кнопки должна оставаться короткой: она живёт в шапке полотна рядом с остальными
     expect(lessonOf('ru').boardStyles).toBe('Стили');
     expect(lessonOf('en').boardStyles).toBe('Styles');
+  });
+});
+
+/*
+ * Правка 2026-10-24 (та же часть A, второй слой). Оказалось, что «панель» у Excalidraw — не один
+ * узел: библиотека сама решает, какой раскладкой рисовать, по размеру СВОЕГО контейнера, и в
+ * мобильной раскладке панели форматирования в DOM нет вовсе, пока полотно не попросит её своей
+ * кнопкой. Прежний код знал про это один рычаг (CSS), поэтому на коротком полотне «Стили» жалась
+ * в пустоту. Здесь зафиксирован расчёт раскладки — та самая ветка, которую в Board.tsx выбирает
+ * эффект-примиритель.
+ */
+describe('which chrome the canvas will draw', () => {
+  it('the lesson board at 1280×720 is the MOBILE chrome — that is the case the toggle used to miss', () => {
+    // сетка урока: min(60vh, 100dvh − 420px) при 720 px = 300 px высоты, ширина ~912 px
+    expect(excalidrawMobileChrome(912, 300)).toBe(true);
+    // и «сцена» той же страницы: 40vh = 288 px
+    expect(excalidrawMobileChrome(912, 288)).toBe(true);
+  });
+
+  it('a tall board is the desktop chrome, where CSS alone owns the panel', () => {
+    expect(excalidrawMobileChrome(912, 620)).toBe(false);
+    // широкое полотно остаётся десктопным даже при короткой рамке
+    expect(excalidrawMobileChrome(1200, 300)).toBe(false);
+  });
+
+  it('the thresholds are the library’s own, and the border belongs to the library', () => {
+    expect(EXCALIDRAW_MOBILE_MAX_WIDTH).toBe(730);
+    expect(EXCALIDRAW_MOBILE_MAX_HEIGHT_LANDSCAPE).toBe(500);
+    expect(EXCALIDRAW_MOBILE_MAX_WIDTH_LANDSCAPE).toBe(1000);
+    // ровно на границе библиотека мобильной раскладку НЕ считает (`<`, не `<=`)
+    expect(excalidrawMobileChrome(730, 600)).toBe(false);
+    expect(excalidrawMobileChrome(729, 600), 'портрет — всегда мобильная').toBe(true);
+    expect(excalidrawMobileChrome(999, 500)).toBe(false);
+    expect(excalidrawMobileChrome(999, 499), 'короткое полотно шире 730 px — всё ещё мобильная').toBe(true);
+    expect(excalidrawMobileChrome(1000, 300), 'на 1000 px ширины высота уже не решает').toBe(false);
+  });
+
+  it('an unmeasured or broken box never claims a chrome', () => {
+    // 0 — это «ещё не померено»: примиритель не имеет права ничего нажимать до первого замера
+    expect(excalidrawMobileChrome(0, 0)).toBe(false);
+    expect(excalidrawMobileChrome(912, 0)).toBe(false);
+    expect(excalidrawMobileChrome(Number.NaN, 300)).toBe(false);
+    expect(excalidrawMobileChrome(-1, -1)).toBe(false);
   });
 });

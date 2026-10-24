@@ -235,13 +235,16 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .board-frame .help-icon,
 .board-frame .layer-ui__wrapper__top-right { display: none !important; }
 /*
- * Часть A (2026-10-23): панель стилей. У Excalidraw 0.18.1 НЕТ пропса или пункта `UIOptions` для
- * неё, а `appState.openMenu` на десктопе видимость не решает (контейнер показывает панель по
- * предикату «есть чего показать»), поэтому рычаг один — класс контейнера панели:
- * `.selected-shape-actions` (десктоп, островок слева от полотна) и `.App-mobile-menu` (тот же
- * набор на узких экранах, внизу). Открыта она или нет решает наше состояние `data-styles` на
- * рамке, а не сцена библиотеки — так `aria-pressed` на кнопке не может разойтись с полотном.
- * Классы живые: за них отвечает test/unit/excalidraw-styles-panel.test.ts.
+ * Часть A (2026-10-23, правка 2026-10-24): панель стилей. У Excalidraw 0.18.1 НЕТ пропса или
+ * пункта `UIOptions` для неё, поэтому рычаг — класс контейнера панели: `.selected-shape-actions`
+ * (десктоп, островок слева от полотна) и `.App-mobile-menu` (тот же набор в нижнем баре, когда
+ * полотно короткое или узкое). Правило ниже работает для ДЕСКТОПНОЙ раскладки: там узел в DOM есть
+ * всегда, и его достаточно спрятать. В мобильной раскладке узла без `appState.openMenu === "shape"`
+ * не существует вовсе, так что там показом добирается эффект-примиритель в Board.tsx — а это правило
+ * остаётся страховкой на тот кадр, пока состояние уже открыто, а полотно ещё не перерисовано.
+ * Хозяин состояния один — наше `data-styles` на рамке: так `aria-pressed`/`aria-expanded` на кнопке
+ * не могут разойтись с полотном. Классы живые: за них отвечает
+ * test/unit/excalidraw-styles-panel.test.ts.
  */
 .board-frame[data-styles="closed"] .selected-shape-actions,
 .board-frame[data-styles="closed"] .App-mobile-menu { display: none !important; }
