@@ -256,7 +256,180 @@ export async function paintStable(page: Page, slot: keyof typeof SLOTS): Promise
       await page.waitForTimeout(250);
     }
   }
-  m('paintStable: штрих не лёг с трёх попыток', { slot, ink0, inkNow: await inkAll(page) });
+  // сюда приходит только по-настоящему не удавшийся штрих: что именно не так — говорит inkFault
+  m('paintStable: штрих не лёг с трёх попыток', { slot, ink0, inkNow: await inkAll(page), fault: await inkFault(page, ink0) });
+}
+
+/**
+ * Вернёмся к началу §4: «красный обязан называть ветку». `inkAll` измеряет холст честно, но по
+ * одному числу нельзя отличить «штриха нет» от «штрих есть, но не там». Поэтому здесь читаются
+ * ТРИ независимых источника: настоящий кадр Excalidraw, счётчик тёмных пикселей и рамки сокета
+ * доски.
+ */
+
+/** Что видно из экземпляра Excalidraw: сцена, viewport, инструмент, выделение. */
+export interface SceneView {
+  err?: string;
+  tool: string | null;
+  scrollX: number; scrollY: number; zoom: number;
+  /** видимая область сцены: [x0, y0, x1, y1] */
+  view: [number, number, number, number];
+  els: { id: string; type: string; x: number; y: number; w: number; h: number; version: number; deleted: boolean; inView: boolean; locked: boolean }[];
+  newElement: { type: string; x: number; y: number; w: number; h: number } | null;
+  selected: string[];
+}
+
+/**
+ * Состояние полотна изнутри компонента.
+ *
+ * Продукт ради тестов отлаживать нельзя, а `ExcalidrawImperativeAPI` наружу не торчит, поэтому
+ * читается тот же самый экземпляр App, что рисует: от DOM-узла `.excalidraw` вверх по
+ * react-fiber до первого `stateNode` с `state.scrollX`. Это НЕ «элемент существует в памяти»
+ * вместо проверки на экране — `inkAll` остаётся обязательным, здесь он только объясняет причину.
+ */
+export function boardScene(page: Page): Promise<SceneView> {
+  return page.evaluate(() => {
+    const host = document.querySelector('[data-testid=board] .excalidraw') as
+      unknown as { [k: string]: unknown } | null;
+    if (!host) return { err: 'нет .excalidraw' } as never;
+    const key = Object.keys(host).find((k) => k.startsWith('__reactFiber$'));
+    if (!key) return { err: 'нет react-fiber' } as never;
+    type Fiberish = { return?: Fiberish; stateNode?: { state?: Record<string, unknown> } };
+    type AppLike = { state: Record<string, any>; scene?: Record<string, any> };
+    let node = host[key] as Fiberish | undefined;
+    let app: AppLike | null = null;
+    for (let hop = 0; node && hop < 80; hop++, node = node.return) {
+      const sn = node.stateNode;
+      if (sn && typeof sn.state?.scrollX === 'number') { app = sn as unknown as AppLike; break; }
+    }
+    if (!app) return { err: 'нет экземпляра App' } as never;
+    const st = app.state;
+    const sc = app.scene;
+    const read = sc?.getNonDeletedElements ?? sc?.getSceneElements;
+    const raw = (typeof read === 'function' ? read.call(sc) : st.elements) as any[] | undefined;
+    const els = raw ?? [];
+    const zoom = st.zoom?.value ?? 1;
+    const x0 = -st.scrollX, y0 = -st.scrollY;
+    const x1 = st.width / zoom + x0, y1 = st.height / zoom + y0;
+    return {
+      tool: st.activeTool?.type ?? null,
+      scrollX: Math.round(st.scrollX), scrollY: Math.round(st.scrollY), zoom,
+      view: [Math.round(x0), Math.round(y0), Math.round(x1), Math.round(y1)],
+      els: els.map((e) => ({
+        id: String(e.id), type: String(e.type),
+        x: Math.round(e.x), y: Math.round(e.y), w: Math.round(e.width), h: Math.round(e.height),
+        version: Number(e.version), deleted: !!e.isDeleted, locked: e.locked === true,
+        inView: e.x < x1 && e.x + e.width > x0 && e.y < y1 && e.y + e.height > y0,
+      })),
+      newElement: st.newElement
+        ? {
+          type: String(st.newElement.type), x: Math.round(st.newElement.x), y: Math.round(st.newElement.y),
+          w: Math.round(st.newElement.width), h: Math.round(st.newElement.height),
+        } : null,
+      selected: Object.keys(st.selectedElementIds ?? {}).filter((k) => st.selectedElementIds[k]),
+    };
+  });
+}
+
+/** Тёмные пиксели каждого холста доски: `static=1598 interactive=212`. */
+export function inkLayers(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const list = [...document.querySelectorAll('[data-testid=board] canvas')] as HTMLCanvasElement[];
+    return list.map((c) => {
+      const g = c.getContext('2d', { willReadFrequently: true });
+      let dark = -1;
+      if (g && c.width) {
+        try {
+          const d = g.getImageData(0, 0, c.width, c.height).data;
+          dark = 0;
+          for (let k = 0; k < d.length; k += 4) if (d[k + 3] > 0 && (d[k] < 240 || d[k + 1] < 240 || d[k + 2] < 240)) dark++;
+        } catch { dark = -9; }
+      }
+      return `${c.className.replace('excalidraw__canvas', '').trim() || 'canvas'}=${dark}`;
+    }).join(' ');
+  });
+}
+
+/**
+ * Живой журнал сокета доски: сколько кадров `edits` ушло, какие `notice` вернулись.
+ *
+ * Вешается на страницу сразу после создания (`watchBoardSocket`), иначе отказ сервера
+ * `boardForeign`/`boardStudentLimit` в красном тесте нечем отличить от «правку не приняли».
+ * Читается только то, что и так проходит через сокет: тип, страница и число элементов.
+ */
+export interface SocketLog { sent: number; codes: string[]; received: string[] }
+const socketLogs = new WeakMap<Page, SocketLog>();
+
+export function watchBoardSocket(page: Page): SocketLog {
+  const log: SocketLog = { sent: 0, codes: [], received: [] };
+  socketLogs.set(page, log);
+  page.on('websocket', (ws) => {
+    if (!ws.url().includes('/ws/board')) return;
+    ws.on('framesent', (f) => {
+      try { if ((JSON.parse(String(f.payload)).type) === 'edits') log.sent++; } catch { /* не наш кадр */ }
+    });
+    ws.on('framereceived', (f) => {
+      try {
+        const o = JSON.parse(String(f.payload));
+        if (o.type === 'notice') log.codes.push(String(o.code));
+        else log.received.push(String(o.type));
+      } catch { /* не наш кадр */ }
+    });
+  });
+  return log;
+}
+
+export const boardSocket = (page: Page): SocketLog => socketLogs.get(page) ?? { sent: 0, codes: [], received: [] };
+
+/**
+ * Именованная причина, по которой чернил не видно. Ветки — ровно те, что требует разбор:
+ * ввод не создал элемент / нулевой размер / элемент вне поля зрения / сцена есть, холста нет /
+ * сервер отверг / наружу ничего не ушло.
+ */
+export async function inkFault(page: Page, before: number): Promise<string> {
+  const [scene, layers, sock] = [await boardScene(page), await inkLayers(page), boardSocket(page)];
+  if (scene.err) return `сцена не читается (${scene.err}); холсты: ${layers}; отправлено edits: ${sock.sent}`;
+  const last = scene.els[scene.els.length - 1];
+  const base = `холсты: ${layers}; чернил до/после: ${before}/${await inkAll(page)}; edits отправлено: ${sock.sent}; ответы сервера: ${sock.codes.join(',') || 'нет'}`;
+  if (sock.codes.length) return `СЕРВЕР ОТВЕРГ ПРАВКУ: ${sock.codes[sock.codes.length - 1]} — ${base}`;
+  if (!last) return `ВВОД НЕ СОЗДАЛ ЭЛЕМЕНТА (сцена пуста, инструмент ${scene.tool}) — ${base}`;
+  if (scene.newElement) {
+    return `ПЕРЕТАСКИВАНИЕ НЕ ЗАВЕРШЕНО: элемент всё ещё в ` +
+      `newElement ${scene.newElement.type} ${scene.newElement.w}×${scene.newElement.h} — ${base}`;
+  }
+  if (last.w < 3 || last.h < 3) {
+    return `ВВОД ДАЛ ПУСТОЙ ШТРИХ: ${last.type} ${last.w}×${last.h} в (${last.x},${last.y}) — ` +
+      `курсор двигали, перетаскивание не зарегистрировано — ${base}`;
+  }
+  if (!last.inView) {
+    return `ЭЛЕМЕНТ ВНЕ ПОЛЯ ЗРЕНИЯ: ${last.type} (${last.x},${last.y}) ${last.w}×${last.h}, ` +
+      `видно ${JSON.stringify(scene.view)}, scroll=(${scene.scrollX},${scene.scrollY}), zoom=${scene.zoom} — ` +
+      `полотно знает о своём положении другое — ${base}`;
+  }
+  return `СЦЕНА ОБНОВИЛАСЬ, ХОЛСТ НЕТ: ${last.type} (${last.x},${last.y}) ${last.w}×${last.h} в поле зрения ` +
+    `(версия ${last.version}), но тёмных пикселей не прибавилось — ${base}`;
+}
+
+/**
+ * Чернила обязаны ПОЯВИТЬСЯ на холсте; если нет — красный с именем ветки.
+ *
+ * Заменяет голые `expect.poll(() => inkAll(...))`: проверка ровно та же (тёмные пиксели
+ * отрисованного canvas), но падение теперь говорит, где именно оборвалась цепочка.
+ *
+ * `reveal: true` (по умолчанию) считает полотно после «вернуться к содержимому» — так измеряется
+ * «человек увидел свои чернила, если захочет». `reveal: false` — как именно они видны СЕЙЧАС,
+ * без подсказки: так устроен тест на метку «рисунок ушёл из вида».
+ */
+export async function expectInk(page: Page, opts: {
+  before: number; label: string; timeout?: number; reveal?: boolean;
+}): Promise<void> {
+  const { before, label, timeout = 20_000, reveal = true } = opts;
+  const measure = reveal ? inkSeen : inkAll;
+  try {
+    await expect.poll(() => measure(page), { timeout, message: label }).toBeGreaterThan(before);
+  } catch (e) {
+    throw new Error(`${label}\n  ${await inkFault(page, before)}`, { cause: e });
+  }
 }
 
 /** A text element typed on the canvas — used by the font/rendering test (task 3). */

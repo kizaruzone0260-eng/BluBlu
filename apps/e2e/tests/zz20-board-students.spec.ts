@@ -13,8 +13,9 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, boardGeom, geomShift, inkAll, inkSeen, loginUi, makeLesson, m, openLesson, paintStable,
-  registerStudent, revealInk, stack, teacherToken, waitBoard, winOf, type Ctx,
+  BASE, boardGeom, boardScene, expectInk, geomShift, inkAll, inkSeen, loginUi, makeLesson, m,
+  openLesson, paintStable, registerStudent, revealInk, stack, teacherToken, waitBoard,
+  watchBoardSocket, winOf, type Ctx,
 } from './boardFixtures';
 import { openTab } from './controlBar';
 
@@ -78,6 +79,9 @@ test.describe('students drawing on the board (part 3)', () => {
   async function join(browser: Browser, email: string, password: string) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const page = await ctx.newPage();
+    // журнал сокета доски нужен СРАЗУ: отказ сервера приходит одним кадром, и восстановить его
+    // постфактум нельзя, а без него «чернил нет» неотличимо от «сервер не принял правку»
+    watchBoardSocket(page);
     await loginUi(page, email, password);
     await page.goto(`/lesson?classId=${classId}`);
     const joined = await api.post(`/api/lessons/${sessionId}/join`, { headers: { authorization: `Bearer ${token}` } });
@@ -170,10 +174,8 @@ test.describe('students drawing on the board (part 3)', () => {
     const before = await inkSeen(t.page);
     await paintStable(a.page, 'A');
     // сначала у неё самой: не лёг штрих — это рисование, а не распространение по WS
-    await expect.poll(() => inkSeen(a.page),
-      { timeout: 15_000, message: 'штрих Анны виден у неё на полотне' }).toBeGreaterThan(before);
-    await expect.poll(() => inkSeen(t.page), { timeout: 30_000, message: 'штрих ученика доехал до учителя' })
-      .toBeGreaterThan(before);
+    await expectInk(a.page, { before, label: 'штрих Анны виден у неё на полотне', timeout: 15_000 });
+    await expectInk(t.page, { before, label: 'штрих ученика доехал до учителя', timeout: 30_000 });
     const inkAfterA = await inkSeen(t.page);
     /*
      * Отрицательная проверка «метки нет, когда рисунок уже в поле зрения» перенесена в тест
@@ -272,24 +274,34 @@ test.describe('students drawing on the board (part 3)', () => {
    * спеке, то есть он зависит от того, куда именно в сцене лёг штрих ученика, а это измеряется
    * только его собственным полотном. Проверка не удалена — она исполняется в джобе `e2e-unstable`.
    *
-   * ТЕГ @unstable и по другой причине, найденной в прогоне 38941834886: у первой половины (рисует
-   * сам учитель) не подтвердилось её же предусловие — после `paintStable` полотно учителя осталось
-   * пустым (`inkAll` = 0 за 20 с), хотя рисовать учителю разрешено и на сервере
-   * (`routes/board.ts:430`: `canEdit: role === 'teacher'`, `canDraw` для учителя всегда `true`), и
-   * на клиенте (`Board.tsx:563`: `viewModeEnabled={!canDraw}`). Руками — `docs/MANUAL_QA.md`, §2.
+   * ЧЕМ ОКАЗАЛСЯ ЭТОТ ФЛЭК (разбор 2026-10-24: трасса CI-прогона 40075097179, локальный повтор
+   * тем же спек-зондом, поштучный разбор кадров и состояний полотна). Два разных симптома, ОДНА
+   * причина — и ни один из них не «рисование не работает»:
    *
-   * ГДЕ ИМЕННО ОБРЫВАЕТСЯ (прогон 39034112298, трасса + оба кадра прочитаны). Сбой не в транспорте:
-   *  - право дано: на полотне Анны плашка «You can draw», `peer-draw-…` нажата учителем;
-   *  - штрих рисуется: в трассе страницы Анны три полных перетаскивания (click → mouseMove →
-   *    mouseUp) по слоту C, каждое с десятью проверками по 250 мс;
-   *  - чернила УШЛИ и дошли: на финальном кадре УЧИТЕЛЯ висит метка «Анна Тест нарисовал(а),
-   *    показать», а она строится именно по пришедшим чернилам ученика;
-   *  - не показывает себя только полотно самой Анны: `inkSeen` = 1833 → 1833 за 20 с, и на её
-   *    финальном кадре виден лишь штрих учителя (под курсором — «That is somebody else's
-   *    drawing», то есть чужой элемент), а её собственного прямоугольника в слоте C нет.
-   * То есть дефект в локальном отображении собственного штриха ученика (его сцена обновляется
-   * позже, чем чернила уходят наружу), а не в правах, не в сокете и не на сервере. Чинится в
-   * доске учеников — вне этого захода; спек остаётся неблокирующим с сохранённой проверкой.
+   *  • штрих создаётся ВСЕГДА: инструмент rectangle, `newElement` растёт по кадрам перетаскивания
+   *    0×0 → 27×18 → … → 160×110, элемент попадает в сцену, уходит на сервер и доходит до
+   *    собеседника (метка у учителя при этом на месте);
+   *  • но рождается он НЕ там, где курсор. Excalidraw считает координаты указателя по КЭШИРУЮЩЕМУСЯ
+   *    смещению холста (`clientY - state.offsetTop`) и перечитывает его только на смену РАЗМЕРА
+   *    контейнера, на `resize` и на прокрутку окна. Урок же двигает доску, не меняя её размера:
+   *    сетка участников вырастает, когда приезжают треки (замер: canvas y 444 → 399 → 447 → 420
+   *    при неизменных 894×480). Курсор в canvas-y=250, а элемент в сцене на y=-494 — на 744 px
+   *    выше, за верхней границей видимой области.
+   *  • отсюда оба лица сбоя: `inkAll` = 0 у учителя в CI (элемент есть, выбран, но не нарисовано
+   *    НИЧЕГО, и над пустым полотном висит «Scroll back to content») и «свой штрих не виден самой
+   *    Анне» (то же, плюс снимок страницы успевал переставить её сцену без собственного штриха —
+   *    см. порядок merge/snapshot в `routes/board.ts`).
+   *
+   * Опровергнутые ранее версии, чтобы сюда не возвращались: «учителю нельзя рисовать» (проверки
+   * `board-readonly` нет), «конец штриха за краем окна» (`paintStable` поднимает полотно в окно и
+   * повторяет), «фоновая страница глушит rAF» (замер `document.hidden`/rAF живости), «двойной
+   * экземпляр полотна» (в `[data-testid=board]` ровно два canvas: static и interactive, чернила
+   * всегда на static). Права, сокет и сервер были исправны всё это время.
+   *
+   * Правка — продуктовая (`Board.tsx`: перечитывание смещения при сдвиге кадра; `sentRef` больше
+   * не забывает то, что сервер уже имеет; `routes/board.ts`: снимок после merge), а не тестовая.
+   * Спек остаётся под @unstable и в неблокирующей джобе: он по-прежнему проверяет метку целиком,
+   * а блокирующий набор не менял тега сознательно (см. комментарий шага 3 выше).
    */
   test('метка молчит, когда ей молчать положено @unstable', async ({ browser }) => {
     test.setTimeout(300_000);
@@ -305,19 +317,29 @@ test.describe('students drawing on the board (part 3)', () => {
     // 1. свой штрих учителя метку не зовёт
     await revealInk(t.page);
     /*
-     * Сначала — почему штрих вообще обязан лечь. `Board.tsx:532` рисует `board-readonly` ровно
-     * тогда, когда `canDraw` false, а `viewModeEnabled={!canDraw}` (строка 563) в этом режиме
-     * отключает рисование целиком. Два прогона подряд (38949336521, 38952926396) этот тест падал
-     * на `inkAll` = 0 после `paintStable` у учителя — теперь вместо этого красным станет вот эта
-     * строка, и она назовёт причину: полотно учителя в этом состоянии только для просмотра
-     * (тогда редактируемая доска — панель, и тест должен сначала открыть её), а не «магия Excalidraw».
+     * Право рисовать здесь проверяется ДО рисования, а не выводится из наличия чернил:
+     * `Board.tsx` рисует `board-readonly` ровно тогда, когда `canDraw` false, и в этом же режиме
+     * включает `viewModeEnabled`, где рисование отключено целиком.
      */
     await expect(viewOnly(t.page), 'полотно учителя не в режиме просмотра — рисовать можно')
       .toHaveCount(0, { timeout: 15_000 });
     m('own-ink control: teacher canvas', await boardGeom(t.page));
     await paintStable(t.page, 'A');
-    await expect.poll(() => inkAll(t.page),
-      { timeout: 20_000, message: 'собственный штрих виден учителю на полотне' }).toBeGreaterThan(0);
+    await expectInk(t.page, { before: 0, label: 'собственный штрих виден учителю на полотне', reveal: false });
+    /*
+     * И то, чего прежняя проверка сказать не могла: штрих лёг ТУДА, где стоял курсор. Именно это
+     * и ломалось — полотно смещалось вместе с вёрсткой урока, а Excalidraw продолжал чертить по
+     * устаревшему смещению, из-за чего элемент появлялся за видимой областью (`inkAll` = 0 при
+     * исправном рисовании). Проверка читает настоящий viewport полотна, а не только пиксели.
+     */
+    {
+      const sc = await boardScene(t.page);
+      const last = sc.els[sc.els.length - 1];
+      expect(last, 'штрих учителя есть в его сцене').toBeTruthy();
+      expect(last.inView, `штрих учителя в поле зрения: (${last.x},${last.y}) ${last.w}×${last.h}, ` +
+        `видно ${JSON.stringify(sc.view)}, scroll=(${sc.scrollX},${sc.scrollY})`).toBe(true);
+      expect(last.w, 'и это перетаскивание, а не клик').toBeGreaterThan(20);
+    }
     await expect(chip(t.page), 'своя рисовка метку не зовёт').toHaveCount(0, { timeout: 5_000 });
 
     /*
@@ -345,16 +367,24 @@ test.describe('students drawing on the board (part 3)', () => {
       'учитель ушёл от содержимого').toBeVisible({ timeout: 10_000 });
     const aBeforeC = await inkSeen(a.page);
     await paintStable(a.page, 'C');
-    await expect.poll(() => inkSeen(a.page),
-      { timeout: 20_000, message: 'штрих виден самой Анне (предусловие метки)' })
-      .toBeGreaterThan(aBeforeC);
+    await expectInk(a.page, { before: aBeforeC, label: 'штрих виден самой Анне (предусловие метки)' });
+    {
+      const sc = await boardScene(a.page);
+      const last = sc.els[sc.els.length - 1];
+      expect(last, 'штрих Анны есть в её сцене').toBeTruthy();
+      expect(last.locked, 'свой элемент ученику не блокируется').toBe(false);
+      expect(last.inView, `штрих Анны лёг туда, где был курсор: (${last.x},${last.y}) ${last.w}×${last.h}, ` +
+        `видно ${JSON.stringify(sc.view)}, scroll=(${sc.scrollX},${sc.scrollY})`).toBe(true);
+      expect(last.w, 'и это перетаскивание, а не клик').toBeGreaterThan(20);
+    }
     await expect(chip(t.page), 'метка об ушедшем из вида рисунке появилась').toBeVisible({ timeout: 20_000 });
     await expect(chip(t.page)).toContainText('Анна');
     await chip(t.page).click();
     await expect(chip(t.page), 'метка снимается после перехода').toHaveCount(0, { timeout: 10_000 });
-    await expect.poll(() => inkAll(t.page),
-      { timeout: 20_000, message: 'по тапу на метку полотно учителя показало рисунок ученика' })
-      .toBeGreaterThan(0);
+    await expectInk(t.page, {
+      before: 0, timeout: 20_000, reveal: false,
+      label: 'по тапу на метку полотно учителя показало рисунок ученика',
+    });
 
     for (const v of [t, a]) await v.ctx.close();
   });
