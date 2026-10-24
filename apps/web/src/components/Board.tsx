@@ -438,19 +438,45 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobileChrome, stylesOpen, canDraw]);
 
-  /**
-   * Esc закрывает панель. Фокус возвращается на кнопку ТОЛЬКО если он был внутри панели: иначе
-   * клавиатура полотна (V, P, E, Ctrl+Z) осталась бы на холсте и продолжала работать, что и
-   * требует проверка. Никакого `preventDefault` — Excalidraw обрабатывает Esc сам.
+  /*
+   * Esc закрывает панель, и вешать это надо на `window` в фазе capture — не на React-овский
+   * `onKeyDown` рамки. Причина найдена прогоном 40067363056 (`zz30`, «Esc closes the panel»):
+   * полотно само слушает Escape на `document` в capture-фазе и вызывает
+   * `stopImmediatePropagation()` (в prod-бандле — `i.key===ESCAPE && (i.nativeEvent
+   * .stopImmediatePropagation(), i.stopPropagation(), …)`), то есть до React-овского слушателя на
+   * корне события про просто не доходит. Capture на `window` стоит на шаг раньше `document`, так
+   * что мы своё получаем, а полотно — своё: ничего не отменяем и не глушим.
+   *
+   * Слушатель живёт ровно пока панель открыта и берёт на себя только Escape внутри рамки доски —
+   * чужой Esc (модалка, меню, другое поле) его не касается. Фокус возвращается на кнопку ТОЛЬКО
+   * если он был внутри панели: иначе клавиатура полотна (V, P, E, Ctrl+Z) осталась бы на холсте и
+   * продолжала работать, что и требует проверка.
    */
-  function onBoardKeyDown(e: React.KeyboardEvent) {
-    if (e.key !== 'Escape' || !stylesOpen) return;
-    const panel = e.currentTarget.querySelector('.selected-shape-actions, .App-mobile-menu');
-    const focusWasInside = !!panel && panel.contains(document.activeElement);
-    setStylesOpen(false);
-    writeStoredStyles(false);
-    if (focusWasInside) stylesBtnRef.current?.focus();
-  }
+  useEffect(() => {
+    if (!stylesOpen || typeof window === 'undefined') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const frame = frameRef.current;
+      if (!frame) return;
+      const t = e.target as Node | null;
+      /*
+       * Берём на себя Esc, только если он относится к доске: нажатие внутри рамки ИЛИ фокус
+       * вообще ни на чём (body/html — так бывает после клика по холсту: полотна у Excalidraw
+       * нет `tabindex`, и фокус после клика остаётся на странице). Чужой Esc — поле ввода,
+       * модалка экспорта, меню — остаётся чужим.
+       */
+      const ours = (!!t && frame.contains(t)) || t === document.body || t === document.documentElement;
+      if (!ours) return;
+      const panel = frame.querySelector('.selected-shape-actions, .App-mobile-menu');
+      const focusWasInside = !!panel && panel.contains(document.activeElement);
+      setStylesOpen(false);
+      writeStoredStyles(false);
+      if (focusWasInside) stylesBtnRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stylesOpen]);
 
   /** task 4: the ONLY canvas action we expose — teacher clears the current board.
    * Elements are soft-deleted so the WS delta sync propagates the wipe to all. */
@@ -792,12 +818,11 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
         {error && <p className="error">{error}</p>}
       </div>
       {/*
-        `data-styles` — единственный переключатель панели стилей (см. CSS-правило в styles.css),
-        `onKeyDown` — Esc. Новый дочерний элемент при этом не появляется: слушатель висит на том же
-        div, внутри которого рисует Excalidraw.
+        `data-styles` — единственный переключатель панели стилей (см. CSS-правило в styles.css).
+        Esc вешается не здесь, а на `window` в capture-фазе (см. эффект выше): полотно глушит
+        Escape раньше, чем он доходит до React-овского слушателя на корне.
       */}
-      <div ref={frameRef} style={{ height }} className="board-frame" data-styles={stylesOpen ? 'open' : 'closed'}
-        onKeyDown={onBoardKeyDown}>
+      <div ref={frameRef} style={{ height }} className="board-frame" data-styles={stylesOpen ? 'open' : 'closed'}>
         <Excalidraw
           viewModeEnabled={!canDraw}
           zenModeEnabled={!canDraw}

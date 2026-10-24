@@ -164,6 +164,31 @@ describe('the styles-panel toggle is the only control and touches nothing but it
     expect(observed).toBeLessThan(throttled);
   });
 
+  it('Esc is caught on window in the capture phase — the canvas swallows it before React does', () => {
+    /*
+     * Прогон 40067363056: `zz30` «Esc closes the panel» краснеет с `data-styles="open"`, хотя
+     * нажатие было. Excalidraw слушает Escape на `document` в capture-фазе и вызывает
+     * `stopImmediatePropagation()`, поэтому React-овский `onKeyDown` на рамке не отрабатывает
+     * никогда. Слушатель обязан висеть на `window` в capture (это шаг раньше `document`), жить
+     * только пока панель открыта, брать только своё нажатие (внутри рамки) и не глушить событие
+     * за собой.
+     */
+    expect(src, 'React-овский onKeyDown на рамке больше не хозяин Escape').not.toMatch(/onBoardKeyDown/);
+    const esc = src.match(/useEffect\(\(\) => \{\s*if \(!stylesOpen[\s\S]{0,1200}?\}, \[stylesOpen\]\);/);
+    expect(esc, 'эффект Escape потерян').toBeTruthy();
+    const body = esc![0];
+    expect(body).toMatch(/if \(e\.key !== 'Escape'\) return;/);
+    expect(body, 'чужой Escape трогать нельзя')
+      .toMatch(/const ours = \(\!\!t && frame\.contains\(t\)\) \|\| t === document\.body \|\| t === document\.documentElement;/);
+    expect(body).toMatch(/if \(!ours\) return;/);
+    expect(body).toMatch(/window\.addEventListener\('keydown', onKey, true\);/);
+    expect(body).toMatch(/window\.removeEventListener\('keydown', onKey, true\);/);
+    expect(body, 'событие нельзя глушить: полотно само решает, что делать с Esc')
+      .not.toMatch(/stopPropagation|preventDefault/);
+    expect(body).toMatch(/setStylesOpen\(false\);/);
+    expect(body).toMatch(/writeStoredStyles\(false\);/);
+  });
+
   it('students without drawing permission still cannot open it (permission rules unchanged)', () => {
     expect(src).toMatch(/disabled=\{!canDraw\}/);
     expect(src, 'причине «не жмётся» читается в подсказке').toMatch(/t\('lesson\.boardNoPermission'\)/);
