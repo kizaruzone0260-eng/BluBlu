@@ -4,16 +4,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { INVITE_LABEL_MAX, INVITE_LINK_DEFAULT_TTL_DAYS, INVITE_LINK_TTL_DAYS, passwordPolicy } from '@klass/shared';
-import { fmtDate, fmtDateTime } from '../lib/format';
+import { fmtDate } from '../lib/format';
 import { useAuth } from '../App';
 import Feed from '../components/Feed';
+import InviteHistory from '../components/InviteHistory';
 
-interface InviteRow {
-  id: string; status: 'active' | 'used' | 'expired' | 'revoked';
-  expiresAt: string; usedAt: string | null; usedByName: string | null; createdAt: string;
-  /** задача 2026-10-23: список показывает оба вида приглашений */
-  kind?: 'code' | 'link'; label?: string;
-}
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
 interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean; boardArchivePublic?: boolean }
 
@@ -31,6 +26,9 @@ export default function ClassDetail() {
   const [linkTtl, setLinkTtl] = useState<number>(INVITE_LINK_DEFAULT_TTL_DAYS);
   const [newLink, setNewLink] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  // окно истории закрыто по умолчанию: на главном экране класса записей нет, пока учитель не
+  // попросил их посмотреть (задача 2026-10-24, часть B)
+  const [historyOpen, setHistoryOpen] = useState(false);
   // сброс пароля учителем (часть C): null — форма закрыта, иначе id ученика
   const [pwFor, setPwFor] = useState<string | null>(null);
   const [pwA1, setPwA1] = useState('');
@@ -79,14 +77,8 @@ export default function ClassDetail() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['classes'] }); },
   });
 
-  // задача 2026-10-23: история обоими видами приглашений одним запросом (`…/invitations`).
-  // `…/invites` остаётся списком КОДОВ — на нём держится прежний экран, и сервер теперь
-  // возвращает там только kind='code', чтобы ссылки не путались с кодами.
-  const invites = useQuery({
-    queryKey: ['invitations', id],
-    queryFn: () => api<InviteRow[]>(`/api/classes/${id}/invitations`),
-    enabled: me?.role === 'teacher',
-  });
+  // задача 2026-10-24 (часть B): история приглашений больше не живёт на экране класса — её
+  // тянет отдельное окно (`InviteHistory`), и только когда учитель его открыл.
   const members = useQuery({
     queryKey: ['members', id],
     queryFn: () => api<MemberRow[]>(`/api/classes/${id}/members`),
@@ -106,13 +98,6 @@ export default function ClassDetail() {
     onSuccess: (r) => {
       setNewLink(r.url);
       void qc.invalidateQueries({ queryKey: ['invitations', id] });
-    },
-  });
-  const revoke = useMutation({
-    mutationFn: (inviteId: string) => api(`/api/classes/${id}/invites/${inviteId}/revoke`, { method: 'POST' }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['invitations', id] });
-      say(t('classes.invite.revoked'));
     },
   });
   const removeMember = useMutation({
@@ -234,44 +219,23 @@ export default function ClassDetail() {
               )}
             </div>
 
-            <table style={{ marginTop: 12 }}>
-              <thead>
-                <tr>
-                  <th>{t('classes.invite.kind')}</th><th>{t('classes.invite.label')}</th>
-                  <th>{t('classes.invite.title')}</th><th>{t('classes.invite.created')}</th>
-                  <th>{t('classes.invite.expires')}</th>
-                  <th>{t('classes.invite.usedBy')}</th><th />
-                </tr>
-              </thead>
-              <tbody>
-                {(invites.data ?? []).map((i) => (
-                  <tr key={i.id}>
-                    <td>{t(i.kind === 'link' ? 'classes.invite.kindLink' : 'classes.invite.kindCode')}</td>
-                    <td className="muted">{i.label || '—'}</td>
-                    <td><span className={`badge ${i.status}`}>{t(`classes.invite.${i.status}`)}</span></td>
-                    {/* item 7: journal rows must show WHEN the action happened — the
-                        old table only printed expiresAt (today+7d), which read like a
-                        wrong date (04.10 → «11.10»). Locale comes from the app. */}
-                    <td data-testid="invite-created">{fmtDate(i.createdAt, i18n.language)}</td>
-                    <td>{fmtDateTime(i.expiresAt, i18n.language)}</td>
-                    <td>{i.usedByName ?? '—'}{i.usedAt ? ` · ${fmtDateTime(i.usedAt, i18n.language)}` : ''}</td>
-                    <td>
-                      {i.status === 'active' && (
-                        <button className="danger" style={{ marginTop: 0 }} data-testid={`revoke-${i.id}`}
-                          onClick={() => {
-                            if (window.confirm(t(i.kind === 'link' ? 'classes.invite.revokeConfirm' : 'classes.invite.revokeCodeConfirm'))) {
-                              revoke.mutate(i.id);
-                            }
-                          }}>
-                          {t('classes.invite.revoke')}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* задача 2026-10-24 (часть B): вместо таблицы истории на экране класса — одна
+                компактная кнопка. Записи никуда не деваются и не удаляются: меняется только то,
+                где они показываются. Кнопка всегда на месте, чтобы узкий экран не оставлял
+                учителя без доступа к истории. */}
+            <div className="row invite-history-row">
+              <button type="button" className="secondary" data-testid="invite-history-open"
+                aria-haspopup="dialog" aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen(true)}>
+                {t('classes.inviteHistory')}
+              </button>
+              <span className="muted invite-history-hint" data-testid="invite-history-hint">
+                {t('classes.inviteHistoryHint')}
+              </span>
+            </div>
           </div>
+
+          <InviteHistory classId={id} open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
           <div className="card" data-testid="class-members">
             <h2>{t('classes.members')}</h2>

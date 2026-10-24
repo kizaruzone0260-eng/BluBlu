@@ -6,7 +6,8 @@ import { api, getToken, wsTicket } from '../lib/api';
 import { usePopover } from '../lib/popover';
 import { useAuth } from '../App';
 import {
-  STYLES_PANEL_MIN_WIDTH, boardStylesRole, resolveStylesPanel, stylesPanelKey, stylesPanelStored,
+  STYLES_PANEL_MIN_FRAME, boardStylesRole, resolveStylesPanel, stylesPanelKey,
+  stylesPanelLabels, stylesPanelStored,
 } from '@klass/shared';
 
 /**
@@ -278,9 +279,10 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
    */
   const stylesRole = boardStylesRole(me?.role);
   const [stylesOpen, setStylesOpen] = useState(false);
-  const [wideEnough, setWideEnough] = useState(() =>
-    typeof window === 'undefined' ? true : window.innerWidth >= STYLES_PANEL_MIN_WIDTH);
+  /** Ширина РАМКИ доски в пикселях: именно она решает, есть ли место для панели (0 — ещё не померена). */
+  const [frameWidth, setFrameWidth] = useState(0);
   const stylesBtnRef = useRef<HTMLButtonElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
 
   /** Приватный режим умеет отказывать и на чтение, и на запись — это не повод ронять доску. */
   const readStoredStyles = (): string | null => {
@@ -290,31 +292,58 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
     try { localStorage.setItem(stylesPanelKey(stylesRole), stylesPanelStored(open)); } catch { /* память недоступна */ }
   };
 
-  /** Нажатие человека (помним) против правила ширины (не помним: узкое окно — не его выбор). */
+  /**
+   * Нажатие человека: меняет ровно одно наше состояние и ровно один ключ в localStorage.
+   * Ни `apiRef`, ни `updateScene`, ни `send(…)` — панели нет в сцене, значит и мутации в комнату
+   * на этот клик уйти не может (проверяет zz30 вместе с геометрией полотна).
+   */
   function toggleStyles() {
     const next = !stylesOpen;
     setStylesOpen(next);
     writeStoredStyles(next);
   }
 
+  /*
+   * Размер рамки меряем сами (правка 2026-10-24). Раньше сравнивались `window.innerWidth` и
+   * порог 1280 px, хотя полотно живёт внутри `.container { max-width: 960px }`: рамка доски
+   * такой ширины не достигает никогда, поэтому на ноутбуке 1366 px правило отвечало «места
+   * хватает», а панель ложилась почти на весь холст. Наблюдаем за тем же элементом, который
+   * панель и перекрывает.
+   */
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia(`(min-width: ${STYLES_PANEL_MIN_WIDTH}px)`);
-    const on = () => setWideEnough(mq.matches);
-    on();
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
+    const el = frameRef.current;
+    if (!el || typeof window === 'undefined') return;
+    const measure = () => setFrameWidth(el.getBoundingClientRect().width);
+    measure();
+    if (typeof window.ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new window.ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  // при смене ширины панель прячется сама, а сохранённый выбор роли остаётся нетронутым
+  /*
+   * Два правила, которые больше не спорят за одно состояние:
+   *  • память читается ОДИН раз на роль (смена роли — это момент, когда становится известно,
+   *    чей именно выбор смотреть);
+   *  • нехватка места умеет только ЗАКРЫТЬ панель. Обратно она её не открывает: разворот окна
+   *    или поворот планшета не имеют права возвращать панель, которую учитель закрыл сам.
+   * Сохранённый выбор при этом не перезаписывается — на широком экране после перезагрузки
+   * панель вернётся такой, её оставили.
+   */
   useEffect(() => {
-    if (!wideEnough) setStylesOpen(false);
-    else setStylesOpen(resolveStylesPanel({
-      width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    setStylesOpen(resolveStylesPanel({
+      width: frameRef.current?.clientWidth ?? 0,
       stored: readStoredStyles(),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wideEnough, stylesRole]);
+  }, [stylesRole]);
+
+  useEffect(() => {
+    if (frameWidth > 0 && frameWidth < STYLES_PANEL_MIN_FRAME) setStylesOpen(false);
+  }, [frameWidth]);
 
   /**
    * Esc закрывает панель. Фокус возвращается на кнопку ТОЛЬКО если он был внутри панели: иначе
@@ -477,11 +506,12 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
    * сдвигает полотно», допуск 2 px, прогон 39993977646). Место зарезервировано в обеих состояниях,
    * поэтому сдвиг нулевой, а причина «почему не жмётся» читается в подсказке.
    */
+  const stylesLabels = stylesPanelLabels(stylesOpen);
   const stylesButton = (
     <button type="button" className="secondary board-styles-toggle" style={{ marginTop: 0 }}
       ref={stylesBtnRef} data-testid="board-styles-toggle" disabled={!canDraw}
-      aria-pressed={stylesOpen} aria-label={t('lesson.boardStylesAria')}
-      title={canDraw ? t('lesson.boardStylesHint') : t('lesson.boardNoPermission')} onClick={toggleStyles}>
+      aria-pressed={stylesOpen} aria-expanded={stylesOpen} aria-label={t(stylesLabels.aria)}
+      title={canDraw ? t(stylesLabels.hint) : t('lesson.boardNoPermission')} onClick={toggleStyles}>
       <span className="board-styles-glyph" aria-hidden="true">{stylesOpen ? '✕' : '🎨'}</span>
       {t('lesson.boardStyles')}
     </button>
@@ -673,7 +703,7 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
         `onKeyDown` — Esc. Новый дочерний элемент при этом не появляется: слушатель висит на том же
         div, внутри которого рисует Excalidraw.
       */}
-      <div style={{ height }} className="board-frame" data-styles={stylesOpen ? 'open' : 'closed'}
+      <div ref={frameRef} style={{ height }} className="board-frame" data-styles={stylesOpen ? 'open' : 'closed'}
         onKeyDown={onBoardKeyDown}>
         <Excalidraw
           viewModeEnabled={!canDraw}

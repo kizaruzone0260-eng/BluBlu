@@ -1,13 +1,19 @@
 /**
- * Часть A (2026-10-23) — чистые правила панели стилей доски.
+ * Часть A (2026-10-23) + правка 2026-10-24 — чистые правила панели стилей доски.
  *
- * Симптом был живой, а проверка нет: браузерные спеки локально запрещены, поэтому всё, что можно
- * доказать без полотна, живёт здесь — «по умолчанию закрыто», «раздельная память учителя и
- * ученика» и «узкое окно закрывает панель, но не портит сохранённый выбор».
+ * Симптом был живой, а проверка без браузера другой и не бывает: всё, что доказывается без
+ * полотна, живёт здесь — «по умолчанию закрыто», «раздельная память учителя и ученика», «узкая
+ * РАМКА закрывает панель, но не портит сохранённый выбор», «у двух состояний разные подписи на
+ * трёх языках».
+ *
+ * Правка 2026-10-24 поменяла МЕРЯЕМУЮ величину: порог сравнивался с шириной ОКНА, теперь — с
+ * шириной рамки доски. Тест обязан ловить именно это, иначе возвращается прежний ложный случай:
+ * окно 1280 px при рамке ~926 px («места хватает», а панель легла на три четверти холста).
  */
 import { describe, it, expect } from 'vitest';
 import {
-  STYLES_PANEL_MIN_WIDTH, boardStylesRole, resolveStylesPanel, stylesPanelKey, stylesPanelStored,
+  STYLES_PANEL_MIN_FRAME, boardStylesRole, resolveStylesPanel, stylesPanelKey,
+  stylesPanelLabels, stylesPanelStored,
 } from '@klass/shared';
 import ru from '@klass/shared/locales/ru.json';
 import uz from '@klass/shared/locales/uz.json';
@@ -15,24 +21,39 @@ import en from '@klass/shared/locales/en.json';
 
 const DICTS = { ru, uz, en } as const;
 type Lesson = Record<string, Record<string, string>>;
+const lessonOf = (lang: 'ru' | 'uz' | 'en') => (DICTS[lang] as unknown as Lesson).lesson;
+/** широкая рамка: столько даёт `.container { max-width: 960px }` минус свои отступы */
+const WIDE = 900;
 
 describe('board styles panel defaults', () => {
-  it('the panel is closed on a wide screen until somebody presses the button', () => {
+  it('the panel is closed on a wide board until somebody presses the button', () => {
     // первый заход: сохранённого выбора нет ни у ученика, ни у учителя
-    expect(resolveStylesPanel({ width: 1440, stored: null })).toBe(false);
-    expect(resolveStylesPanel({ width: 1440, stored: '0' })).toBe(false);
-    expect(resolveStylesPanel({ width: 1440, stored: '1' })).toBe(true);
+    expect(resolveStylesPanel({ width: WIDE, stored: null })).toBe(false);
+    expect(resolveStylesPanel({ width: WIDE, stored: '0' })).toBe(false);
+    expect(resolveStylesPanel({ width: WIDE, stored: '1' })).toBe(true);
   });
 
-  it('a narrow viewport closes the panel whatever was remembered — and 1280 px is the line', () => {
-    expect(STYLES_PANEL_MIN_WIDTH).toBe(1280);
-    expect(resolveStylesPanel({ width: STYLES_PANEL_MIN_WIDTH - 1, stored: '1' })).toBe(false);
-    expect(resolveStylesPanel({ width: STYLES_PANEL_MIN_WIDTH, stored: '1' })).toBe(true);
+  it('a narrow BOARD FRAME closes the panel whatever was remembered', () => {
+    // имя говорит про рамку, и значение обязано быть в её масштабе: шире 960 px рамка не бывает
+    expect(STYLES_PANEL_MIN_FRAME).toBeLessThan(960);
+    expect(STYLES_PANEL_MIN_FRAME).toBeGreaterThan(390);
+    expect(resolveStylesPanel({ width: STYLES_PANEL_MIN_FRAME - 1, stored: '1' })).toBe(false);
+    expect(resolveStylesPanel({ width: STYLES_PANEL_MIN_FRAME, stored: '1' })).toBe(true);
     // телефон из standing constraint (390 px)
     expect(resolveStylesPanel({ width: 390, stored: '1' })).toBe(false);
+    /*
+     * Ложный случай, из-за которого правка и была: окно 1280 px — старый порог говорил
+     * «широко», и панель разрешалось держать открытой поверх ~926-пиксельной рамки. Теперь
+     * решение принимается по рамке: 926 px ещё позволяют, 500 px — уже нет (островок стилей
+     * весит ~190 px, то есть больше трети полотна).
+     */
+    expect(resolveStylesPanel({ width: 926, stored: '1' })).toBe(true);
+    expect(resolveStylesPanel({ width: 500, stored: '1' }), 'меньше трети холста под панелью').toBe(false);
     // мусор вместо значения (чужая запись в localStorage) не открывает панель
-    expect(resolveStylesPanel({ width: 1440, stored: 'yes' })).toBe(false);
+    expect(resolveStylesPanel({ width: WIDE, stored: 'yes' })).toBe(false);
     expect(resolveStylesPanel({ width: Number.NaN, stored: '1' })).toBe(false);
+    expect(resolveStylesPanel({ width: Number.POSITIVE_INFINITY, stored: '1' })).toBe(false);
+    expect(resolveStylesPanel({ width: 0, stored: '1' }), 'пока рамка не померена — закрыто').toBe(false);
   });
 
   it('the teacher’s choice and the pupil’s choice are stored apart', () => {
@@ -50,20 +71,57 @@ describe('board styles panel defaults', () => {
     expect(stylesPanelStored(true)).toBe('1');
     expect(stylesPanelStored(false)).toBe('0');
     for (const open of [true, false]) {
-      expect(resolveStylesPanel({ width: 1440, stored: stylesPanelStored(open) })).toBe(open);
+      expect(resolveStylesPanel({ width: WIDE, stored: stylesPanelStored(open) })).toBe(open);
     }
   });
 
-  it('the button has a name in all three languages', () => {
+  it('the two states have different labels, and both exist in every language', () => {
+    const open = stylesPanelLabels(true);
+    const closed = stylesPanelLabels(false);
+    expect(open.aria).not.toBe(closed.aria);
+    expect(open.hint).not.toBe(closed.hint);
+    /*
+     * Открытой панели подписью служит ДЕЙСТВИЕ «скрыть», закрытой — «показать»: имена ключей
+     * называют действие (`ActionHide` / `ActionShow`), а подсказки — состояние (`HintOpen` /
+     * `HintClose`). Перепутать их местами значит заставить кнопку врать скринридеру.
+     */
+    expect(open.aria).toBe('lesson.boardStylesActionHide');
+    expect(closed.aria).toBe('lesson.boardStylesActionShow');
+    expect(open.hint).toBe('lesson.boardStylesHintOpen');
+    expect(closed.hint).toBe('lesson.boardStylesHintClose');
     for (const lang of ['ru', 'uz', 'en'] as const) {
-      const lesson = (DICTS[lang] as unknown as Lesson).lesson;
-      for (const key of ['boardStyles', 'boardStylesAria', 'boardStylesHint']) {
+      const lesson = lessonOf(lang);
+      for (const key of [open.aria, open.hint, closed.aria, closed.hint]) {
+        expect(key.startsWith('lesson.'), `ключ обязан указывать в раздел lesson: ${key}`).toBe(true);
+        const text = lesson[key.slice('lesson.'.length)];
+        expect(text, `${lang}.${key}`).toBeTruthy();
+        expect(text.trim().length, `${lang}.${key} is too short to be a label`).toBeGreaterThan(2);
+      }
+      // подпись открытой панели обязана предлагать убрать, закрытой — вернуть
+      expect(lesson[open.aria.slice(7)].toLowerCase()).not.toBe(lesson[closed.aria.slice(7)].toLowerCase());
+    }
+    /*
+     * Видимый текст кнопки остаётся ОДНИМ и тем же: длина подписи двигала бы шапку полотна
+     * (это измеряет блокирующий zz20 с допуском 2 px), поэтому состояние живёт в aria-атрибутах
+     * и в подсказке, а не в том, что нарисовано на кнопке.
+     */
+  });
+
+  it('the button has a name in all three languages, and no state-less leftovers', () => {
+    for (const lang of ['ru', 'uz', 'en'] as const) {
+      const lesson = lessonOf(lang);
+      for (const key of ['boardStyles', 'boardStylesActionHide', 'boardStylesActionShow',
+        'boardStylesHintOpen', 'boardStylesHintClose']) {
         expect(lesson[key], `${lang}.lesson.${key}`).toBeTruthy();
         expect(lesson[key].trim().length, `${lang}.lesson.${key} is too short to be a label`).toBeGreaterThan(2);
       }
+      // прежних «одной строкой на оба состояния» больше нет: они и позволяли кнопке молчать
+      for (const gone of ['boardStylesAria', 'boardStylesHint', 'boardStylesAriaOpen', 'boardStylesAriaClose']) {
+        expect(lesson, `${lang}.lesson.${gone} обязан быть удалён`).not.toHaveProperty(gone);
+      }
     }
     // подпись кнопки должна оставаться короткой: она живёт в шапке полотна рядом с остальными
-    expect((DICTS.ru as unknown as Lesson).lesson.boardStyles).toBe('Стили');
-    expect((DICTS.en as unknown as Lesson).lesson.boardStyles).toBe('Styles');
+    expect(lessonOf('ru').boardStyles).toBe('Стили');
+    expect(lessonOf('en').boardStyles).toBe('Styles');
   });
 });

@@ -1163,4 +1163,27 @@ a.invite-tg:hover { border-color: var(--accent); }
   .invite-actions { flex-direction: column; align-items: stretch; }
   .invite-actions button, .invite-actions a.invite-tg { width: 100%; }
   .join-card { margin: 12px auto; }
+  .invite-record__facts { grid-template-columns: 1fr; }
 }
+
+/* ═══ история приглашений в отдельном окне (задача 2026-10-24, часть B) ═══════
+   Строки, а не таблица: таблица на 390 px либо резает колонки, либо раздувает
+   ширину окна за пределы экрана. Цвета — только из токенов, поэтому обе темы
+   покрываются сами. */
+.invite-history-row { align-items: center; flex-wrap: wrap; margin-top: var(--sp-3); }
+.invite-history-hint { font-size: .82rem; }
+
+.modal.invite-history { width: min(720px, 100%); }
+.invite-record {
+  padding: var(--sp-2) 0; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.invite-record:last-child { border-bottom: 0; }
+.invite-record__head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+.invite-record__kind { font-size: .78rem; font-weight: 600; color: var(--text-muted); }
+/* подпись учителя может быть длинной (до 60 знаков) — она не должна расталкивать остальное */
+.invite-record__label { margin-right: auto; overflow-wrap: anywhere; }
+.invite-record__facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px var(--sp-3); margin: 0; }
+.invite-record__facts > div { min-width: 0; }
+.invite-record__facts dt { font-size: .72rem; color: var(--text-muted); text-transform: none; }
+.invite-record__facts dd { margin: 0; font-size: .85rem; overflow-wrap: anywhere; }

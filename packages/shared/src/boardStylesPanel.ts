@@ -12,8 +12,18 @@
  * запрещено.
  */
 
-/** Ниже этой ширины панель перекрывала бы большую часть полотна, поэтому она всегда закрыта. */
-export const STYLES_PANEL_MIN_WIDTH = 1280;
+/**
+ * Ниже какой ширины РАМКИ ДОСКИ панель не открывается вообще.
+ *
+ * Правка 2026-10-24: раньше это сравнивалось с шириной ОКНА (`window.innerWidth`, порог 1280), и
+ * именно поэтому «скрыть панель» выглядело ненадёжным. Полотно живёт внутри `.container` с
+ * `max-width: 960px` (styles.css), то есть рамка доски НИКОГДА не бывает 1280 px — правило
+ * «места достаточно» включалось по окну в три раза более широкому, чем реальное полотно, и на
+ * ноутбуке 1366 px панель считалось позволительной поверх ~930-пиксельного холста. Порог теперь
+ * измеряется по самой рамке: островок стилей весит ~190-210 px, значит 560 px — это ~2.7 ширины
+ * панели, при котором полотну остаётся больше двух третей.
+ */
+export const STYLES_PANEL_MIN_FRAME = 560;
 
 export type BoardStylesRole = 'teacher' | 'student';
 
@@ -22,14 +32,31 @@ export function stylesPanelKey(role: BoardStylesRole): string {
   return `blublu.board.styles.${role}`;
 }
 
+/**
+ * Подписи состояния. Ключи названы по ДЕЙСТВИЮ, которое кнопка предлагает (`action*`), и по
+ * СОСТОЯНИЮ (`hint*`) — иначе имя «ariaOpen» неизбежно врет: открытой панели подписью служит
+ * «скрыть».
+ *
+ * Видимый текст кнопки остаётся одним и тем же: появление/исчезновение слова меняло бы ширину
+ * кнопки, а строка шапки доски — это ровно то, что измеряет блокирующий спек zz20 («выдача права
+ * рисовать не сдвигает полотно», допуск 2 px, прогон 39993977646). Состояние читается из
+ * `aria-expanded` и из `title`, и этого довольно и человеку, и тесту.
+ */
+export function stylesPanelLabels(open: boolean): { aria: string; hint: string } {
+  return open
+    ? { aria: 'lesson.boardStylesActionHide', hint: 'lesson.boardStylesHintOpen' }
+    : { aria: 'lesson.boardStylesActionShow', hint: 'lesson.boardStylesHintClose' };
+}
+
 /** Значение, которое мы пишем: строка, а не «true» — чтобы чтение было одним сравнением. */
 export function stylesPanelStored(open: boolean): string {
   return open ? '1' : '0';
 }
 
 /**
- * Открыта ли панель СЕЙЧАС. Порядок правил важен:
- *  • узкое окно закрывает панель независимо от сохранённого выбора — и не перезаписывает его;
+ * Открыта ли панель СЕЙЧАС. `width` — ширина РАМКИ ДОСКИ, а не окна: см. STYLES_PANEL_MIN_FRAME.
+ * Порядок правил важен:
+ *  • узкая рамка закрывает панель независимо от сохранённого выбора — и не перезаписывает его;
  *  • сохранённого выбора нет (первый заход, приватный режим, другой браузер) → закрыто и для
  *    ученика, и для учителя: у учителя панель открывается только по нажатию.
  */
@@ -37,7 +64,7 @@ export function resolveStylesPanel(opts: {
   width: number;
   stored: string | null;
 }): boolean {
-  if (!Number.isFinite(opts.width) || opts.width < STYLES_PANEL_MIN_WIDTH) return false;
+  if (!Number.isFinite(opts.width) || opts.width < STYLES_PANEL_MIN_FRAME) return false;
   return opts.stored === '1';
 }
 
