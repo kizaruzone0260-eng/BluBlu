@@ -169,6 +169,21 @@ export async function registerStudentByInviteLink(
     token: string; firstName: string; lastName: string; email: string; password: string; locale?: Locale;
   },
 ): Promise<InviteRegisterResult> {
+  /*
+   * Дешёвая проверка токена ДО аргон2 (правка 2026-10-24). Хеширование пароля — это CPU-работа
+   * на десятки миллисекунд с настроек, выбранных ради стойкости, и раньше её оплачивал КАЖДЫЙ
+   * запрос, включая тот, где приглашение заведомо не существует: один скрипт с мусорными токенами
+   * превращался в платный для сервера перебор. Проверка ниже — только чтение одной строки по
+   * хешу, и она ничего не расходует.
+   *
+   * Это НЕ замена транзакционной проверки, а дешёвый фильтр перед дорогой работой: состояние
+   * приглашения перепроверяется внутри транзакции (`peekInviteLink(tx, …)`), а расход остаётся
+   * единственным атомарным `UPDATE … WHERE used_at IS NULL`. Гонка от этого не появляется: два
+   * параллельных запроса, прошедшие фильтр, всё равно спорят на UPDATE, и проигравший откатывает
+   * аккаунт и членство целиком.
+   */
+  const pre = await peekInviteLink(db, input.token);
+  if (pre.state !== 'ok') return { ok: false, error: inviteStateCode(pre.state) };
   const passwordHash = await hashPassword(input.password);
   try {
     const created = await db.transaction(async (tx) => {

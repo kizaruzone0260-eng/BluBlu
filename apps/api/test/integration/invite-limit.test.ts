@@ -111,12 +111,34 @@ suite('A: лимиты публичных маршрутов приглашен�
     expect(throttleCheck(key, t0 + max).allowed, 'успешная проверка сбрасывает счётчик').toBe(true);
   });
 
-  it('маршрут берёт потолок из `effectiveIpFailMax`, а не из цифры в коде', () => {
+  /**
+   * Guard-тест структуры (правка 2026-10-24). Раньше он проверял, что маршрут зовёт
+   * `throttleRecordAttempt(...)` с `effectiveIpFailMax`, — и этого оказалось мало: счётчик стоял
+   * в одном маршруте из трёх, а проверка «тот же учёт везде» нечем не проверялась. Теперь
+   * проверяется именно инвариант: примитивы троттлинга живут в ОДНОМ модуле, а все три
+   * публичных маршрута проходят через него. Ослаблением это не является: assert-ов стало больше,
+   * и они строже (прямой вызов примитива из маршрута теперь сам по себе красный).
+   */
+  it('все три маршрута ведут промахи через один общий счётчик', () => {
+    const throttle = readFileSync(path.resolve(__dirname, '../../src/lib/inviteThrottle.ts'), 'utf8');
     const src = readFileSync(path.resolve(__dirname, '../../src/routes/invitations.ts'), 'utf8');
-    expect(src).toMatch(/effectiveIpFailMax\(env\.NODE_ENV, env\.RATE_IP_FAIL_MAX\)/);
-    expect(src, 'промах по форме токена обязан идти в счётчик').toMatch(/throttleRecordAttempt\(junkKey\(req\.ip\), Date\.now\(\), ipMax\)/);
-    expect(src).toMatch(/throttleCheck\(junkKey\(req\.ip\)\)/);
-    expect(src, 'успех обнуляет счётчик — иначе класс из 30 учеников загнал бы школу в блок').toMatch(/throttleReset\(junkKey\(req\.ip\)\)/);
+
+    // потолок — из общей функции, а не цифра в коде
+    expect(throttle).toMatch(/effectiveIpFailMax\(env\.NODE_ENV, env\.RATE_IP_FAIL_MAX\)/);
+    expect(throttle, 'ключ один на все маршруты').toMatch(/INVITE_JUNK_PREFIX = 'ivj:'/);
+
+    // маршрут обязан СПРАШИВАТЬ привратника, а не читать примитивы напрямую
+    for (const helper of ['inviteJunkGate', 'noteInviteTokenMiss', 'noteInviteTokenHit']) {
+      expect(src, `маршрут использует ${helper}`).toContain(helper);
+    }
+    expect(src, 'примитивы троттлинга в маршрутах больше не дублируются').not.toMatch(/throttleCheck|throttleRecordAttempt|throttleReset/);
+    const gates = src.match(/inviteJunkGate\(req\.ip\)/g) ?? [];
+    expect(gates.length, 'по одной проверке на preview, register и join').toBe(3);
+    const hits = src.match(/noteInviteTokenHit\(req\.ip\)/g) ?? [];
+    expect(hits.length, 'успех обнуляет счётчик тоже во всех трёх').toBeGreaterThanOrEqual(3);
+    const misses = src.match(/refusedToken\(req\.ip/g) ?? [];
+    expect(misses.length, 'каждый отказ по токену идёт через один засчитывающий хелпер').toBeGreaterThanOrEqual(4);
+
     // и сам потолок окна — тот же, что у входа по коду (см. app.ts)
     expect(effectiveIpWindowMs()).toBe(10 * 60_000);
   });
