@@ -76,6 +76,14 @@ describe('the styles-panel CSS hook matches the installed Excalidraw', () => {
     const rule = OUR_CSS.match(/\.board-frame\[data-styles="closed"\][^}]*\{[^}]*\}/);
     expect(rule, 'the hide rule is missing').toBeTruthy();
     expect(rule![0]).toMatch(/display:\s*none\s*!important/);
+    /*
+     * И второй вход в то же состояние убран: палитра нижнего бара (тот самый переключатель,
+     * который наш `reconcileMenu()` нажимает) не должна оставаться видимой дубль-кнопкой — иначе
+     * у панели два хозяина и `aria-expanded` на нашей кнопке может соврать. Правило привязано к
+     * aria-метке, а не к позиции: рядом `duplicate`/`delete`/undo/redo, и их прятать нельзя.
+     */
+    expect(OUR_CSS, 'дубль переключателя панели в нижнем баре не скрыт')
+      .toMatch(/\.board-frame \.App-bottom-bar button\[aria-label="Edit"\]\s*\{[^}]*display:\s*none\s*!important/);
   });
 
   it(`Excalidraw ${version} still renders the bottom-bar styles trigger our effect clicks`, () => {

@@ -244,56 +244,36 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   function onChange(
     elements: readonly RawEl[],
     appState?: {
-      openMenu: 'canvas' | 'shape' | null;
       activeTool: { type: string };
       selectedElementIds: Record<string, boolean>;
     },
   ) {
     /*
-     * Обратное зеркало мобильной раскладки (правка 2026-10-24): человек мог нажать собственную
-     * кнопку нижнего бара, и тогда наше состояние обязано последовать за полотном — иначе кнопка
-     * «Стили» соврёт про `aria-expanded`, а следующее примирение (`reconcileMenu`) молча вернёт
-     * панель туда, где её уже не было. В десктопной раскладке `openMenu` панель не решает (там он
-     * у меню «canvas»), поэтому и смотрим на него только в мобильной.
+     * Наблюдение за полотном в мобильной раскладке (правка 2026-10-24). Две причины, по которым
+     * `onChange` вообще что-то здесь смотрит:
+     *  • переключателя нижнего бара нет, пока нечего форматировать (активен рисующий инструмент
+     *    либо есть выделение). Как только он появляется, наше «открыто» надо наконец применить;
+     *  • наоборот, когда полотна хватает, примирение ничего не нажимает и состояние человека
+     *    остаётся прежним.
      *
-     * ПОЧЕМУ ЧЕРЕЗ МИКРОЗАДАЧУ. `onChange` библиотека вызывает из `componentDidUpdate`
-     * (`index.js:30535-30538` установленной 0.18.1) — то есть в фазе коммита React, причём БЕЗУСЛОВНО
-     * на каждый рендер полотна. `setState` отсюда поднимает родителя, родитель перерисовывает
-     * полотно, полотно снова зовёт `onChange` — и цикл замыкается до «Maximum update depth
-     * exceeded» (React #185; именно так и упал прогон 40062924647: страница урока вставала на
-     * экран 500). Поэтому здесь пишется только ref, а состояние поднимается микрозадачей — уже
-     * после того, как React доделал свою работу, и только если наблюдение правда изменилось.
+     * ПОЧЕМУ ЗДЕСЬ НЕТ `setState`. Библиотека вызывает `onChange` из своего `componentDidUpdate`
+     * (`dist/dev/index.js:30535-30538` установленной 0.18.1) — то есть в фазе коммита React и на
+     * каждый рендер полотна. Поднятое оттуда состояние перерисовывает родителя, родитель
+     * перерисовывает полотно, полотно зовёт `onChange` снова: цикл замыкается до «Maximum update
+     * depth exceeded» (React #185 — именно так упал прогон 40062924647, страница урока вставала на
+     * экран 500). Поэтому отсюда наружу уходит только `reconcileMenu()`, и то микрозадачей, и
+     * только когда наблюдение правда изменилось. Обратное зеркало «полотно → наше состояние»
+     * сознательно убрано: собственный переключатель библиотеки скрыт нашим CSS (styles.css), так
+     * что читать его решение больше не у кого, а `openMenu: "shape"` без панели в DOM — это
+     * остаточное значение, которое не имеет права открывать панель заново.
      */
     if (canDraw && mobileChrome && appState) {
-      const open = appState.openMenu === 'shape';
-      /*
-       * Может ли полотно показать панель ПРЯМО СЕЙЧАС: переключателя нижнего бара нет, пока нечего
-       * форматировать (активен рисующий инструмент или есть выделение). Без этого сигнала выбор
-       * инструмента после «открыто, но показывать было нечего» оставил бы панель спрятанной до
-       * следующего нажатия — тот же симптом, только с другой стороны. Предикат библиотеки
-       * (`showSelectedShapeActions`) повторяется здесь приближённо и намеренно щедро: ложное
-       * срабатывание стоит один лишний проход примирения, ложный отказ — молчавшую кнопку.
-       */
       const tool = appState.activeTool?.type;
       const draws = !!tool && !['selection', 'eraser', 'hand', 'laser', 'custom'].includes(tool);
       const can = draws || Object.keys(appState.selectedElementIds ?? {}).length > 0;
-      const prev = menuObservedRef.current;
-      if (!prev || prev.open !== open || prev.can !== can) {
-        menuObservedRef.current = { open, can };
-        // «открыто» от полотна принимаем всегда; «закрыто» — только если панель этим переключателем
-        // уже открывалась, иначе первый же onChange стёр бы сохранённый выбор учителя
-        if (open) menuSeenRef.current = true;
-        queueMicrotask(() => {
-          const seen = menuObservedRef.current;
-          if (!seen) return;
-          if (seen.open !== stylesOpenRef.current && (seen.open || menuSeenRef.current)) {
-            stylesOpenRef.current = seen.open;
-            setStylesOpen(seen.open);
-            writeStoredStyles(seen.open);
-          }
-          // полотно только что изменилось — возможно, именно теперь ему есть что показывать
-          reconcileMenu();
-        });
+      if (menuCanShowRef.current !== can) {
+        menuCanShowRef.current = can;
+        queueMicrotask(reconcileMenu);
       }
     }
     if (!canDraw) return;
@@ -347,10 +327,8 @@ export default function Board({ sessionId, classId, height = '60vh', peerNames }
   /** Зеркало состояния для колбэков, которые React не пересоздаёт на каждый рендер. */
   const stylesOpenRef = useRef(stylesOpen);
   stylesOpenRef.current = stylesOpen;
-  /** Открывалась ли панель самим переключателем нижнего бара — см. обратное зеркало в `onChange`. */
-  const menuSeenRef = useRef(false);
-  /** Последнее наблюдение за полотном: «показывает ли панель» и «есть ли что показывать». */
-  const menuObservedRef = useRef<{ open: boolean; can: boolean } | null>(null);
+  /** «Есть что форматировать» по последнему слову полотна: нужно, чтобы поймать появление переключателя. */
+  const menuCanShowRef = useRef(false);
   /** Размер РАМКИ доски в пикселях (0 — ещё не померена): решает и место для панели, и раскладку полотна. */
   const [frameBox, setFrameBox] = useState({ w: 0, h: 0 });
   /** В мобильной ли раскладке сейчас Excalidraw — то есть создаётся ли панель полем `openMenu`. */
