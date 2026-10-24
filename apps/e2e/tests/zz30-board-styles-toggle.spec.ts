@@ -26,13 +26,15 @@ const canvasOf = (page: P) => page.locator('[data-testid=board] canvas.excalidra
 const frameOf = (page: P) => page.locator('[data-testid=board] .board-frame');
 
 /**
- * Панель форматирования — ОДИН локатор на обе раскладки (см. комментарий выше и CSS-правило в
+ * Панель форматирования — ОДИН селектор на обе раскладки (см. комментарий выше и CSS-правило в
  * styles.css). Проверяем всегда «видно / не видно», а не «есть ли узел в DOM»: в закрытом
  * состоянии десктопная панель в DOM есть и спрятана, а мобильной там нет вовсе.
  */
-const panelOf = (page: P) => page.locator(
-  '[data-testid=board] .board-frame .selected-shape-actions, [data-testid=board] .board-frame .App-mobile-menu',
-);
+const PANEL_SEL = '[data-testid=board] .board-frame .selected-shape-actions, '
+  + '[data-testid=board] .board-frame .App-mobile-menu';
+const panelOf = (page: P) => page.locator(PANEL_SEL);
+/** Только десктопный узел — ему посвящён отдельный прогон на высокой рамке. */
+const DESKTOP_SEL = '[data-testid=board] .board-frame .selected-shape-actions';
 
 /**
  * Фокус на холст без всякого рисования — тем же жестом, что и `drawRect` в boardFixtures:
@@ -60,15 +62,54 @@ async function frameSize(page: P): Promise<string> {
 }
 
 /**
- * Открыть панель нашей кнопкой и дождаться, пока её станет видно. Именно этот шаг был
- * «ненадёжным»: в мобильной раскладке показ требует ещё и `openMenu === 'shape'`.
+ * Открыть панель нашей кнопкой. Видимость проверяет вызывающий тест: в мобильной раскладке это
+ * обычный `toBeVisible()`, а десктопный контейнер меряем сами (см. `panelPainted`).
  */
 async function openByToggle(page: P): Promise<void> {
   await page.getByTestId('board-styles-toggle').click();
   await expect(frameOf(page)).toHaveAttribute('data-styles', 'open');
-  await expect(panelOf(page), `открытая панель обязана быть видна (рамка ${await frameSize(page)})`)
-    .toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('board-styles-toggle')).toHaveAttribute('aria-expanded', 'true');
+}
+
+/** Закрыть нашей кнопкой и дождаться, что панель перестала рисоваться (любая раскладка). */
+async function closeByToggle(page: P): Promise<void> {
+  await page.getByTestId('board-styles-toggle').click();
+  await expect(frameOf(page)).toHaveAttribute('data-styles', 'closed');
+  await expect(page.getByTestId('board-styles-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await expect.poll(() => panelPainted(page, PANEL_SEL), 'закрытая панель не нарисована')
+    .toMatchObject({ shown: false });
+}
+
+/**
+ * Видна ли панель глазами — мерим сами, без `toBeVisible()`.
+ *
+ * Причина, по которой здесь свой измеритель: в десктопной раскладке контейнер панели —
+ * `<section class="selected-shape-actions">`, у которого собственного прямоугольника нет (весь
+ * размер живёт во вложенном островке `.Island`), а Playwright считает элемент видимым только при
+ * непустом собственном box. Прогон 40069928533 это и показал: скриншот и снимок доступности
+ * рисуют панель со всеми контролами, а `toBeVisible()` на секции отвечает «hidden».
+ * Проверяем честно то, что видит человек: элемент не спрятан стилями, и его содержимое имеет
+ * прямоугольник. Для закрытого состояния это ровно inverse, и `display:none` на секции (наше CSS
+ * правило) даёт `display: none` здесь же.
+ */
+async function panelPainted(page: P, sel = PANEL_SEL): Promise<{ shown: boolean; box: string }> {
+  return page.evaluate((selector) => {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (!el) return { shown: false, box: 'элемента нет в DOM' };
+    const cs = getComputedStyle(el);
+    const own = el.getBoundingClientRect();
+    let inner = 0;
+    for (const n of Array.from(el.querySelectorAll<HTMLElement>('.Island, .panelColumn, button'))) {
+      const r = n.getBoundingClientRect();
+      inner = Math.max(inner, r.width * r.height);
+    }
+    const hidden = cs.display === 'none' || cs.visibility === 'hidden';
+    return {
+      shown: !hidden && (own.width * own.height > 0 || inner > 0),
+      box: `own ${Math.round(own.width)}×${Math.round(own.height)}, inner ${Math.round(inner)}, `
+        + `display ${cs.display}, visibility ${cs.visibility}`,
+    };
+  }, sel);
 }
 
 test.describe.serial('the board formatting panel collapses, the board does not', () => {
@@ -99,11 +140,11 @@ test.describe.serial('the board formatting panel collapses, the board does not',
 
     const before = await boardGeom(page);
     await openByToggle(page);
+    // именно это и было недостижимо прежним кодом: в мобильной раскладке показ создаёт полотно
+    await expect(panelOf(page), `открытая панель видна (рамка ${await frameSize(page)})`)
+      .toBeVisible({ timeout: 15_000 });
 
-    await toggle.click();
-    await expect(panelOf(page), 'панель скрыта').toBeHidden();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(frameOf(page)).toHaveAttribute('data-styles', 'closed');
+    await closeByToggle(page);
 
     // и всё остальное на месте: полотно, вкладки доски, сама кнопка
     await expect(canvasOf(page)).toBeVisible();
@@ -125,6 +166,7 @@ test.describe.serial('the board formatting panel collapses, the board does not',
 
     await activateRect(page);
     await openByToggle(page);
+    await expect(panelOf(page)).toBeVisible({ timeout: 15_000 });
 
     await page.reload();
     await waitBoard(page);
@@ -169,17 +211,19 @@ test.describe.serial('the board formatting panel collapses, the board does not',
     await loginUi(page, stack.teacherEmail, stack.teacherPassword);
     await openLesson(page, classId);
     await waitBoard(page);
-    const island = page.locator('[data-testid=board] .board-frame .selected-shape-actions');
+    const island = page.locator(DESKTOP_SEL);
     await activateRect(page);
     await expect(island, `на рамке ${await frameSize(page)} полотно обязано быть в десктопной раскладке`)
       .toHaveCount(1, { timeout: 15_000 });
-    await expect(island, 'закрыто — узел на месте, но спрятан').toBeHidden();
+    await expect.poll(() => panelPainted(page, DESKTOP_SEL), 'закрыто — узел на месте, но спрятан')
+      .toMatchObject({ shown: false });
 
     await openByToggle(page);
-    await expect(island).toBeVisible();
+    await expect
+      .poll(async () => panelPainted(page, DESKTOP_SEL), `открытая панель нарисована (рамка ${await frameSize(page)})`)
+      .toMatchObject({ shown: true });
 
-    await page.getByTestId('board-styles-toggle').click();
-    await expect(island).toBeHidden();
+    await closeByToggle(page);
   });
 
   test('a narrow viewport keeps the button reachable and the panel out of the way', async ({ page }) => {
