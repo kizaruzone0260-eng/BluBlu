@@ -376,6 +376,67 @@ suite('A/B: одноразовые ссылки-приглашения', () => {
     expect(r2.json().alreadyMember).toBe(false);
   });
 
+  /**
+   * Задача 2026-10-26. Учитель, открывший ученическую ссылку, получает не безликое `forbidden`,
+   * а код, по которому экран объясняет «нужен ученический аккаунт» и предлагает пересесть.
+   * И — главное — отказ НЕ расходует ссылку: человек мог открыть её из любопытства, а ссылка
+   * должна остаться рабочей для настоящего ученика.
+   */
+  it('учитель на ученической ссылке: studentAccountRequired, ссылка остаётся целой', async () => {
+    const te = await makeTeacher(t.sql, `lk-t-${Date.now()}@x.io`);
+    const tok = await teacherToken(te.email);
+    const cls = await newClass(tok, 'Teacher on join');
+    const link = await newLink(tok, cls);
+
+    const asTeacher = await join(tok, link.token);
+    expect(asTeacher.statusCode, asTeacher.body).toBe(403);
+    expect(asTeacher.json().error).toBe('studentAccountRequired');
+    expect(asTeacher.json().reqId, 'у отказа есть идентификатор для разбора').toBeTruthy();
+
+    const stillPreview = await preview(link.token);
+    expect(stillPreview.statusCode, 'отказ учителя не спалил приглашение').toBe(200);
+    const [row] = await t.db.select().from(inviteCodes).where(eq(inviteCodes.id, link.id)).limit(1);
+    expect(row!.usedAt, 'отказ не расходует ссылку').toBeNull();
+    expect(row!.usedBy).toBeNull();
+
+    const pupilEmail = `lk-t-p-${Date.now()}@x.io`;
+    const reg = await register({
+      token: link.token, firstName: 'Real', lastName: 'Pupil', email: pupilEmail, password: PW,
+    });
+    expect(reg.statusCode, reg.body).toBe(200);
+    const [pupil] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, pupilEmail)).limit(1);
+    const rowsAfter = await t.db.select().from(classMembers)
+      .where(and(eq(classMembers.classId, cls), eq(classMembers.userId, pupil!.id)));
+    expect(rowsAfter.length, 'ровно одно членство у настоящего ученика').toBe(1);
+    const [after] = await t.db.select().from(inviteCodes).where(eq(inviteCodes.id, link.id)).limit(1);
+    expect(after!.usedAt).toBeTruthy();
+  });
+
+  /**
+   * Почта — ключ, по которому учитель позже найдёт аккаунт для добавления в класс. Если
+   * регистрация сохранит другой регистр, добавление по почте не найдёт человека. Схема
+   * нормализует адрес до сохранения; тест фиксирует это на публичном входе по ссылке.
+   */
+  it('регистрация по ссылке нормализует почту: регистр и пробелы не создают отдельный аккаунт', async () => {
+    const te = await makeTeacher(t.sql, `lk-n-${Date.now()}@x.io`);
+    const tok = await teacherToken(te.email);
+    const cls = await newClass(tok, 'Normalize');
+    const link = await newLink(tok, cls);
+    const email = `lk-n-p-${Date.now()}@x.io`;
+
+    const reg = await register({
+      token: link.token, firstName: 'Norm', lastName: 'Al', email: `  ${email.toUpperCase()}  `, password: PW,
+    });
+    expect(reg.statusCode, reg.body).toBe(200);
+    expect(reg.json().user.email as string).toBe(email);
+
+    const again = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: PW } });
+    expect(again.statusCode, again.body).toBe(200);
+
+    const rows = await t.db.select({ id: users.id }).from(users).where(eq(users.email, email));
+    expect(rows.length, 'один аккаунт на нормализованный адрес').toBe(1);
+  });
+
   it('мусор вместо токена до сервера не доходит: форма важнее содержимого', async () => {
     for (const bad of ['', 'short', 'a'.repeat(INVITE_TOKEN_LENGTH), 'x'.repeat(INVITE_TOKEN_LENGTH - 1) + '=', 'A'.repeat(INVITE_TOKEN_LENGTH)]) {
       const p = await preview(bad);

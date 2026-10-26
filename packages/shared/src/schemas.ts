@@ -122,7 +122,17 @@ export const profileUpdateSchema = z.object({
   tz: z.string().min(1).max(64).default(DEFAULT_TIMEZONE),
 });
 
-export const memberAddSchema = z.object({ userId: z.string().uuid() });
+/**
+ * Добавление ученика учителем (2026-10-26). Два способа, ровно один на запрос:
+ *  • `userId` — прежний прямой путь (uuid уже известен);
+ *  • `email` — путь для «ученик забыл пароль, а в списке его нет»: почта нормализуется так же,
+ *    как при входе и регистрации, чтобы `Ann@X.io ` и `ann@x.io` были одним адресом.
+ * Оба поля одновременно — ошибка формы, а не «сработало первое»: иначе клиент не знает,
+ * кого именно добавил.
+ */
+export const memberAddSchema = z
+  .object({ userId: z.string().uuid().optional(), email: email.optional() })
+  .refine((v) => Boolean(v.userId) !== Boolean(v.email), { path: ['email'], message: 'exactlyOne' });
 export const memberMoveSchema = z.object({ toClassId: z.string().uuid() });
 
 /* ─── одноразовые ссылки-приглашения (задача 2026-10-23, часть A) ─────────────────────── */

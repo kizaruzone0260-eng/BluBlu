@@ -38,6 +38,13 @@ export const AUTH_ERROR_CODES = [
    */
   'inviteInvalid', 'inviteExpired', 'inviteRevoked', 'inviteUsed', 'alreadyMember',
   'registrationUnavailable',
+  /*
+   * Учитель добавил существующий аккаунт в свой класс (2026-10-26). Это не публичный путь:
+   * ответы видит только владелец класса, поэтому «аккаунт не найден» и «это учитель» здесь
+   * можно называть прямо — иначе учитель не поймёт, какую почту он перепутал.
+   * `studentAccountRequired` отвечает и публичный вход по ссылке, когда вошёл учитель.
+   */
+  'studentAccountRequired', 'studentNotFound', 'notAStudent',
   // last resorts that must still say something useful
   'serverError', 'policyVersionStale',
 ] as const satisfies readonly string[];

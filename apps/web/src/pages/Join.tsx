@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { consumeJoinToken, JOIN_TOKEN_KEY, passwordPolicy, POLICY_VERSION } from '@klass/shared';
 import { joinByInvite, login, logout, previewInvite, registerByInvite, acceptPolicy } from '../lib/api';
+import { forgetJoinToken } from '../lib/joinToken';
+import { clearJoinFlow, readJoinFlow, saveJoinFlow, type JoinFlowError } from '../lib/joinFlow';
 import { useAuth } from '../App';
 import AuthError from '../components/AuthError';
 import { storedLocale } from '../i18n';
 import { fmtDateTime } from '../lib/format';
 
 /**
- * Вход по одноразовой ссылке (задача 2026-10-23, часть B).
+ * Вход по одноразовой ссылке (задача 2026-10-23, часть B; починка 2026-10-26).
  *
  * Ссылка выглядит как `/join#<токен>`. Фрагмент уже вычищен из адреса первым оператором
  * `main.tsx` (`primeJoinToken` — раньше темы, раньше `ReactDOM` и раньше любого запроса
@@ -21,25 +23,31 @@ import { fmtDateTime } from '../lib/format';
  *  • показать класс ДО того, как что-либо запрашивать с токеном повторно, и не спалить токен
  *    ни в заголовок, ни в консоль, ни в адрес;
  *  • не предлагать поле «код класса»: класс знает сервер;
- *  • не слать ни за каким кодом из письма — подтверждения почты в продукте нет;
  *  • дать два пути человеку, у которого аккаунт уже есть: войти прямо здесь (токен тогда не
- *    теряется) или продолжить существующим аккаунтом, если он уже в системе.
+ *    теряется) или пересесть другим аккаунтом;
+ *  • при занятой почте не выдавать «не удалось создать аккаунт» за конец истории: это вход,
+ *    и форма входа должна открыться с уже набранной почтой;
+ *  • учителю, открывшему ученическую ссылку, — объяснить и дать кнопку «войти учеником»,
+ *    а не тупик из одной строчки.
  *
- * Вход сделан прямо на этой странице, а не ссылкой на `/login`, по одной причине: `/login`
- * уводит с `/join`, а токен после очистки адреса существует только в памяти этой страницы.
- * Ссылка «есть аккаунт? войти» существующую форму не дублирует логикой — тот же `login()` из
- * `lib/api.ts` и тот же ответ сервера.
+ * Почему вход и регистрация здесь идут с `deferNotify`: `login()`/`registerByInvite()` кладут
+ * access-токен в память, но не объявляют вход сразу. Иначе `App` перезагрузил бы `/api/me`,
+ * дерево маршрутов сменилось бы, и `/join` перемонтировался бы ПОСРЕДИ запроса «войти в класс»:
+ * исход зависел бы от гонки двух запросов, а ошибка join осталась бы в состоянии уже
+ * уничтоженного компонента. Экран сам зовёт `onDone()` (тот же refresh) в нужный момент:
+ * после членства — с отметкой успеха, после ошибки входа в класс — с сохранённой ошибкой
+ * (`lib/joinFlow.ts`), чтобы новый экземпляр показал «вы вошли, но в класс не попали» и кнопку
+ * повтора. Токен всё это время лежит в stash и очищается только после успешного членства.
  */
 type Phase = 'loading' | 'invited' | 'joined' | 'broken';
 
 interface Preview { className: string; expiresAt: string | null }
 
 /**
- * Отметка «успех уже случился на ЭТОЙ загрузке страницы». Нужна ровно из-за одного места:
- * `onDone()` подставляет `me`, и React перемонтирует `/join` из другой ветки дерева
- * (незалогиненная → Shell). При перемонтировании токен достать уже не откуда — фрагмент вычищен,
- * stash прочитан, — и без этой отметки человек получил бы «приглашение не найдено» в ту самую
- * секунду, когда он успешно вошёл в класс. Живёт до первого перехода, дальше не нужен.
+ * Отметка «успех уже случился на ЭТОЙ загрузке страницы». Живёт до первого перехода.
+ * Нужна потому, что после `onDone()` `/join` перемонтируется уже в дереве вошедшего
+ * пользователя: токен к этому моменту израсходован и очищен, а человек должен увидеть
+ * «Готово: вы в классе …», а не «приглашение не найдено».
  */
 const DONE_KEY = '__blubluJoinDone';
 type DoneMark = { classId: string; className: string };
@@ -49,43 +57,64 @@ function readDoneMark(): DoneMark | null {
   return v && typeof v === 'object' ? (v as DoneMark) : null;
 }
 
-export default function Join({ onDone }: { onDone: () => void }) {
+function clearDoneMark(): void {
+  delete (window as unknown as Record<string, unknown>)[DONE_KEY];
+}
+
+export default function Join({ onDone }: { onDone: () => void | Promise<void> }) {
   const { t, i18n } = useTranslation();
   const { me } = useAuth();
   const nav = useNavigate();
-  const [token] = useState<string | null>(() =>
-    consumeJoinToken(
-      window.location,
-      window.history,
-      (window as unknown as Record<string, unknown>)[JOIN_TOKEN_KEY],
-    ));
-  // свежий токен важнее отметки: если на этой же загрузке страницы человек открыл новую ссылку,
-  // он проходит её заново, а не видит чужой экран «готово»
+  const win = window as unknown as Window & { [key: string]: unknown };
+  const [token] = useState<string | null>(() => {
+    const fresh = consumeJoinToken(win.location, win.history, win[JOIN_TOKEN_KEY]);
+    // новая ссылка важнее прошлой отметки об успехе: иначе повторное приглашение в тот же
+    // браузер показало бы «вы уже в классе» вместо формы
+    if (fresh) clearDoneMark();
+    return fresh;
+  });
+  // состояние формы переживает перемонтирование после входа/выхода — в памяти вкладки, не в URL
+  const saved = useMemo(() => (token ? readJoinFlow(token) : null), [token]);
   const [done] = useState<DoneMark | null>(() => (token ? null : readDoneMark()));
+  const doneRef = useRef<DoneMark | null>(done);
   const [phase, setPhase] = useState<Phase>(() => {
     if (done) return 'joined';
     return token ? 'loading' : 'broken';
   });
   const [preview, setPreview] = useState<Preview | null>(null);
   /** ошибка сервера = код + reqId; экран переводит код, id печатает для учителя */
-  const [err, setErr] = useState<{ code: string; reqId: string } | null>(null);
+  const [err, setErr] = useState<JoinFlowError | null>(saved?.error ?? null);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<'register' | 'signin'>('register');
+  const [mode, setMode] = useState<'register' | 'signin'>(saved?.mode ?? 'register');
 
   // форма регистрации
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
+  const [firstName, setFirstName] = useState(saved?.firstName ?? '');
+  const [lastName, setLastName] = useState(saved?.lastName ?? '');
+  const [email, setEmail] = useState(saved?.email ?? '');
   const [password, setPassword] = useState('');
   const [accepted, setAccepted] = useState(false);
   // форма входа существующего аккаунта
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginEmail, setLoginEmail] = useState(saved?.loginEmail ?? '');
   const [loginPassword, setLoginPassword] = useState('');
 
   const previewShown = useMemo(() => (preview ? {
     name: preview.className,
     until: preview.expiresAt ? fmtDateTime(preview.expiresAt, i18n.language) : null,
   } : null), [preview, i18n.language]);
+
+  /** Снимок формы на случай перемонтирования. Пароли сюда не попадают намеренно. */
+  function persist(overrides: Partial<Omit<ReturnType<typeof snapshot>, 'token'>> = {}) {
+    if (!token) return;
+    saveJoinFlow({ ...snapshot(), ...overrides });
+  }
+  function snapshot() {
+    return { token: token ?? '', mode, firstName, lastName, email, loginEmail, error: err };
+  }
+  useEffect(() => {
+    if (!token || doneRef.current) return;
+    saveJoinFlow({ token, mode, firstName, lastName, email, loginEmail, error: err });
+    // token не меняется на жизни экземпляра; остальные поля — ровно то, что нужно пережить
+  }, [token, mode, firstName, lastName, email, loginEmail, err]);
 
   useEffect(() => {
     if (!token) return;
@@ -107,19 +136,48 @@ export default function Join({ onDone }: { onDone: () => void }) {
     // токен берётся один раз на жизнь страницы: повторный вызов только набил бы лимиты
   }, [token]);
 
+  /**
+   * Переход в класс — ровно один раз и только после того, как `App` узнал о входе.
+   * Таймер заводится эффектом на `phase === 'joined'`, поэтому при перемонтировании старый
+   * таймер снимается, а новый экземпляр (он тоже видит отметку) заводит свой. Так навигация
+   * не остаётся в руках уничтоженного компонента.
+   */
+  useEffect(() => {
+    if (phase !== 'joined') return;
+    const mark = doneRef.current ?? readDoneMark();
+    if (!mark) return;
+    const timer = window.setTimeout(() => {
+      clearDoneMark();
+      nav(`/classes/${mark.classId}`, { replace: true });
+    }, 1_000);
+    return () => window.clearTimeout(timer);
+  }, [phase, nav]);
+
   function rememberError(e: unknown, fallback: string) {
     const api = e as { code?: string; reqId?: string };
-    setErr({ code: api.code ?? fallback, reqId: api.reqId ?? '' });
+    const next = { code: api.code ?? fallback, reqId: api.reqId ?? '' };
+    setErr(next);
+    persist({ error: next });
+    return next;
   }
 
-  /** Куда идти после успешного входа в класс: сам класс, а не «домой, разберись сам». */
-  function wentToClass(classId: string) {
-    (window as unknown as Record<string, unknown>)[DONE_KEY] = { classId, className: preview?.className ?? '' };
+  /**
+   * Успешное членство. Порядок важен:
+   *  1) отметка об успехе и очистка израсходованного токена — до любых сетевых ожиданий;
+   *  2) `onDone()` (refresh) — теперь приложение может сменить дерево маршрутов;
+   *  3) `phase = joined` — эффект выше отведёт на экран класса через секунду.
+   * Если шаг 2 перемонтирует экран, новый экземпляр прочитает отметку и сам покажет «Готово».
+   */
+  async function wentToClass(classId: string) {
+    const mark = { classId, className: preview?.className ?? '' };
+    doneRef.current = mark;
+    (window as unknown as Record<string, unknown>)[DONE_KEY] = mark;
+    forgetJoinToken(win);
+    clearJoinFlow();
+    try {
+      await Promise.resolve(onDone());
+    } catch { /* refresh повторится при следующей загрузке; членство уже состоялось */ }
     setPhase('joined');
-    onDone();
-    // секунда на то, чтобы человек УВИДЕЛ название класса: дальше роутер уводит сам, а отметка
-    // о успехе уже в window, поэтому перемонтирование /join не покажет «приглашение не найдено»
-    window.setTimeout(() => nav(`/classes/${classId}`), 1_000);
   }
 
   async function submitRegister(e: React.FormEvent) {
@@ -133,10 +191,11 @@ export default function Join({ onDone }: { onDone: () => void }) {
     try {
       const r = await registerByInvite(
         token, firstName.trim(), lastName.trim(), email.trim(), password, storedLocale() ?? undefined,
+        { deferNotify: true },
       );
       // согласие с этого экрана и есть принятие документов: тот же шаг, что делает регистрация по коду
       await acceptPolicy(POLICY_VERSION).catch(() => undefined);
-      wentToClass(r.classId);
+      await wentToClass(r.classId);
     } catch (e: unknown) {
       rememberError(e, 'errorGeneric');
     } finally {
@@ -149,12 +208,29 @@ export default function Join({ onDone }: { onDone: () => void }) {
     if (!token) return;
     setErr(null);
     setBusy(true);
+    let stage: 'login' | 'join' = 'login';
     try {
-      await login(loginEmail.trim(), loginPassword);
+      const user = await login(loginEmail.trim(), loginPassword, { deferNotify: true });
+      setLoginPassword('');
+      persist({ loginEmail: loginEmail.trim(), error: null });
+      // Учитель вошёл на ученическую ссылку: роль не понижаем и в класс не добавляем.
+      // Говорим это кодом, который переводится, и оставляем приглашение живым.
+      if (user.role !== 'student') {
+        const next = { code: 'studentAccountRequired', reqId: '' };
+        setErr(next);
+        persist({ error: next });
+        await Promise.resolve(onDone());
+        return;
+      }
+      stage = 'join';
       const r = await joinByInvite(token);
-      wentToClass(r.classId);
+      await wentToClass(r.classId);
     } catch (e: unknown) {
-      rememberError(e, 'invalidCredentials');
+      // Ошибка входа и ошибка уже вошедшего человека — разные вещи: первая значит «пароль
+      // не тот», вторая — «пароль верный, но в класс не пустили». Вторая обязана оставить
+      // человека в приложении, с сохранённой причиной и возможностью повторить.
+      rememberError(e, stage === 'login' ? 'invalidCredentials' : 'errorGeneric');
+      if (stage === 'join') await Promise.resolve(onDone());
     } finally {
       setBusy(false);
     }
@@ -166,7 +242,7 @@ export default function Join({ onDone }: { onDone: () => void }) {
     setBusy(true);
     try {
       const r = await joinByInvite(token);
-      wentToClass(r.classId);
+      await wentToClass(r.classId);
     } catch (e: unknown) {
       rememberError(e, 'errorGeneric');
     } finally {
@@ -174,16 +250,37 @@ export default function Join({ onDone }: { onDone: () => void }) {
     }
   }
 
+  /**
+   * Смена аккаунта не должна стоить приглашения. Режим и почту сохраняем синхронно ДО
+   * `logout()`: выход объявляет `App`, тот перемонтирует `/join`, и только снимок в
+   * `joinFlow` доносит до нового экземпляра, что нужна форма входа, а не регистрация.
+   */
   async function switchAccount() {
-    // выйти и остаться на приглашении: токен жив в памяти страницы, поэтому «другой аккаунт»
-    // не превращается в «откройте ссылку заново»
+    persist({ mode: 'signin', loginEmail: '', error: null });
+    setErr(null);
+    setMode('signin');
+    setLoginPassword('');
     await logout();
-    onDone();
+  }
+
+  function goSignin() {
+    // почта, которую человек только что набрал в регистрации, — безопасный и полезный
+    // предзаполнитель: она уже в этом браузере и почти всегда та самая
+    const prefill = loginEmail || email.trim();
+    persist({ mode: 'signin', loginEmail: prefill, error: null });
+    setErr(null);
+    setLoginEmail(prefill);
     setMode('signin');
   }
 
+  function goRegister() {
+    persist({ mode: 'register', error: null });
+    setErr(null);
+    setMode('register');
+  }
+
   if (phase === 'joined') {
-    const name = preview?.className || done?.className || '';
+    const name = preview?.className || done?.className || doneRef.current?.className || '';
     return (
       <div className="card join-card" data-testid="join-done" role="status">
         <h1>{t('join.title')}</h1>
@@ -222,12 +319,20 @@ export default function Join({ onDone }: { onDone: () => void }) {
         </p>
       )}
 
-      {/* уже вошедший человек: продолжать или пересесть — выбор должен быть виден, а не угадываться */}
+      {/* уже вошедший человек: продолжить или пересесть — выбор должен быть виден, а не угадываться.
+          Учителю мало строчки «ссылка для ученика»: без явной кнопки он остаётся в тупике. */}
       {me && (
         <div className="join-as" data-testid="join-signed-in">
           <p>{t('join.asWhom', { name: me.name })}</p>
           {me.role === 'teacher' ? (
-            <p className="muted" data-testid="join-teacher-note">{t('join.teacherLink')}</p>
+            <>
+              <p className="muted" data-testid="join-teacher-note">{t('join.teacherLink')}</p>
+              <div className="row">
+                <button type="button" data-testid="join-switch" onClick={switchAccount} disabled={busy}>
+                  {t('join.signInAsStudent')}
+                </button>
+              </div>
+            </>
           ) : (
             <div className="row">
               <button type="button" data-testid="join-continue" onClick={continueWithMe} disabled={busy}>
@@ -239,6 +344,7 @@ export default function Join({ onDone }: { onDone: () => void }) {
               </button>
             </div>
           )}
+          {err && <AuthError code={err.code} reqId={err.reqId}>{errHint(err.code)}</AuthError>}
         </div>
       )}
 
@@ -277,7 +383,7 @@ export default function Join({ onDone }: { onDone: () => void }) {
               <button type="submit" data-testid="join-register" disabled={busy}>{t('common.register')}</button>
               <p className="muted">
                 <button type="button" className="ghost link-button" data-testid="join-to-signin"
-                  style={{ marginTop: 0 }} onClick={() => { setErr(null); setMode('signin'); }}>
+                  style={{ marginTop: 0 }} onClick={goSignin}>
                   {t('join.haveAccount')}
                 </button>
               </p>
@@ -295,7 +401,7 @@ export default function Join({ onDone }: { onDone: () => void }) {
               <div className="row">
                 <button type="submit" data-testid="join-signin" disabled={busy}>{t('common.login')}</button>
                 <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="join-to-register"
-                  onClick={() => { setErr(null); setMode('register'); }}>
+                  onClick={goRegister}>
                   {t('join.backToRegister')}
                 </button>
               </div>
@@ -308,21 +414,22 @@ export default function Join({ onDone }: { onDone: () => void }) {
   );
 
   /**
-   * Подсказка под ошибкой. `alreadyMember` — это не авария: человек уже в классе, и ему нужно
-   * не «повторить», а перейти. `emailTaken` — ровно тот случай, где вход решает всё.
+   * Подсказка под ошибкой. `emailTaken` — это не конец: это вход. Кнопка должна не просто
+   * переключить форму, а перенести в неё уже набранную почту. `alreadyMember` — не авария:
+   * человек уже в классе, и ему нужно перейти.
    */
   function errHint(code: string) {
     if (code === 'emailTaken') {
       return (
         <p style={{ marginTop: '-8px' }}>
           <button type="button" className="ghost link-button" style={{ marginTop: 0 }} data-testid="join-error-signin"
-            onClick={() => { setErr(null); setMode('signin'); }}>
+            onClick={goSignin}>
             {t('join.haveAccount')}
           </button>
         </p>
       );
     }
-    if (code === 'inviteExpired' || code === 'inviteRevoked' || code === 'inviteUsed') {
+    if (code === 'inviteExpired' || code === 'inviteRevoked' || code === 'inviteUsed' || code === 'inviteInvalid') {
       return <p className="muted" style={{ fontSize: '.85rem' }}>{t('join.askTeacher')}</p>;
     }
     return null;

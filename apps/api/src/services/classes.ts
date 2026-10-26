@@ -136,6 +136,47 @@ export async function addStudentDirectly(db: DB, classId: string, studentId: str
   return true;
 }
 
+export type AddStudentByEmailResult =
+  | { ok: true; userId: string; name: string; alreadyMember: boolean }
+  | { ok: false; reason: 'studentNotFound' | 'notAStudent' };
+
+/**
+ * 2026-10-26 — «ученик забыл пароль, а в списке класса его нет».
+ *
+ * Учитель ищет уже существующий аккаунт по почте и добавляет его в СВОЙ класс. Пароль здесь
+ * не трогается вообще: после добавления ученик появляется в списке, и срабатывает обычный
+ * сброс (временный пароль + обязательная смена). Это единственный безопасный способ добраться
+ * до аккаунта, который ещё не состоит в классе: сброс требует членства.
+ *
+ * Почта приходит уже нормализованной схемой (`memberAddSchema` → trim/lowercase), как при
+ * входе и регистрации. Членство защищено первичным ключом `(class_id, user_id)` и
+ * `onConflictDoNothing`, поэтому два одновременных запроса не создадут дубль; по числу
+ * вставленных строк честно различается «добавили» и «уже был».
+ */
+export async function addStudentByEmail(db: DB, classId: string, email: string): Promise<AddStudentByEmailResult> {
+  return db.transaction(async (tx) => {
+    const [student] = await tx
+      .select({ id: users.id, role: users.role, name: users.name, lastName: users.lastName })
+      .from(users)
+      .where(and(eq(users.email, email), isNull(users.deletedAt)))
+      .limit(1);
+    // удалённый аккаунт намеренно выглядит как отсутствующий: добавлять его в класс нельзя
+    if (!student) return { ok: false, reason: 'studentNotFound' } as const;
+    if (student.role !== 'student') return { ok: false, reason: 'notAStudent' } as const;
+    const inserted = await tx
+      .insert(classMembers)
+      .values({ classId, userId: student.id })
+      .onConflictDoNothing()
+      .returning({ userId: classMembers.userId });
+    return {
+      ok: true,
+      userId: student.id,
+      name: `${student.name} ${student.lastName}`.trim(),
+      alreadyMember: inserted.length === 0,
+    } as const;
+  });
+}
+
 /** Move a student from one class to another; both must be owned by the same teacher (v1). */
 export async function moveMember(db: DB, teacherId: string, fromClassId: string, toClassId: string, userId: string): Promise<boolean> {
   const [from, to] = await Promise.all([

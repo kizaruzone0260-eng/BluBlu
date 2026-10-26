@@ -18,3 +18,15 @@ export function primeJoinToken(win: Window & { [key: string]: unknown }): void {
   const token = takeJoinToken(win.location, win.history);
   if (token) win[JOIN_TOKEN_KEY] = token;
 }
+
+/**
+ * Токен израсходован — убираем его и из памяти страницы.
+ *
+ * Нужно ровно на успешном исходе. Пока идёт вход или регистрация, stash обязан пережить
+ * перемонтирование `/join` (после входа меняется дерево маршрутов) и неудачную попытку.
+ * А после членства он больше не нужен: ссылка одноразовая, и оставлять её в window значило бы
+ * держать в памяти ключ, который уже ничего не открывает.
+ */
+export function forgetJoinToken(win: Window & { [key: string]: unknown }): void {
+  delete win[JOIN_TOKEN_KEY];
+}

@@ -134,7 +134,12 @@ export function invitationRoutes(db: DB): (app: FastifyInstance) => Promise<void
      * токен», и смешивать их значит штрафовать честный вход.
      */
     app.post('/api/invitations/join', { preHandler: app.authenticate }, async (req, reply) => {
-      if (req.user!.role !== 'student') return reply.code(403).send({ error: 'forbidden' });
+      // Учитель не может «стать учеником» по ссылке: роль не понижается, членство не
+      // появляется. Но и молчаливого `forbidden` здесь мало — экран должен объяснить это
+      // человеку и предложить войти учеником, сохранив приглашение.
+      if (req.user!.role !== 'student') {
+        return reply.code(403).send(errorBody(req.id, 'studentAccountRequired'));
+      }
       const parsed = inviteJoinSchema.safeParse(req.body);
       if (!parsed.success) {
         return refusedToken(req.ip, reply, req.id, 'inviteInvalid');

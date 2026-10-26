@@ -8,6 +8,7 @@ import { fmtDate } from '../lib/format';
 import { useAuth } from '../App';
 import Feed from '../components/Feed';
 import InviteHistory from '../components/InviteHistory';
+import AuthError from '../components/AuthError';
 
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
 interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean; boardArchivePublic?: boolean }
@@ -33,6 +34,11 @@ export default function ClassDetail() {
   const [pwFor, setPwFor] = useState<string | null>(null);
   const [pwA1, setPwA1] = useState('');
   const [pwA2, setPwA2] = useState('');
+  // 2026-10-26: добавление СУЩЕСТВУЮЩЕГО аккаунта по почте. Нужно ровно для тупика
+  // «ученик забыл пароль, а в списке его нет»: сброс требует членства, а членства нет.
+  // Пароль здесь не создаётся и не меняется — только строка в class_members.
+  const [addEmail, setAddEmail] = useState('');
+  const [addNotice, setAddNotice] = useState('');
   // feedback is a toast, not `window.alert` (task 3, 2026-10-10): a native modal blocks the
   // renderer until somebody dismisses it, and a page that still has one open when the client
   // wants to leave it cannot finish closing — measured as `page.close` taking 235 s in the e2e
@@ -103,6 +109,25 @@ export default function ClassDetail() {
   const removeMember = useMutation({
     mutationFn: (userId: string) => api(`/api/classes/${id}/members/${userId}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['members', id] }),
+  });
+  /**
+   * Добавление по почте (2026-10-26). Сервер отвечает `alreadyMember`, а не ошибкой, если
+   * строка уже есть: для учителя это не авария, и повторный клик не должен выглядеть как
+   * сломанная кнопка. После успеха список перезапрашивается — сразу появляются сброс пароля
+   * и удаление.
+   */
+  const addExisting = useMutation({
+    mutationFn: (email: string) =>
+      api<{ ok: true; userId: string; name: string; alreadyMember: boolean }>(`/api/classes/${id}/members`, {
+        method: 'POST', body: JSON.stringify({ email }),
+      }),
+    onSuccess: (r) => {
+      setAddEmail('');
+      setAddNotice(r.alreadyMember
+        ? t('classes.addExistingAlready', { name: r.name })
+        : t('classes.addExistingDone', { name: r.name }));
+      void qc.invalidateQueries({ queryKey: ['members', id] });
+    },
   });
   /** прежний путь: сервер генерирует пароль и показывает его один раз */
   const resetPw = useMutation({
@@ -239,6 +264,39 @@ export default function ClassDetail() {
 
           <div className="card" data-testid="class-members">
             <h2>{t('classes.members')}</h2>
+
+            {/* учитель ищет уже существующий аккаунт; пароль не трогается, пока он сам не
+                нажмёт сброс в появившейся строке */}
+            <div className="add-existing" data-testid="add-existing">
+              <h3>{t('classes.addExistingTitle')}</h3>
+              <p className="muted" style={{ fontSize: '.88rem' }}>{t('classes.addExistingHint')}</p>
+              <form className="row invite-row" data-testid="add-existing-form" onSubmit={(e) => {
+                e.preventDefault();
+                const v = addEmail.trim();
+                if (!v) return;
+                setAddNotice('');
+                addExisting.mutate(v);
+              }}>
+                <div className="field">
+                  <label htmlFor="add-existing-email">{t('classes.addExistingEmail')}</label>
+                  <input id="add-existing-email" data-testid="add-existing-email" type="email" value={addEmail}
+                    onChange={(e) => { setAddEmail(e.target.value); setAddNotice(''); }} required
+                    autoComplete="off" spellCheck={false} />
+                </div>
+                <button type="submit" className="secondary" data-testid="add-existing-submit"
+                  disabled={addExisting.isPending || !addEmail.trim()}>
+                  {t('classes.addExistingSubmit')}
+                </button>
+              </form>
+              {addNotice && <p className="ok" role="status" data-testid="add-existing-done">{addNotice}</p>}
+              {addExisting.error && (
+                <AuthError
+                  code={(addExisting.error as { code?: string }).code ?? 'errorGeneric'}
+                  reqId={(addExisting.error as { reqId?: string }).reqId}
+                />
+              )}
+            </div>
+
             {(members.data ?? []).length === 0 && <p className="muted">{t('classes.noMembers')}</p>}
             <table>
               <tbody>

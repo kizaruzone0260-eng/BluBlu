@@ -8,7 +8,7 @@ import { errorBody } from '../lib/requestId.js';
 import type { DB } from '../db/index.js';
 import {
   resolveClass, listMyClasses, createClass, updateClass, archiveClass,
-  listMembers, removeMember, addStudentDirectly, moveMember,
+  listMembers, removeMember, addStudentDirectly, addStudentByEmail, moveMember,
 } from '../services/classes.js';
 import { registerInviteRoutes } from './invites.js';
 import { redeemInviteCode } from '../services/invites.js';
@@ -105,15 +105,42 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     return listMembers(db, cls.id);
   });
 
+  /**
+   * Добавление ученика в класс (2026-10-26).
+   *
+   * `{userId}` — прежний путь по uuid, его ответ не меняется. `{email}` — путь «аккаунт уже
+   * есть, но ученик не в списке»: без него учитель не может выдать временный пароль, потому
+   * что сброс пароля требует членства. Учитель здесь и есть владелец класса (`needClass`),
+   * а роль и Soft-delete проверяет сервис; в журнал попадают только id, без почты и пароля.
+   * Публичным этот путь не становится: без сессии — 401, чужой класс — 404.
+   */
   app.post('/api/classes/:id/members', { preHandler: app.authenticateTeacher }, async (req, reply) => {
     const p = uuidParam.safeParse(req.params);
     if (!p.success) return reply.code(404).send({ error: 'notFound' });
     const parsed = memberAddSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
+    if (!parsed.success) return reply.code(400).send(errorBody(req.id, 'invalidInput'));
     const cls = await needClass(db, req, reply, p.data.id);
     if (!cls) return;
-    const ok = await addStudentDirectly(db, cls.id, parsed.data.userId);
-    if (!ok) return reply.code(400).send({ error: 'invalidInput' });
+
+    if (parsed.data.email) {
+      const res = await addStudentByEmail(db, cls.id, parsed.data.email);
+      if (!res.ok) {
+        if (res.reason === 'studentNotFound') {
+          return reply.code(404).send(errorBody(req.id, 'studentNotFound'));
+        }
+        return reply.code(400).send(errorBody(req.id, 'notAStudent'));
+      }
+      // повторное добавление — не ошибка, но и не событие: в журнал пишем только состоявшееся
+      // членство, иначе аудит заполняется кликами «добавить» без последствий
+      if (!res.alreadyMember) {
+        audit(db, req.user!.id, 'member_add', { classId: cls.id, userId: res.userId, source: 'email' });
+      }
+      return { ok: true, userId: res.userId, name: res.name, alreadyMember: res.alreadyMember };
+    }
+
+    const ok = await addStudentDirectly(db, cls.id, parsed.data.userId!);
+    if (!ok) return reply.code(400).send(errorBody(req.id, 'invalidInput'));
+    audit(db, req.user!.id, 'member_add', { classId: cls.id, userId: parsed.data.userId!, source: 'userId' });
     return { ok: true };
   });
 

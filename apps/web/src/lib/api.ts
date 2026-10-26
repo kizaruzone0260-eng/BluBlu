@@ -2,10 +2,20 @@ let accessToken: string | null = null;
 let restorePromise: Promise<boolean> | null = null;
 const listeners = new Set<(loggedIn: boolean) => void>();
 
-export function setAccessToken(t: string | null) {
+/**
+ * `notify=false` — для экрана приглашения: вход и регистрация там не заканчиваются входом.
+ * Раньше токен объявлялся сразу, `App` перезагружал `/api/me`, дерево маршрутов менялось, и
+ * `/join` перемонтировался ПОСРЕДИ запроса «войти в класс». Теперь экран сначала доводит
+ * вход/регистрацию до членства, и только потом сам зовёт `onDone()` (тот же refresh).
+ * Так токен не теряется, ошибка соединения не выдаётся за «вы уже вошли», а учитель видит
+ * экран смены аккаунта, а не пустую страницу.
+ */
+export interface AuthNotifyOption { deferNotify?: boolean }
+
+export function setAccessToken(t: string | null, notify = true) {
   accessToken = t;
   if (t == null) restorePromise = null;
-  listeners.forEach((l) => l(t != null));
+  if (notify) listeners.forEach((l) => l(t != null));
 }
 
 export function getToken(): string | null {
@@ -165,11 +175,11 @@ export async function fetchMe(): Promise<Me | null> {
   }
 }
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, { deferNotify = false }: AuthNotifyOption = {}) {
   const j = await api<{ accessToken: string; user: Me }>('/api/auth/login', {
     method: 'POST', body: JSON.stringify({ email, password }),
   });
-  setAccessToken(j.accessToken);
+  setAccessToken(j.accessToken, !deferNotify);
   return j.user;
 }
 
@@ -221,6 +231,7 @@ export async function previewInvite(token: string): Promise<{ className: string;
 /** Регистрация по приглашению: аккаунт + класс + расход токена одним запросом. */
 export async function registerByInvite(
   token: string, firstName: string, lastName: string, email: string, password: string, locale?: string,
+  { deferNotify = false }: AuthNotifyOption = {},
 ): Promise<{ user: Me; classId: string }> {
   const j = await api<{ accessToken: string; user: Me; classId: string }>('/api/invitations/register', {
     method: 'POST',
@@ -229,7 +240,7 @@ export async function registerByInvite(
       ...(locale ? { locale } : {}),
     }),
   });
-  setAccessToken(j.accessToken);
+  setAccessToken(j.accessToken, !deferNotify);
   return { user: j.user, classId: j.classId };
 }
 
