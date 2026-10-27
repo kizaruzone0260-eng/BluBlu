@@ -40,8 +40,13 @@ function refusedToken(ip: string, reply: FastifyReply, reqId: unknown, code: str
   return reply.code(400).send(errorBody(reqId, code));
 }
 
-/** Отказ схемы задел именно это поле? Только тогда он считается промахом по токену. */
-function touchesField(issues: readonly { path: readonly (string | number)[] }[], field: string): boolean {
+/**
+ * Отказ схемы задел именно это поле? Только тогда он считается промахом по токену.
+ *
+ * Тип пути — `PropertyKey`, а не `string | number`: так его объявляет Zod 4 (в Zod 3 символ в
+ * пути был невозможен), и сужение до строк ломало сборку, а не проверку.
+ */
+function touchesField(issues: readonly { path: readonly PropertyKey[] }[], field: string): boolean {
   return issues.some((i) => i.path[0] === field);
 }
 

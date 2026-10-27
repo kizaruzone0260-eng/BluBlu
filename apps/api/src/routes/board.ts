@@ -12,9 +12,10 @@ import { whiteboards, lessonSessions } from '../db/schema.js';
 import {
   loadPage, listPages, listPagesWithTitles, mergeElements, gateEdits, lockForeign,
   countByAuthor, wipeAuthor, simplifyScene, MAX_STUDENT_ELEMENTS, MAX_STUDENT_BYTES,
-  MAX_SCENE_BYTES, type ExEl,
+  MAX_SCENE_BYTES, MAX_BOARD_ELEMENTS, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
+import { BOARD_PUBLISH_BODY_LIMIT } from '../lib/bodyLimits.js';
 
 const BROADCAST_MS = 30;   // §3.7 throttle
 const AUTOSAVE_MS = 10_000; // §3.7 autosave every 10 s
@@ -23,6 +24,33 @@ const AUTOSAVE_MS = 10_000; // §3.7 autosave every 10 s
 export const MAX_BOARD_PAGES = 20;
 /** Task 1б: the label length cap, in characters. */
 export const MAX_BOARD_TITLE = 40;
+
+/**
+ * Потолок длины ПОДПИСИ в теле запроса (задача 2026-10-27, часть A).
+ *
+ * Продуктовый потолок — 40 символов (`MAX_BOARD_TITLE`), клиент режет подпись до него сам, а
+ * сервер всё равно прогоняет её через `sanitizeBoardTitle`. 400 — это «в десять раз больше, чем
+ * может прислать честный клиент», то есть ограничение не про текст, а про бессмысленно длинную
+ * строку в публичной схеме: она разбирается, копируется и отбрасывается, не дойдя до базы.
+ */
+export const MAX_BOARD_TITLE_INPUT = 400;
+
+/**
+ * Схема прямого сохранения страницы доски (PUT /api/lessons/:id/board/page).
+ *
+ * Вынесена из обработчика и экспортирована, чтобы потолок коллекции проверялся тестом НАПРЯМУЮ:
+ * именно «массив на 200 000 элементов» — тот вход, на котором Zod до 4.6.6 исчерпывал память
+ * (GHSA-mrhx-c7xc-m3w5), и через HTTP его не подать — тело раньше отрежет транспортный лимит.
+ *
+ * `z.looseObject` (в Zod 3 — `.passthrough()`): элемент Excalidraw несёт десятки полей, и схема
+ * намеренно не перечисляет их, а требует только `id`. Число элементов ограничено
+ * `MAX_BOARD_ELEMENTS` — проверка срабатывает ДО разбора содержимого, а не после.
+ */
+export const boardPageSaveSchema = z.object({
+  pageNo: z.number().int().min(1).max(MAX_BOARD_PAGES),
+  title: z.string().max(MAX_BOARD_TITLE_INPUT).optional(),
+  elements: z.array(z.looseObject({ id: z.string() })).max(MAX_BOARD_ELEMENTS),
+});
 
 /**
  * A board title is PLAIN TEXT: control characters and line breaks are collapsed, the value is
@@ -232,11 +260,7 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!s) return reply.code(404).send({ error: 'notFound' });
     const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
     if (!cls) return reply.code(404).send({ error: 'notFound' });
-    const p = z.object({
-      pageNo: z.number().int().min(1).max(MAX_BOARD_PAGES),
-      title: z.string().optional(),
-      elements: z.array(z.object({ id: z.string() }).passthrough()),
-    }).safeParse(req.body);
+    const p = boardPageSaveSchema.safeParse(req.body);
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     // Часть 8: прямой путь сохранения хранит то же, что и живой кадр, — штрих не может быть
     // длистрее потолка точек только потому, что пришёл не по сокету.
@@ -272,8 +296,21 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true };
   });
 
-  // Publish a page as PNG/SVG material into the class feed (§3.7)
-  app.post('/api/lessons/:id/board/publish', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+  /*
+   * Publish a page as PNG/SVG material into the class feed (§3.7).
+   *
+   * Единственный маршрут с телом больше общего предела — и не «потому что захотелось», а потому
+   * что схема ниже с самого начала обещала принять до 12 млн символов base64 (~8 МБ картинки),
+   * а транспорт молча резал тело на 1 МБ: доска с плотным рисунком или вложенным изображением не
+   * публиковалась вовсе, и учитель видел голый 413 без объяснения. Предел поднят ровно до уже
+   * объявленного контракта (плюс запас на JSON-обёртку), маршрут доступен только учителю-
+   * владельцу класса, а сопоставимый вход в продукте уже существует и он шире: загрузка материала
+   * до `MAX_FILE_MB` (100 МБ) через multipart. Подробности — в lib/bodyLimits.ts.
+   */
+  app.post('/api/lessons/:id/board/publish', {
+    preHandler: app.authenticateTeacher,
+    bodyLimit: BOARD_PUBLISH_BODY_LIMIT,
+  }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const s = await getSession(db, id);
     if (!s) return reply.code(404).send({ error: 'notFound' });

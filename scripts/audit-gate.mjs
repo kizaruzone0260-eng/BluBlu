@@ -21,18 +21,12 @@ import { spawnSync } from 'node:child_process';
  * просроченная запись роняет CI, а не живёт вечно.
  */
 const KNOWN = [
-  {
-    id: 'GHSA-vfj7-8cjw-p6xm',
-    severity: 'high',
-    package: 'braces',
-    // Why this is safe to carry: braces is reached only through @excalidraw/excalidraw → sass →
-    // chokidar, i.e. the build-time file watcher of the web bundle. The product never compiles a
-    // brace pattern it did not write: no user input reaches `braces` at runtime, and the shipped
-    // server does not contain sass/chokidar at all. `pnpm audit` reports no patched version
-    // (<0.0.0), so there is nothing to bump to.
-    reason: 'сборочный путь (@excalidraw → sass → chokidar); патчера нет (<0.0.0); в рантайме сервера пакета нет',
-    reviewBy: '2027-01-15',
-  },
+  // GHSA-vfj7-8cjw-p6xm (braces, high) здесь был и удалён 2026-10-27, а не «потому что надоело».
+  // Запись появилась, когда у пакета не было патчера; сейчас в lock-файле braces@3.0.3 — это
+  // ровно запатчиванная версия, и `pnpm audit --prod` больше не выдаёт этой находки (`принято 0`).
+  // Мёртвая запись в списке известных опасна не «захламлённостью», а обратным: она молча приняла
+  // бы будущую находку на braces, которая обязана блокировать. Поэтому в KNOWN живёт только то,
+  // что реально приходится нести.
   {
     id: 'GHSA-238p-pmpm-9mq7',
     severity: 'low',

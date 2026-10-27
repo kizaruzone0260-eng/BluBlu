@@ -1,14 +1,14 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  classCreateSchema, classUpdateSchema, joinByCodeSchema, memberAddSchema, memberMoveSchema,
-  memberResetPasswordSchema, passwordIssueCode,
+  classCreateSchema, classUpdateSchema, joinByCodeSchema, memberAddSchema, memberLookupSchema,
+  memberMoveSchema, memberResetPasswordSchema, passwordIssueCode,
 } from '@klass/shared';
 import { errorBody } from '../lib/requestId.js';
 import type { DB } from '../db/index.js';
 import {
   resolveClass, listMyClasses, createClass, updateClass, archiveClass,
-  listMembers, removeMember, addStudentDirectly, addStudentByEmail, moveMember,
+  listMembers, removeMember, addStudentDirectly, addStudentByEmail, findStudentByEmail, moveMember,
 } from '../services/classes.js';
 import { registerInviteRoutes } from './invites.js';
 import { redeemInviteCode } from '../services/invites.js';
@@ -103,6 +103,50 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     const cls = await needClass(db, req, reply, p.data.id);
     if (!cls) return;
     return listMembers(db, cls.id);
+  });
+
+  /**
+   * Поиск существующего ученика по почте ПЕРЕД добавлением (2026-10-27, часть B).
+   *
+   * Зачем отдельный путь, если `POST /members` уже умел добавлять по почте: добавление по
+   * одному клику не давало учителю возможности увидеть, КОГО он добавляет. Почта ученика
+   * и его аккаунт — не одно и то же, и «Ann@X.io» в списке 7-Б мог оказаться совсем не той
+   * Анной. Поэтому членство теперь создаётся в два шага: этот маршрут только ЧИТАЕТ
+   * (ничего не вставляет и пароля не касается), а интерфейс показывает имя, почту и класс,
+   * после чего учитель явно подтверждает — подтверждение уходит прежним `POST /members`.
+   *
+   * Границы те же, что и у добавления: `authenticateTeacher`, `needClass` (без сессии — 401,
+   * чужой или несуществующий класс — 404, никогда не 403), роль и Soft-delete проверяет
+   * сервис. Ученик, которого нет, — 404 `studentNotFound`; аккаунт есть, но это не ученик —
+   * 400 `notAStudent`. В журнал пишется пара идентификаторов и всё: ни почты, ни паролей.
+   */
+  app.post('/api/classes/:id/members/lookup', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const p = uuidParam.safeParse(req.params);
+    if (!p.success) return reply.code(404).send({ error: 'notFound' });
+    const parsed = memberLookupSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send(errorBody(req.id, 'invalidInput'));
+    const cls = await needClass(db, req, reply, p.data.id);
+    if (!cls) return;
+
+    const res = await findStudentByEmail(db, cls.id, parsed.data.email);
+    if (!res.ok) {
+      if (res.reason === 'studentNotFound') {
+        return reply.code(404).send(errorBody(req.id, 'studentNotFound'));
+      }
+      return reply.code(400).send(errorBody(req.id, 'notAStudent'));
+    }
+    // читатель, раскрывающий чужую личность, обязан оставлять след — иначе «кто искал эту
+    // почту» не восстановить. Почты в цели нет намеренно: её и так знает тот, кто искал.
+    audit(db, req.user!.id, 'member_lookup', { classId: cls.id, userId: res.userId, source: 'email' });
+    return {
+      found: true,
+      userId: res.userId,
+      name: res.name,
+      email: res.email,
+      alreadyMember: res.alreadyMember,
+      classId: cls.id,
+      className: cls.name,
+    };
   });
 
   /**

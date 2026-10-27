@@ -90,6 +90,15 @@ hr { border: none; border-top: 1px solid var(--border); margin: var(--sp-5) 0; }
 }
 .card:hover { box-shadow: var(--shadow-md); }
 .card.flat { box-shadow: none; }
+/* Карточка подтверждения внутри «Добавить существующий аккаунт» (2026-10-27, часть B).
+   Это шаг того же действия, а не отдельная поверхность: тень и её усиление при наведении
+   читались бы как ещё одна карточка в списке, поэтому оставляем только рамку и фон. */
+.card.add-existing-match {
+  box-shadow: none; margin: var(--sp-3) 0 0; padding: var(--sp-3);
+  border-color: var(--border-strong);
+}
+.card.add-existing-match:hover { box-shadow: none; }
+.card.add-existing-match h4 { margin: 0 0 var(--sp-2); font-size: .95rem; }
 
 /* ── text helpers ───────────────────────────────────────────────────────── */
 .muted { color: var(--text-muted); font-size: .86rem; }

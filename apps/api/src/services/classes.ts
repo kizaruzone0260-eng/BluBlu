@@ -141,6 +141,45 @@ export type AddStudentByEmailResult =
   | { ok: false; reason: 'studentNotFound' | 'notAStudent' };
 
 /**
+ * Шаг «найти» перед шагом «добавить» (2026-10-27, часть B).
+ *
+ * Только чтение: ни членства, ни пароля, ни сессии этот вызов не трогает, поэтому его можно
+ * повторять и отменять без последствий. Отдаёт учителю ровно то, что нужно для подтверждения
+ * личности — имя и почту аккаунта, — плюс признак «уже в этом классе», чтобы интерфейс не
+ * предлагал добавить того, кто уже добавлен.
+ *
+ * Правила те же, что у `addStudentByEmail` ниже, и они обязаны совпадать: найденный аккаунт —
+ * это существующий, не удалённый аккаунт с ролью `student`. Учительский аккаунт отвечает
+ * `notAStudent`, удалённый и отсутствующий — `studentNotFound` (различать их значило бы
+ * рассказывать, что стёртый аккаунт когда-то существовал).
+ */
+export type StudentLookupResult =
+  | { ok: true; userId: string; name: string; email: string; alreadyMember: boolean }
+  | { ok: false; reason: 'studentNotFound' | 'notAStudent' };
+
+export async function findStudentByEmail(db: DB, classId: string, email: string): Promise<StudentLookupResult> {
+  const [student] = await db
+    .select({ id: users.id, role: users.role, name: users.name, lastName: users.lastName, email: users.email })
+    .from(users)
+    .where(and(eq(users.email, email), isNull(users.deletedAt)))
+    .limit(1);
+  if (!student) return { ok: false, reason: 'studentNotFound' } as const;
+  if (student.role !== 'student') return { ok: false, reason: 'notAStudent' } as const;
+  const [member] = await db
+    .select({ userId: classMembers.userId })
+    .from(classMembers)
+    .where(and(eq(classMembers.classId, classId), eq(classMembers.userId, student.id)))
+    .limit(1);
+  return {
+    ok: true,
+    userId: student.id,
+    name: `${student.name} ${student.lastName}`.trim(),
+    email: student.email,
+    alreadyMember: Boolean(member),
+  } as const;
+}
+
+/**
  * 2026-10-26 — «ученик забыл пароль, а в списке класса его нет».
  *
  * Учитель ищет уже существующий аккаунт по почте и добавляет его в СВОЙ класс. Пароль здесь

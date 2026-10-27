@@ -267,6 +267,19 @@ test.describe.serial('приглашение: выход из тупика (2026
 
     await page.getByTestId('add-existing-email').fill(existingEmail.toUpperCase());
     await page.getByTestId('add-existing-submit').click();
+
+    // Часть B (2026-10-27): «найти» и «добавить» — два разных действия. До подтверждения
+    // учитель обязан увидеть, КОГО именно нашёл (имя и почту аккаунта) и В КАКОЙ класс это
+    // попадёт, а списка учеников ещё не должно измениться: поиск не имеет побочных эффектов.
+    const match = page.getByTestId('add-existing-match');
+    await expect(match, 'найденный аккаунт показан до подтверждения').toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('add-existing-match-name')).toHaveText(studentName, { timeout: 20_000 });
+    await expect(page.getByTestId('add-existing-match-email')).toHaveText(existingEmail);
+    await expect(page.getByTestId('add-existing-match-class')).toHaveText(clsAdd.name);
+    await expect(page.getByTestId('class-members').locator('tbody tr').filter({ hasText: existingEmail }),
+      'поиск не добавил ученика').toHaveCount(0);
+
+    await page.getByTestId('add-existing-confirm').click();
     await expect(page.getByTestId('add-existing-done')).toContainText(studentName, { timeout: 20_000 });
 
     const row = page.getByTestId('class-members').locator('tbody tr').filter({ hasText: existingEmail });

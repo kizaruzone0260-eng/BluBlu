@@ -94,7 +94,32 @@ export const classCreateSchema = z.object({
   boardArchivePublic: z.boolean().optional().default(false),
 });
 
-export const classUpdateSchema = classCreateSchema.partial();
+/**
+ * Обновление класса — СВОЯ схема, а не `classCreateSchema.partial()` (2026-10-27, миграция на
+ * Zod 4).
+ *
+ * Причина не вкусовая, а ровно одна и она из этой миграции. В Zod 4 `.partial()` оставляет
+ * `default()` внутри поля, тогда как в Zod 3 поле становилось опциональным ДО срабатывания
+ * дефолта. Проверено на живом 4.6.7:
+ *   classCreateSchema.partial().parse({ name: 'X' }) →
+ *   { name: 'X', description: '', color: '#4f46e5', botPublicSchedule: false, boardArchivePublic: false }
+ * Для PATCH это не «не заполнено», а «учитель просил очистить описание, вернуть цвет по
+ * умолчанию и выключить оба переключателя»: одно переименование класса стирало бы его оформление
+ * и настройки приватности. Поэтому здесь те же поля и та же length-политика, что у создания, но
+ * БЕЗ значений по умолчанию: отсутствие ключа в PATCH значит «не трогать», а «что подставить»
+ * решает вызывающий, а не транспорт. Держится это тестом
+ * `apps/api/test/unit/class-update-partial.test.ts`, а не памятью о поведении третьей версии.
+ */
+export const classUpdateSchema = z.object({
+  name: name.max(120).optional(),
+  description: z.string().trim().max(2000).optional(),
+  color: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, 'invalidColor')
+    .optional(),
+  botPublicSchedule: z.boolean().optional(),
+  boardArchivePublic: z.boolean().optional(),
+});
 
 export const inviteCreateSchema = z.object({
   ttlDays: z
@@ -133,6 +158,18 @@ export const profileUpdateSchema = z.object({
 export const memberAddSchema = z
   .object({ userId: z.string().uuid().optional(), email: email.optional() })
   .refine((v) => Boolean(v.userId) !== Boolean(v.email), { path: ['email'], message: 'exactlyOne' });
+
+/**
+ * Поиск существующего ученика ПЕРЕД добавлением (2026-10-27, часть B).
+ *
+ * Зачем отдельная схема, а не переиспользование `memberAddSchema`: поиск — это запрос ровно об
+ * одном поле, и «оба способа сразу» (`userId` + `email`) здесь невозможны по смыслу. Почта
+ * нормализуется тем же `email`-примитивом, что при входе и регистрации, поэтому найденное и
+ * добавленное всегда про один и тот же адрес: `Ann@X.io ` и `ann@x.io` не расходятся на два
+ * разных аккаунта между шагом «найти» и шагом «подтвердить».
+ */
+export const memberLookupSchema = z.object({ email });
+
 export const memberMoveSchema = z.object({ toClassId: z.string().uuid() });
 
 /* ─── одноразовые ссылки-приглашения (задача 2026-10-23, часть A) ─────────────────────── */

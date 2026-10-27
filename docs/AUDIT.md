@@ -87,7 +87,7 @@ session-scoped билет → 4401, выдача чужому классу → 4
 | Группа | Проверка | Тест |
 | --- | --- | --- |
 | /api/classes (+/:id PATCH, archive) | teacher=владелец, иначе 404 | rights: attack-loop 404 |
-| /api/classes/:id/members (+add/remove/move/reset-password) | teacher-владелец; move: оба класса его | rights + stage1 |
+| /api/classes/:id/members (+lookup/add/remove/move/reset-password) | teacher-владелец; move: оба класса его; lookup — только чтение (2026-10-27, см. DECISIONS) | rights + stage1 + member-add-email |
 | /api/classes/:id/invites (+revoke) | teacher-владелец | rights (14 атак 404) |
 | /api/join-by-code, /classes/:id/leave | student-член | rights 403 teacher |
 | /api/classes/:id/feed, materials, announcements, /api/posts/:id | членство/владение | rights + stage2 |
@@ -118,3 +118,13 @@ session-scoped билет → 4401, выдача чужому классу → 4
   typecheck, build, vitest unit+integration (реальный Postgres 16 как service-контейнер,
   DATABASE_URL_TEST), затем job e2e (Playwright chromium, свой embedded-PG стек).
   Пакеты в CI: node 22, pnpm из packageManager-поля, `--frozen-lockfile`.
+- **Аудит зависимостей — блокирующий с 2026-10-27.** Шаг `node scripts/audit-gate.mjs`
+  в job `build-test` до этого нёс `continue-on-error: true` (с 2026-10-16), то есть ровно то,
+  против чего шаг был написан: high-находка печаталась, джоба оставалась зелёной. Флаг снят
+  после того, как находки закрыты по существу (zod 4.6.7, dompurify 3.4.17, fast-uri 3.1.9 и
+  4.2.3, fastify 5.12.7), а не после того, как их стало неудобно замечать. Из списка известных
+  удалена и устаревшая запись `braces` — в lock-файле 3.0.3 (запатченная версия), находка
+  больше не выдаётся, а мёртвая строка в allowlist молча приняла бы следующий удар по этому
+  пакету. Остаётся одна запись: `katex` (low — гейт на high/critical её не блокирует;
+  патчер требует mermaid 12, это отдельная работа). Непрочитанный аудит по-прежнему exit 2:
+  «не посмотрели» ≠ «чисто».

@@ -37,6 +37,10 @@ suite('Учитель добавляет существующего ученик
   const addEmail = (tok: string, classId: string, payload: unknown) => app.inject({
     method: 'POST', url: `/api/classes/${classId}/members`, headers: bearer(tok), payload,
   });
+  /** часть B (2026-10-26): шаг «найти», который только читает и ничего не создаёт */
+  const lookup = (tok: string, classId: string, payload: unknown) => app.inject({
+    method: 'POST', url: `/api/classes/${classId}/members/lookup`, headers: bearer(tok), payload,
+  });
   const members = (tok: string, classId: string) => app.inject({
     method: 'GET', url: `/api/classes/${classId}/members`, headers: bearer(tok),
   });
@@ -267,5 +271,117 @@ suite('Учитель добавляет существующего ученик
     expect(resetEvents).toHaveLength(1);
     expect(JSON.stringify(resetEvents)).not.toContain(temp);
     expect(JSON.stringify(resetEvents)).not.toContain(NEW);
+  });
+
+  /**
+   * Часть B (2026-10-26): поиск ПЕРЕД добавлением.
+   *
+   * Исходный путь добавлял аккаунт в класс одним кликом по почте: учитель не видел ни имени,
+   * ни класса и не мог убедиться, что нашёл того человека. Здесь проверяется, что чтение и
+   * запись разведены, что чтение не имеет побочных эффектов (ни членства, ни пароля), и что
+   * граница доступа у чтения ровно та же, что у записи.
+   */
+  it('показывает найденный аккаунт и класс, но ничего не меняет; членство создаёт только подтверждение', async () => {
+    const te = await makeTeacher(t.sql, `lu-ok-${Date.now()}@x.io`);
+    const tok = await teacherToken(te.email);
+    const cls = await makeClass(te.id, 'Lookup class');
+    const pupil = await makePupil(`lu-ok-p-${Date.now()}@x.io`);
+
+    // Регистр и пробелы нормализуются так же, как при добавлении и при входе.
+    const found = await lookup(tok, cls, { email: `  ${pupil.email.toUpperCase()}  ` });
+    expect(found.statusCode, found.body).toBe(200);
+    expect(found.json()).toMatchObject({
+      found: true, userId: pupil.id, name: 'Sam Pupil', email: pupil.email,
+      alreadyMember: false, classId: cls, className: 'Lookup class',
+    });
+
+    // Само по себе «найти» не является ни членством, ни сбросом пароля.
+    expect(await memberRows(cls, pupil.id), 'поиск не создал членства').toHaveLength(0);
+    const stillIn = await login(pupil.email, OLD);
+    expect(stillIn.statusCode, 'поиск по почте не тронул пароль').toBe(200);
+    const tooEarly = await reset(tok, cls, pupil.id);
+    expect(tooEarly.statusCode, 'без членства сброс по-прежнему невозможен').toBe(404);
+
+    await settle();
+    const lookups = (await t.db.select().from(auditLog).where(eq(auditLog.action, 'member_lookup')))
+      .filter((row) => (row.target as { userId?: string }).userId === pupil.id);
+    expect(lookups, 'чтение, раскрывающее личность, оставляет след').toHaveLength(1);
+    expect(lookups[0]!.target).toMatchObject({ classId: cls, userId: pupil.id, source: 'email' });
+    const targetText = JSON.stringify(lookups[0]!.target);
+    expect(targetText, 'почты в журнале нет').not.toContain(pupil.email);
+    expect(targetText).not.toContain(OLD);
+
+    // Подтверждение — прежний маршрут добавления, и только он пишет членство.
+    const confirmed = await addEmail(tok, cls, { email: pupil.email });
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    expect(confirmed.json()).toMatchObject({ ok: true, userId: pupil.id, alreadyMember: false });
+    expect(await memberRows(cls, pupil.id)).toHaveLength(1);
+
+    // Теперь поиск честно отвечает «уже в классе», чтобы интерфейс не предлагал добавить дважды.
+    const again = await lookup(tok, cls, { email: pupil.email });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(again.json()).toMatchObject({ userId: pupil.id, alreadyMember: true });
+    expect(await memberRows(cls, pupil.id), 'повторный поиск ничего не дописал').toHaveLength(1);
+  });
+
+  it('отказывает в поиске так же, как в добавлении: не найден, не ученик, удалён, кривой ввод', async () => {
+    const te = await makeTeacher(t.sql, `lu-no-${Date.now()}@x.io`);
+    const tok = await teacherToken(te.email);
+    const cls = await makeClass(te.id, 'Lookup negative');
+    const stamp = Date.now();
+
+    const missing = await lookup(tok, cls, { email: `lu-ghost-${stamp}@x.io` });
+    expect(missing.statusCode, missing.body).toBe(404);
+    expect(missing.json().error).toBe('studentNotFound');
+    expect(missing.json().reqId, 'у ошибки есть идентификатор для разбора').toBeTruthy();
+
+    const teacher = await lookup(tok, cls, { email: te.email });
+    expect(teacher.statusCode, teacher.body).toBe(400);
+    expect(teacher.json().error).toBe('notAStudent');
+
+    const deleted = await makePupil(`lu-del-${stamp}@x.io`, { deleted: true });
+    const gone = await lookup(tok, cls, { email: deleted.email });
+    expect(gone.statusCode, 'удалённый аккаунт неотличим от отсутствующего').toBe(404);
+    expect(gone.json().error).toBe('studentNotFound');
+
+    for (const body of [{}, { email: 'not-an-email' }, { email: '' }]) {
+      const bad = await lookup(tok, cls, body);
+      expect(bad.statusCode, JSON.stringify(body)).toBe(400);
+      expect(bad.json().error).toBe('invalidInput');
+      expect(bad.json().reqId).toBeTruthy();
+    }
+
+    expect(await t.db.select().from(classMembers).where(eq(classMembers.classId, cls)),
+      'ни один отказ не создал членства').toHaveLength(0);
+  });
+
+  it('поиск доступен только учителю своего класса: чужой — 404, ученик — 403, аноним — 401', async () => {
+    const owner = await makeTeacher(t.sql, `lu-own-${Date.now()}@x.io`);
+    const ownerTok = await teacherToken(owner.email);
+    const cls = await makeClass(owner.id, 'Lookup private');
+    const pupil = await makePupil(`lu-priv-p-${Date.now()}@x.io`);
+
+    const other = await makeTeacher(t.sql, `lu-oth-${Date.now()}@x.io`);
+    const otherTok = await teacherToken(other.email);
+    const foreign = await lookup(otherTok, cls, { email: pupil.email });
+    expect(foreign.statusCode, foreign.body).toBe(404);
+    expect(foreign.json().error).toBe('notFound');
+
+    const pupilTok = (await login(pupil.email, OLD)).json().accessToken as string;
+    const asPupil = await lookup(pupilTok, cls, { email: pupil.email });
+    expect(asPupil.statusCode, asPupil.body).toBe(403);
+
+    const anon = await app.inject({
+      method: 'POST', url: `/api/classes/${cls}/members/lookup`, payload: { email: pupil.email },
+    });
+    expect(anon.statusCode).toBe(401);
+
+    const badId = await app.inject({
+      method: 'POST', url: '/api/classes/not-a-uuid/members/lookup', headers: bearer(ownerTok),
+      payload: { email: pupil.email },
+    });
+    expect(badId.statusCode, 'кривой идентификатор класса — 404, а не 500').toBe(404);
+
+    expect(await memberRows(cls, pupil.id)).toHaveLength(0);
   });
 });

@@ -18,6 +18,17 @@ import { redactSecrets } from '../lib/redact.js';
 import { hashToken } from '../services/notify.js';
 
 /**
+ * Потолок числа ключей в словаре настроек уведомлений (задача 2026-10-27, часть A).
+ *
+ * Сегодня продукт знает пять видов уведомлений (`KIND_KEYS` в services/bot.ts), а `kinds` — это jsonb,
+ * который пишется ЦЕЛИКОМ из тела запроса. Без потолка один аутентифицированный вызов может
+ * положить в базу словарь из сотен тысяч ключей, и каждая последующая отправка уведомления
+ * будет его перечитывать. 16 — это «все сегодняшние виды плюс запас на новые», а не произвольное
+ * маленькое число: легитимный запрос никогда в него не упрётся.
+ */
+export const MAX_NOTIFY_KIND_KEYS = 16;
+
+/**
  * The bot API in use. With a real token + TELEGRAM_TRANSPORT=telegram it is
  * grammY; in tests/demo (TELEGRAM_TRANSPORT=log) it is a capturing fake so the
  * whole dispatcher runs without any Telegram network or token (§7).
@@ -141,7 +152,15 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
 
   app.put('/api/me/notify-prefs', { preHandler: app.authenticate }, async (req, reply) => {
     const p = z.object({
-      kinds: z.record(z.boolean()).default({}),
+      // Zod 4 требует схему КЛЮЧА у `z.record` (в Zod 3 один аргумент означал «ключ — строка»).
+      // Одновременно это потолок на число настроек: словарь уведомлений конечен (сегодня пять
+      // ключей, см. `KIND_KEYS` в services/bot.ts), а словарь без ограничения ключей — готовый
+      // способ прислать мегабайты мусора в jsonb и в разбор схемы (GHSA-mrhx-c7xc-m3w5).
+      // Словарь не сужен до известных имён намеренно: прежний клиент мог прислать свой ключ,
+      // и это не должно стать отказом — отказ здесь только про РАЗМЕР.
+      kinds: z.record(z.string(), z.boolean())
+        .refine((v) => Object.keys(v).length <= MAX_NOTIFY_KIND_KEYS, 'tooManyKeys')
+        .default({}),
       quietFrom: z.number().int().min(0).max(23).default(22),
       quietTo: z.number().int().min(0).max(23).default(8),
       channel: z.enum(['private', 'group', 'both']).default('private'),

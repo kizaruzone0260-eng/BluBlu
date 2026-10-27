@@ -11,6 +11,20 @@ import InviteHistory from '../components/InviteHistory';
 import AuthError from '../components/AuthError';
 
 interface MemberRow { userId: string; name: string; email: string; joinedAt: string }
+/**
+ * Ответ `POST /api/classes/:id/members/lookup` (2026-10-27, часть B): сервер нашёл
+ * существующий аккаунт ученика, но членства ещё нет — оно появится только после
+ * подтверждения. `className`/`classId` приходят с сервера, чтобы в карточке стояло то
+ * же имя класса, которое хранится в базе, а не то, что страница успела загрузить.
+ */
+interface StudentMatch {
+  userId: string;
+  name: string;
+  email: string;
+  alreadyMember: boolean;
+  classId: string;
+  className: string;
+}
 interface ClassView { id: string; name: string; description: string; color: string; archived: boolean; chatMode?: 'on' | 'off' | 'announce'; botPublicSchedule?: boolean; boardArchivePublic?: boolean }
 
 export default function ClassDetail() {
@@ -39,6 +53,10 @@ export default function ClassDetail() {
   // Пароль здесь не создаётся и не меняется — только строка в class_members.
   const [addEmail, setAddEmail] = useState('');
   const [addNotice, setAddNotice] = useState('');
+  // часть B (2026-10-27): найденный аккаунт живёт здесь, пока учитель его не подтвердил.
+  // Поиск и членство разведены намеренно: по одной почте в класс попадал человек, которого
+  // учитель ни разу не видел, а «Ann@X.io» в 7-Б мог оказаться совсем не той Анной.
+  const [addMatch, setAddMatch] = useState<StudentMatch | null>(null);
   // feedback is a toast, not `window.alert` (task 3, 2026-10-10): a native modal blocks the
   // renderer until somebody dismisses it, and a page that still has one open when the client
   // wants to leave it cannot finish closing — measured as `page.close` taking 235 s in the e2e
@@ -111,10 +129,22 @@ export default function ClassDetail() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['members', id] }),
   });
   /**
-   * Добавление по почте (2026-10-26). Сервер отвечает `alreadyMember`, а не ошибкой, если
-   * строка уже есть: для учителя это не авария, и повторный клик не должен выглядеть как
-   * сломанная кнопка. После успеха список перезапрашивается — сразу появляются сброс пароля
-   * и удаление.
+   * Шаг 1 — поиск (2026-10-27, часть B): только чтение. Сервер отвечает личностью найденного
+   * ученика и именем класса; ни строки в `class_members`, ни пароля этот запрос не касается.
+   * `alreadyMember` означает, что подтверждать нечего — сброс пароля уже доступен в списке.
+   */
+  const lookupStudent = useMutation({
+    mutationFn: (email: string) =>
+      api<StudentMatch & { found: true }>(`/api/classes/${id}/members/lookup`, {
+        method: 'POST', body: JSON.stringify({ email }),
+      }),
+    onSuccess: (r) => { setAddMatch(r); setAddNotice(''); },
+  });
+  /**
+   * Шаг 2 — добавление по почте (2026-10-26, с подтверждением с 2026-10-27). Сервер отвечает
+   * `alreadyMember`, а не ошибкой, если строка уже есть: для учителя это не авария, и повторный
+   * клик не должен выглядеть как сломанная кнопка. После успеха список перезапрашивается — сразу
+   * появляются сброс пароля и удаление.
    */
   const addExisting = useMutation({
     mutationFn: (email: string) =>
@@ -123,6 +153,7 @@ export default function ClassDetail() {
       }),
     onSuccess: (r) => {
       setAddEmail('');
+      setAddMatch(null);
       setAddNotice(r.alreadyMember
         ? t('classes.addExistingAlready', { name: r.name })
         : t('classes.addExistingDone', { name: r.name }));
@@ -275,26 +306,80 @@ export default function ClassDetail() {
                 const v = addEmail.trim();
                 if (!v) return;
                 setAddNotice('');
-                addExisting.mutate(v);
+                setAddMatch(null);
+                lookupStudent.reset();
+                addExisting.reset();
+                lookupStudent.mutate(v);
               }}>
                 <div className="field">
                   <label htmlFor="add-existing-email">{t('classes.addExistingEmail')}</label>
                   <input id="add-existing-email" data-testid="add-existing-email" type="email" value={addEmail}
-                    onChange={(e) => { setAddEmail(e.target.value); setAddNotice(''); }} required
+                    onChange={(e) => { setAddEmail(e.target.value); setAddNotice(''); setAddMatch(null); }} required
                     autoComplete="off" spellCheck={false} />
                 </div>
                 <button type="submit" className="secondary" data-testid="add-existing-submit"
-                  disabled={addExisting.isPending || !addEmail.trim()}>
-                  {t('classes.addExistingSubmit')}
+                  disabled={lookupStudent.isPending || addExisting.isPending || !addEmail.trim()}>
+                  {t('classes.addExistingFind')}
                 </button>
               </form>
-              {addNotice && <p className="ok" role="status" data-testid="add-existing-done">{addNotice}</p>}
-              {addExisting.error && (
+              {lookupStudent.error && !addMatch && (
                 <AuthError
-                  code={(addExisting.error as { code?: string }).code ?? 'errorGeneric'}
-                  reqId={(addExisting.error as { reqId?: string }).reqId}
+                  code={(lookupStudent.error as { code?: string }).code ?? 'errorGeneric'}
+                  reqId={(lookupStudent.error as { reqId?: string }).reqId}
                 />
               )}
+
+              {/* Шаг 2 — явное подтверждение (часть B). Показаны все три факта, которые учитель
+                  обязан сверить: имя, почта найденного аккаунта и класс, в который он попадёт.
+                  Кнопка «Отмена» возвращает к поиску и ничего не создаёт. */}
+              {addMatch && (
+                <div className="card add-existing-match" data-testid="add-existing-match"
+                  aria-labelledby="add-existing-match-title">
+                  <h4 id="add-existing-match-title" style={{ marginTop: 0 }}>
+                    {t('classes.addExistingMatchTitle')}
+                  </h4>
+                  <p style={{ margin: '2px 0' }}>
+                    <span className="muted">{t('classes.addExistingMatchName')}: </span>
+                    <strong data-testid="add-existing-match-name">{addMatch.name}</strong>
+                  </p>
+                  <p style={{ margin: '2px 0' }}>
+                    <span className="muted">{t('classes.addExistingMatchEmail')}: </span>
+                    <span data-testid="add-existing-match-email">{addMatch.email}</span>
+                  </p>
+                  <p style={{ margin: '2px 0' }}>
+                    <span className="muted">{t('classes.addExistingMatchClass')}: </span>
+                    <span data-testid="add-existing-match-class">{addMatch.className}</span>
+                  </p>
+                  <p className="muted" style={{ fontSize: '.85rem' }} data-testid="add-existing-match-explain">
+                    {addMatch.alreadyMember
+                      ? t('classes.addExistingMatchAlready', { name: addMatch.name })
+                      : t('classes.addExistingMatchExplain')}
+                  </p>
+                  <div className="row">
+                    {!addMatch.alreadyMember && (
+                      <button className="secondary" style={{ marginTop: 0 }} data-testid="add-existing-confirm"
+                        disabled={addExisting.isPending || lookupStudent.isPending}
+                        onClick={() => { setAddNotice(''); addExisting.mutate(addMatch.email); }}>
+                        {t('classes.addExistingSubmit')}
+                      </button>
+                    )}
+                    <button className="ghost" style={{ marginTop: 0 }} data-testid="add-existing-cancel"
+                      disabled={addExisting.isPending} onClick={() => setAddMatch(null)}>
+                      {t('common.cancel')}
+                    </button>
+                  </div>
+                  {!addMatch.alreadyMember && (
+                    <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.addExistingMatchWrong')}</p>
+                  )}
+                  {addExisting.error && (
+                    <AuthError
+                      code={(addExisting.error as { code?: string }).code ?? 'errorGeneric'}
+                      reqId={(addExisting.error as { reqId?: string }).reqId}
+                    />
+                  )}
+                </div>
+              )}
+              {addNotice && <p className="ok" role="status" data-testid="add-existing-done">{addNotice}</p>}
             </div>
 
             {(members.data ?? []).length === 0 && <p className="muted">{t('classes.noMembers')}</p>}

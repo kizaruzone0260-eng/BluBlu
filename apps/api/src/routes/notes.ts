@@ -20,7 +20,23 @@ export async function noteRoutes(app: FastifyInstance, opts: { db: DB }) {
     // item 3: the body may carry an embedded vector drawing (≤ ~500 KB encoded)
     body: z.string().max(800000).default(''),
   });
-  const patchSchema = bodySchema.partial();
+  /**
+   * PATCH-схема собрана отдельно, а не `bodySchema.partial()` — тот же лов Zod 4, из-за которого
+   * `classUpdateSchema` тоже перестала быть `.partial()`: в четвёрке `.partial()` СОХРАНЯЕТ
+   * `default()`, поэтому запрос «закрепить заметку» (`{pinned: true}`) разбирался в
+   * `{pinned: true, title: '', body: ''}`, и маршрут добросовестно затирал и заголовок, и текст
+   * — а вместо 200 человек получал 400 `noteEmpty`. Замер сделан на 4.6.7 до правки и повторён
+   * тестом после неё. Отсутствие ключа здесь снова значит «не трогать»; length-политика та же,
+   * что у создания, значений по умолчанию нет ни у одного поля.
+   */
+  const patchSchema = z.object({
+    classId: z.string().uuid().nullable().optional(),
+    eventId: z.string().uuid().nullable().optional(),
+    pinned: z.boolean().optional(),
+    title: z.string().trim().max(200).optional(),
+    // item 3: the body may carry an embedded vector drawing (≤ ~500 KB encoded)
+    body: z.string().max(800000).optional(),
+  });
 
   app.get('/api/notes', { preHandler: app.authenticateTeacher }, async (req) => {
     const classId = (req.query as { classId?: string }).classId;

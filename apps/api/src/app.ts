@@ -15,6 +15,7 @@ import { env, livekitPublicWsUrl } from './env.js';
 import { redactSecrets, safeErrorMessage } from './lib/redact.js';
 import { effectiveCorsOrigins, effectiveIpWindowMax, effectiveIpWindowMs } from './lib/prodConfig.js';
 import { errorBody, newRequestId } from './lib/requestId.js';
+import { JSON_BODY_LIMIT } from './lib/bodyLimits.js';
 // The auth error vocabulary is shared with the web screens and with the locale-parity test on
 // purpose: a code the interface cannot name is a dead end for the person seeing it.
 import { isAuthErrorCode } from '@klass/shared';
@@ -118,11 +119,17 @@ export async function buildApp(
   const email: EmailTransport = opts.email ?? createEmailTransport(env);
   // `loggerInstance` (a logger we were handed) and `logger` (options for Fastify's own pino)
   // are mutually exclusive in Fastify, hence the two branches rather than one spread.
+  //
+  // `bodyLimit` named explicitly in BOTH branches (task 2026-10-27 part A): until now the JSON
+  // body ceiling was Fastify's silent 1 MB default, so it appeared nowhere in the source and no
+  // test pinned it. Same number, now stated — see lib/bodyLimits.ts for what is deliberately NOT
+  // covered here (multipart uploads, WebSocket frames) and for the single route that needs more.
   const app = opts.logger
     ? Fastify({
         loggerInstance: opts.logger,
         trustProxy: env.TRUST_PROXY,
         genReqId: newRequestId,
+        bodyLimit: JSON_BODY_LIMIT,
       })
     : Fastify({
         logger: env.NODE_ENV === 'test' ? false : accessLogOptions,
@@ -134,6 +141,7 @@ export async function buildApp(
         // Task B: one short random id per request, printed under an auth error and written to
         // the access log, so «не могу войти» becomes a findable line instead of a shrug.
         genReqId: newRequestId,
+        bodyLimit: JSON_BODY_LIMIT,
       });
 
   // CSP: connect-src names ONLY concrete origins — same-origin API/WS via 'self'
