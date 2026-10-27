@@ -7,12 +7,17 @@ import { hashPassword, verifyPassword } from '../lib/password.js';
 import {
   signAccessToken, generateRefreshToken, generateFamilyId, hashRefreshToken,
 } from '../lib/tokens.js';
-import { redeemInviteCode, redeemInviteLink, peekInviteLink, inviteStateCode } from './invites.js';
+import { redeemInviteLink, peekInviteLink, inviteStateCode } from './invites.js';
 import { consumeEmailCode, precheckEmailCode } from './emailVerify.js';
 
+/**
+ * Ответ входа. `'invalidCode'` из списка ушёл 2026-10-27 вместе с приёмом в класс по коду:
+ * расходиться больше нечему, а состояния токена приглашения — это отдельный
+ * `InviteRegisterResult`.
+ */
 export type AuthResult =
   | { ok: true; accessToken: string; user: PublicUser }
-  | { ok: false; error: 'invalidCredentials' | 'invalidCode' | 'emailTaken' | 'emailCodeInvalid' };
+  | { ok: false; error: 'invalidCredentials' | 'emailTaken' | 'emailCodeInvalid' };
 
 export interface PublicUser {
   id: string;
@@ -41,17 +46,23 @@ function toPublic(u: typeof users.$inferSelect): PublicUser {
 }
 
 /**
- * New student: create user, redeem class code atomically, add membership —
- * all inside ONE transaction. If the code is invalid/used or the email is
- * taken, everything rolls back; the race between two concurrent redemptions
- * of the same code is decided by the single UPDATE … WHERE used_at IS NULL.
+ * Two ways a student account comes into being, and both are ONE transaction (2026-10-27).
  *
- * Часть F (2026-10-16): код из письма списывается ТЕМ ЖЕ транзакционным ходом. Причина не в
- * аккуратности, а в двух обещаниях сразу: «списание атомарно» (два параллельных подтверждения
- * одного кода не создадут двух аккаунтов) и «ошибка не сжигает письмо» (не тот код класса или
- * занятый email откатывают и списание, и человек может попробовать снова тем же кодом).
+ *  • `registerStudentByInviteLink` — человек пришёл по одноразовой ссылке, пароль выбирает сам;
+ *    аккаунт + членство + расход токена (+ списание кода из письма, если подтверждение включено)
+ *    — одним ходом, либо ничего;
+ *  • `createStudentByTeacher` — аккаунт заводит учитель: пароль временный, поэтому
+ *    `mustChangePassword` поднимается сразу, и расходывать здесь нечего.
+ *
+ * Оба наследуют один и тот же набор правил, выстраданный на регистрации по коду класса:
+ * занятый адрес читается ЯВНО до записей (обычный случай не должен зависеть от формы ошибки),
+ * а гонку двух одинаковых запросов решает уникальный индекс `users.email` — `isUniqueViolation`
+ * ниже идёт по цепочке `cause`, потому что drizzle заворачивает ошибку драйвера в свою.
+ *
+ * Часть F (2026-10-16) про код из письма живёт там же, где и была: ПРОВЕРКА — до транзакции
+ * (засчитанная попытка обязана пережить откат), СПИСАНИЕ — внутри (ошибка по классу или по адресу
+ * не сжигает письмо, и человек пробует снова тем же кодом).
  */
-class InvalidCodeError extends Error {}
 class EmailCodeError extends Error {}
 class EmailTakenError extends Error {}
 
@@ -80,66 +91,67 @@ function isUniqueViolation(err: unknown): boolean {
   return false;
 }
 
-export async function registerStudentByCode(
+/**
+ * Аккаунт ученика, который создаёт учитель (2026-10-27, «упростить приём в класс»).
+ *
+ * Что это заменяет и почему это НЕ вторая система авторизации. Прежний путь «учитель видит
+ * занятую почту → ученик должен сначала сам создать аккаунт» упирался в тупик: у маленького
+ * человека нет ни ссылки, ни терпения, а у учителя есть имя, фамилия и почта. Здесь тот же
+ * `hashPassword`, та же `passwordPolicy` (её проверяет маршрут, до вызова), та же таблица, та же
+ * колонка `must_change_password` и тот же серверный гейт в `plugins/auth.ts`. Никакого второго
+ * хранения паролей и ни одной новой сессии: функция НЕ выдаёт токен — учитель не входит в систему
+ * ЧУЖИМ аккаунтом, он только заводит этот аккаунт.
+ *
+ * Атомарность — одно обязательство целиком: либо аккаунт + членство, либо ничего. Откат по членству
+ * (например, класс удалили в тот же миг) не оставляет «сироту» без класса, а отказ по занятой почте
+ * не оставляет половину строк. Гонку двух одинаковых запросов решает уникальный индекс
+ * `users.email` — тот же приём, что у регистрации по ссылке: обычный случай отвечает ЯВНОЕ чтение,
+ * гонку — `isUniqueViolation`.
+ *
+ * `mustChangePassword: true` — суть, а не вежливость: пароль набрал и будет передавать другой
+ * человек, и первый вход обязан закончиться его сменой. `profileCompletedAt` ставится сразу: имя и
+ * фамилия уже известны, и показывать экран «Имя и фамилия» человеку, у которого их спросили,
+ * бессмысленно. `locale` НЕ трогается: язык ещё никто не выбирал, и аккаунт честнее держать на
+ * продуктовом default с `localeExplicit: false`, чем за учителя решать, на каком языке ребёнок
+ * будет учиться.
+ */
+export type StudentCreateResult =
+  | { ok: true; user: PublicUser }
+  | { ok: false; error: 'emailTaken' };
+
+export async function createStudentByTeacher(
   db: DB,
-  input: {
-    firstName: string; lastName: string; email: string; password: string; code: string;
-    locale?: Locale;
-    /** код из письма; `undefined` = подтверждение почты выключено (EMAIL_PROVIDER=none) */
-    emailCode?: string;
-  },
-): Promise<AuthResult> {
+  classId: string,
+  input: { firstName: string; lastName: string; email: string; password: string },
+): Promise<StudentCreateResult> {
   const passwordHash = await hashPassword(input.password);
-  /*
-   * Часть F: ПРОВЕРКА кода — до транзакции (чтобы засчитанная попытка пережила откат),
-   * СПИСАНИЕ — внутри (чтобы отказ по коду класса не сжёг письмо). Один шаг вместо двух так
-   * не делается: и то, и другое утверждения про разный отказ, и откатывает транзакция только
-   * одно из них.
-   */
-  if (input.emailCode !== undefined
-    && (await precheckEmailCode(db, input.email, input.emailCode)) !== 'live') {
-    return { ok: false, error: 'emailCodeInvalid' };
-  }
   try {
     const user = await db.transaction(async (tx) => {
-      // Task B: a taken address is the ordinary case, so it is answered by a read, not by a
-      // constraint violation. `users.email` is unique over ALL rows — a soft-deleted account holds
-      // its address too — so the check deliberately ignores `deleted_at`, exactly like the index.
+      // `users.email` уникальна по ВСЕМ строкам, включая мягко удалённые, — поэтому проверка
+      // так же игнорирует `deleted_at`, как и индекс. Удалённый аккаунт держит свой адрес:
+      // создать новый на него нельзя, и сказать это надо «почта занята», а не 500.
       const takenBefore = await tx
         .select({ id: users.id })
         .from(users)
         .where(eq(users.email, input.email))
         .limit(1);
       if (takenBefore.length > 0) throw new EmailTakenError();
-      if (input.emailCode !== undefined) {
-        const spent = await consumeEmailCode(tx as unknown as DB, input.email, input.emailCode);
-        if (!spent) throw new EmailCodeError();
-      }
       const [u] = await tx
         .insert(users)
         .values({
-          role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash,
-          // registration step 2 already collected BOTH names → no gate later
-          profileCompletedAt: new Date(),
-          // Language (task 1): the register screen's own switch used to be thrown away here —
-          // the row took the column default, and the app then applied THAT over the user's pick.
-          ...(input.locale ? { locale: input.locale, localeExplicit: true } : {}),
+          role: 'student', name: input.firstName, lastName: input.lastName, email: input.email,
+          passwordHash, mustChangePassword: true, profileCompletedAt: new Date(),
         })
         .returning();
-      if (!u) throw new InvalidCodeError();
-      const redeem = await redeemInviteCode(tx as unknown as DB, input.code, u.id);
-      if (!redeem.ok || !redeem.classId) throw new InvalidCodeError();
-      await tx.insert(classMembers).values({ classId: redeem.classId, userId: u.id });
+      if (!u) throw new Error('student insert returned no row');
+      await tx.insert(classMembers).values({ classId, userId: u.id });
       return u;
     });
-    const accessToken = await signAccessToken({ sub: user.id, role: user.role, locale: user.locale });
-    return { ok: true, accessToken, user: toPublic(user) };
+    return { ok: true, user: toPublic(user) };
   } catch (err) {
-    if (err instanceof InvalidCodeError) return { ok: false, error: 'invalidCode' };
-    if (err instanceof EmailCodeError) return { ok: false, error: 'emailCodeInvalid' };
     if (err instanceof EmailTakenError) return { ok: false, error: 'emailTaken' };
-    // the race path: two registrations of one address in the same instant — the second is stopped
-    // by the unique index, and its code may sit anywhere in the wrapper chain.
+    // гонка: два запроса с одной почтой в один миг — второго останавливает индекс, и его код
+    // может лежать в любом звене обёртки drizzle
     if (isUniqueViolation(err)) return { ok: false, error: 'emailTaken' };
     throw err;
   }
@@ -154,10 +166,19 @@ export async function registerStudentByCode(
  * любая ошибка (занятая почта, отвалившийся коннект) оставляла человека без приглашения, а
  * учитель получал бы «ссылка не работает» вместо второй попытки. Здесь либо аккаунт + членство +
  * израсходованное приглашение, либо ничего.
+ *
+ * 2026-10-27: сюда переехало подтверждение почты (`emailCode`), которое раньше умела только
+ * регистрация по коду класса. Причина ровно одна: с выведенным кодом ссылка осталась единственным
+ * публичным способом завести аккаунт, а включатель `EMAIL_PROVIDER` — свойство транспорта, а не
+ * маршрута. Если бы требование кода осталось у умершего пути, почтовое подтверждение тихо
+ * превратилось бы в украшение: письмо приходит, а спросить его не у чего. Порядок — как в старом
+ * коде: ПРОВЕРКА до дорогой работы (засчитанная попытка обязана пережить откат и не обязана
+ * оплачивать argon2), СПИСАНИЕ внутри транзакции (ошибка по классу или по адресу не сжигает
+ * письмо, и человек пробует снова тем же кодом).
  */
 export type InviteRegisterResult =
   | { ok: true; accessToken: string; user: PublicUser; classId: string; inviteId: string }
-  | { ok: false; error: 'emailTaken' | 'invalidInput' | 'inviteInvalid' | 'inviteExpired' | 'inviteRevoked' | 'inviteUsed' };
+  | { ok: false; error: 'emailTaken' | 'invalidInput' | 'emailCodeInvalid' | 'inviteInvalid' | 'inviteExpired' | 'inviteRevoked' | 'inviteUsed' };
 
 class InviteStateError extends Error {
   constructor(readonly state: 'inviteInvalid' | 'inviteExpired' | 'inviteRevoked' | 'inviteUsed' | 'invalidInput') { super(state); }
@@ -167,6 +188,8 @@ export async function registerStudentByInviteLink(
   db: DB,
   input: {
     token: string; firstName: string; lastName: string; email: string; password: string; locale?: Locale;
+    /** код из письма; `undefined` = подтверждение почты выключено (EMAIL_PROVIDER=none) */
+    emailCode?: string;
   },
 ): Promise<InviteRegisterResult> {
   /*
@@ -184,6 +207,12 @@ export async function registerStudentByInviteLink(
    */
   const pre = await peekInviteLink(db, input.token);
   if (pre.state !== 'ok') return { ok: false, error: inviteStateCode(pre.state) };
+  // Часть F: код из письма проверяется ДО аргон2 и до транзакции — попытка должна пережить
+  // откат, а платная работа не должна оплачиваться опечаткой в шести цифрах.
+  if (input.emailCode !== undefined
+    && (await precheckEmailCode(db, input.email, input.emailCode)) !== 'live') {
+    return { ok: false, error: 'emailCodeInvalid' };
+  }
   const passwordHash = await hashPassword(input.password);
   try {
     const created = await db.transaction(async (tx) => {
@@ -194,9 +223,15 @@ export async function registerStudentByInviteLink(
       const peek = await peekInviteLink(tx, input.token);
       if (peek.state !== 'ok') throw new InviteStateError(inviteStateCode(peek.state));
       // занятый адрес читается ЯВНО до любых записей, чтобы обычный случай не зависел от формы
-      // ошибки уникального индекса (тот же приём, что у `registerStudentByCode`)
+      // ошибки уникального индекса (тот же приём, что у `createStudentByTeacher`)
       const taken = await tx.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1);
       if (taken.length > 0) throw new EmailTakenError();
+      // списание письма — ВНУТРИ и до вставки: отказ по классу или по адресу откатывает его
+      // обратно, и человек пробует снова ТЕМ ЖЕ кодом из того же письма
+      if (input.emailCode !== undefined) {
+        const spent = await consumeEmailCode(tx as unknown as DB, input.email, input.emailCode);
+        if (!spent) throw new EmailCodeError();
+      }
       const [u] = await tx.insert(users).values({
         role: 'student', name: input.firstName, lastName: input.lastName, email: input.email, passwordHash,
         profileCompletedAt: new Date(),
@@ -217,6 +252,8 @@ export async function registerStudentByInviteLink(
     return { ok: true, accessToken, user: toPublic(created.user), classId: created.classId, inviteId: created.inviteId };
   } catch (err) {
     if (err instanceof EmailTakenError) return { ok: false, error: 'emailTaken' };
+    // списание не состоялось (письмо уже израсходовано или истекло между проверкой и транзакцией)
+    if (err instanceof EmailCodeError) return { ok: false, error: 'emailCodeInvalid' };
     if (err instanceof InviteStateError) {
       return err.state === 'invalidInput'
         ? { ok: false, error: 'invalidInput' }

@@ -14,7 +14,7 @@ import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import {
-  BASE, dbBoard, m, makeLesson, paint, pinTeacherRussian, waitInkPages,
+  BASE, dbBoard, m, makeLesson, paint, pinTeacherRussian, registerStudent, waitInkPages,
   teacherLessonPage, teacherToken, type Ctx,
 } from './boardFixtures';
 
@@ -105,7 +105,7 @@ test.describe('lesson archive (part 4)', () => {
 
   test('a student reaches the archive only when the class switch is on — and sees boards only', async ({ browser }) => {
     test.setTimeout(240_000);
-    const { classId, sessionId, inviteCode } = await makeLesson(api, token, 'E2E архив доступ');
+    const { classId, sessionId, linkUrl } = await makeLesson(api, token, 'E2E архив доступ');
     // доска без урока: архив проверяет права, а не способ появления доски
     const saved = await api.put(`/api/lessons/${sessionId}/board/page`, {
       headers: auth(token),
@@ -117,18 +117,9 @@ test.describe('lesson archive (part 4)', () => {
 
     const ctxS = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const s = await ctxS.newPage();
-    await s.goto('/login');
     const email = `e2arch${Date.now()}@x.io`;
-    await s.goto('/register');
-    await s.getByTestId('reg-code').fill(inviteCode);
-    await s.getByTestId('reg-email').fill(email);
-    await s.getByTestId('reg-password').fill('Secret1234');
-    await s.getByTestId('register-step1').click();
-    await s.getByTestId('reg-first').fill('Архив');
-    await s.getByTestId('reg-last').fill('Ученик');
-    await s.getByTestId('reg-consent').check();
-    await s.getByTestId('register-submit').click();
-    await expect(s.getByTestId('home-title')).toBeVisible({ timeout: 25_000 });
+    // ученик регистрируется сам по одноразовой ссылке (приём по коду выведен 2026-10-27)
+    await registerStudent(s, linkUrl, 'Архив', email);
 
     // переключатель выключен: страница класса вообще не предлагает архив, а прямой заход — 404
     await s.goto(`/classes/${classId}`);

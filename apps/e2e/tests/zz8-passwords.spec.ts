@@ -1,8 +1,9 @@
 /**
  * Part 3 e2e — the forgotten-password lifecycle through the real UI:
- *  1. a teacher creates a class + an invite code;
- *  2. a student registers with that code and lands straight in the app
- *     (registration is NOT flagged mustChangePassword);
+ *  1. a teacher creates a class + a one-time invitation link;
+ *  2. a student registers with that link and lands straight in the app
+ *     (self-registration is NOT flagged mustChangePassword — the whole point of using the link
+ *     here: the password suite below starts from an account with no gate);
  *  3. the teacher resets that student's password from the member list and the
  *     one-time temp password is shown there once;
  *  4. the student logs in with the temp password → the forced change-password
@@ -32,7 +33,7 @@ const TEACHER_PW = 'Passw0rd123';
 
 // shared across the serial tests (one module instance per worker)
 let className = '';
-let inviteCode = '';
+let inviteLink = '';
 let studentEmail = '';
 let tempPw = '';
 
@@ -52,7 +53,7 @@ async function loginUI(page: import('@playwright/test').Page, email: string, pw:
 }
 
 test.describe.serial('Part 3: forgotten password & gate', () => {
-  test('teacher creates a class and an invite code', async ({ page }) => {
+  test('teacher creates a class and an invitation link', async ({ page }) => {
     await loginUI(page, TEACHER, TEACHER_PW);
     className = `E2E Пароли ${Date.now()}`;
     await page.goto(`${BASE}/classes`);
@@ -62,27 +63,41 @@ test.describe.serial('Part 3: forgotten password & gate', () => {
     await expect(card).toHaveCount(1);
     await card.locator('a').first().click();
     await expect(page).toHaveURL(/\/classes\/[0-9a-f-]+/);
-    await page.getByTestId('create-invite').click();
-    await expect(page.getByTestId('invite-code')).toBeVisible();
-    inviteCode = (await page.getByTestId('invite-code').textContent())!.trim();
-    expect(inviteCode).toMatch(/^[2-9A-HJ-KMNP-Z]{8}$/);
+    /*
+     * Прежняя версия этого шага нажимала «создать код» и сверяла восемь символов с алфавитом
+     * `2-9A-HJ-KMNP-Z`. Способ выведен из продукта (маршрут кода отвечает 410), поэтому здесь
+     * стоит тот же по силе контроль, но над surviving-путём: кодовой кнопки нет вовсе, а ссылка
+     * отдаётся ровно один раз и несёт токен во фрагменте.
+     */
+    await expect(page.getByTestId('create-invite')).toHaveCount(0);
+    await page.getByTestId('create-invite-link').click();
+    await expect(page.getByTestId('invite-link-box')).toBeVisible({ timeout: 15_000 });
+    inviteLink = (await page.getByTestId('invite-link-box').locator('.invite-url').innerText()).trim();
+    expect(inviteLink).toMatch(/#([A-Za-z0-9_-]{32})$/);
+    await page.getByTestId('invite-link-done').click();
+    await expect(page.getByTestId('invite-link-box'), 'ссылка показывается один раз').toHaveCount(0);
   });
 
-  test('student registers by code — lands in the app, no password gate', async ({ browser }) => {
+  test('student registers by the link — lands in the app, no password gate', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     studentEmail = `e2epw${Date.now()}@x.io`;
-    await page.goto(`${BASE}/register`);
-    await page.getByTestId('reg-code').fill(inviteCode);
-    await page.getByTestId('reg-email').fill(studentEmail);
-    await page.getByTestId('reg-password').fill('Secret1234');
-    await page.getByTestId('register-step1').click();
-    await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('reg-first').fill('Пина');
-    await page.getByTestId('reg-last').fill('Код');
-    await page.getByTestId('reg-consent').check();
-    await page.getByTestId('register-submit').click();
+    const token = inviteLink.split('#')[1];
+    await page.goto(`${BASE}/join#${token}`);
+    await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('join-first').fill('Пина');
+    await page.getByTestId('join-last').fill('Код');
+    await page.getByTestId('join-email').fill(studentEmail);
+    await page.getByTestId('join-password').fill('Secret1234');
+    await page.getByTestId('join-consent').check();
+    await page.getByTestId('join-register').click();
+    // экран ведёт человека в приглашённый класс, поэтому «нет калитки смены пароля» проверяется
+    // на Home следующим шагом — при `must_change_password` туда пуска бы не пустили
+    await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('password-gate')).toHaveCount(0);
+    await page.goto('/');
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('password-gate')).toHaveCount(0);
     await ctx.close();
   });
 

@@ -332,6 +332,11 @@ export async function buildApp(
     // общего адреса школы», что и регистрация по коду, поэтому они в этом же списке, а не со
     // своим лимитом в обработчике: общий `onRoute` выше перезаписал бы любой per-route config,
     // и настоящий потолок держит именно здесь.
+    // 2026-10-27: приём по коду класса выведен, и три его маршрута (`/api/auth/register`,
+    // `/api/auth/check-code`, `/api/join-by-code`) остались в этом списке ОСОЗНАННО, хотя теперь
+    // только отвечают 410: сломанный клиент, который крутит мёртвый вызов в цикле, не должен
+    // выигрывать у сервера право ничего не лимитировать. Потолок им тот же, что живым публичным
+    // входам, — школа с одного адреса бьёт в них не чаще, чем в регистрацию по ссылке.
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code'
       || url === '/api/auth/email-code'
       || url === '/api/invitations/preview' || url === '/api/invitations/register' || url === '/api/invitations/join') {
@@ -363,7 +368,7 @@ export async function buildApp(
   await app.register(classRoutes, { db });
   // задача 2026-10-23 (часть A): публичная половина приглашений — предпросмотр, регистрация по
   // одноразовой ссылке и вход существующим аккаунтом
-  await app.register(invitationRoutes(db));
+  await app.register(invitationRoutes(db, email));
   await app.register(rtcRoutes, { db });
   await app.register(postRoutes, { db });
   await app.register(noteRoutes, { db });

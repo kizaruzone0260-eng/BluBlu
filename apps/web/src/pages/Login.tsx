@@ -78,11 +78,11 @@ export default function Login({ onDone }: { onDone: () => void }) {
         <input id="login-email" data-testid="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" />
         <label htmlFor="login-password">{t('common.password')}</label>
         <input id="login-password" data-testid="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
-        {err && <AuthError code={err.code} reqId={err.reqId} />}
+        {err && <AuthError code={err.code} />}
         <button data-testid="login-submit" type="submit" disabled={busy}>{t('common.login')}</button>
       </form>
       <p className="muted">
-        {t('auth.haveCode')} <Link to="/register">{t('common.register')}</Link>
+        {t('auth.needInvite')} <Link to="/register">{t('auth.howToJoin')}</Link>
       </p>
       <p className="muted">
         <Link to="/privacy">{t('legalLinks.privacy')}</Link>

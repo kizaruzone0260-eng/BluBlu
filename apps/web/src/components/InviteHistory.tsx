@@ -19,6 +19,12 @@ import { fmtDate, fmtDateTime } from '../lib/format';
  * Узкий экран: здесь не `<table>`, а список строк. Таблица на 390 px либо резала колонки, либо
  * заставляла экран скроллить по горизонтали — см. требование «нет горизонтального скролла»; ширина
  * здесь следует за содержимым, а не наоборот.
+ *
+ * Строки прежнего способа (2026-10-27). Восьмизначный код ушёл из продукта, но его записи в
+ * истории остались: вычёркивать историю никто не собирался. Окно показывает их под статусом
+ * `retired` — «помечен, но не ведёт внутрь» — и без кнопки отзыва: отзыв был способом закрыть
+ * дверь, а эта дверь уже закрыта самим выводом способа. Зелёную «Активная» по неистёкшему сроку
+ * сервер больше не отдаёт ни по одной строке кода.
  */
 interface InviteRow {
   id: string;
@@ -29,7 +35,7 @@ interface InviteRow {
   usedAt: string | null;
   revokedAt: string | null;
   usedByName: string | null;
-  status: 'active' | 'used' | 'expired' | 'revoked';
+  status: 'active' | 'used' | 'expired' | 'revoked' | 'retired';
 }
 
 export default function InviteHistory({ classId, open, onClose }: {
@@ -118,9 +124,7 @@ export default function InviteHistory({ classId, open, onClose }: {
                 <button type="button" className="danger" style={{ marginTop: 0 }} data-testid={`invite-revoke-${r.id}`}
                   disabled={revoke.isPending}
                   onClick={() => {
-                    if (window.confirm(t(r.kind === 'link' ? 'classes.invite.revokeConfirm' : 'classes.invite.revokeCodeConfirm'))) {
-                      revoke.mutate(r.id);
-                    }
+                    if (window.confirm(t('classes.invite.revokeConfirm'))) revoke.mutate(r.id);
                   }}>
                   {t('classes.invite.revoke')}
                 </button>

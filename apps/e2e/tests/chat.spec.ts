@@ -29,36 +29,38 @@ async function apiLogin(): Promise<string> {
 test.describe.serial('chat (item 8): teacher and student exchange in realtime', () => {
   const stamp = Date.now();
   let classId = '';
-  let code = '';
+  let linkUrl = '';
   const stuEmail = `e2echat${stamp}@x.io`;
 
-  test('setup: class + invite via API', async () => {
+  test('setup: class + invitation link via API', async () => {
     const tok = await apiLogin();
     const cls = await (await fetch(`${BASE}/api/classes`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
       body: JSON.stringify({ name: `E2E Чат ${stamp}`, description: '', color: '#0ea5a5' }),
     })).json();
     classId = cls.id as string;
-    const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites`, {
+    const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites/link`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` }, body: '{}',
     })).json();
-    code = inv.code as string;
-    expect(classId && code).toBeTruthy();
+    linkUrl = inv.url as string;
+    expect(classId && linkUrl && linkUrl.split('#')[1]).toBeTruthy();
   });
 
   test('student joins via UI and sees the chat tab', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto('/register');
-    await page.getByTestId('reg-code').fill(code);
-    await page.getByTestId('reg-email').fill(stuEmail);
-    await page.getByTestId('reg-password').fill('Secret1234');
-    await page.getByTestId('register-step1').click();
-    await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('reg-first').fill('Чатист');
-    await page.getByTestId('reg-last').fill('Е2Е');
-    await page.getByTestId('reg-consent').check();
-    await page.getByTestId('register-submit').click();
+    // ссылка-приглашение вместо кода класса (приём по коду выведен 2026-10-27)
+    await page.goto(`/join#${linkUrl.split('#')[1]}`);
+    await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('join-first').fill('Чатист');
+    await page.getByTestId('join-last').fill('Е2Е');
+    await page.getByTestId('join-email').fill(stuEmail);
+    await page.getByTestId('join-password').fill('Secret1234');
+    await page.getByTestId('join-consent').check();
+    await page.getByTestId('join-register').click();
+    await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/classes\//, { timeout: 20_000 });
+    await page.goto('/');
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
     await page.goto('/chat');
     await expect(page.getByTestId('chat-item').filter({ hasText: `E2E Чат ${stamp}` })).toBeVisible();

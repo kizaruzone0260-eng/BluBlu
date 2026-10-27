@@ -6,6 +6,15 @@
  * входит в `buildApp`, а не читается из модульного синглтона: тест видит те же вызовы `send`,
  * что и живой процесс, и «письмо не отправилось» здесь — отказ транспорта, а не домысел.
  *
+ * 2026-10-27. Требовать код из письма или нет — свойство внедрённого транспорта, а не маршрута,
+ * и когда приём в класс по восьмизначному коду вывели из продукта, это требование переехало на
+ * единственный оставшийся публичный способ завести аккаунт — регистрацию по одноразовой ссылке
+ * (`inviteRegisterSchema.emailCode`, обязательность решает маршрут при `EMAIL_PROVIDER != none`).
+ * Если бы оно осталось у умершего пути, почтовое подтверждение стало бы тихим украшением: письмо
+ * приходит, а спросить его не у чего. Ни одно обещание от переезда не ослабло; изменилась одна
+ * формулировка — «не тот код класса откатывает списание» теперь читается «неверный или истёкший
+ * ТОКЕН приглашения откатывает списание» (подробно — в самой проверке).
+ *
  * Разделение уровня не случайно: через HTTP идут сценарии, где важна ОТВЕТА (включатель,
  * полный путь, неотличимость занятого адреса, поведение при `none`), а остальное — уровнем
  * сервиса. Капальота на минуту (`RATE_CODE_MAX`, и счётчик попыток по IP) отдала бы такие
@@ -21,10 +30,10 @@ import type { FastifyInstance } from 'fastify';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { classes, emailVerifications, inviteCodes, users } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
 import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 import type { EmailMessage, EmailTransport } from '../../src/services/email.js';
-import { registerStudentByCode } from '../../src/services/auth.js';
+import { registerStudentByInviteLink } from '../../src/services/auth.js';
+import { createInviteLink } from '../../src/services/invites.js';
 import {
   consumeEmailCode, hashEmailCode, precheckEmailCode, requestEmailCode, sweepEmailVerifications,
 } from '../../src/services/emailVerify.js';
@@ -53,10 +62,7 @@ class RecordingTransport implements EmailTransport {
 /** Транспорт, который принимает всё и ничего не запоминает: нужен, где важен только факт отправки. */
 const SILENT_OK: EmailTransport = { provider: 'console', send: async () => undefined };
 
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-
-suite('подтверждение почты при регистрации (часть F)', () => {
+suite('подтверждение почты при регистрации по ссылке (часть F)', () => {
   let t: TestDB;
   let app: FastifyInstance;
   let email: RecordingTransport;
@@ -74,13 +80,18 @@ suite('подтверждение почты при регистрации (ча
   });
   afterAll(async () => { await app?.close(); await t?.sql.end(); });
 
-  async function newInvite(ttlMs = 3_600_000): Promise<string> {
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacherId,
-      expiresAt: new Date(Date.now() + ttlMs),
-    });
-    return code;
+  /**
+   * Приглашение, по которому идёт регистрация: создаёт тот же сервис, что и маршрут учителя
+   * (`createInviteLink`), — восьмизначных кодов в продукте больше нет, и фикстура не имеет права
+   * держать их в обход этого решения.
+   */
+  async function newInvite(ttlDays = 1): Promise<{ id: string; token: string }> {
+    return createInviteLink(t.db, classId, teacherId, { label: '', ttlDays });
+  }
+  /** просрочить приглашение — тот же приём, что в `invite-throttle.test.ts`: срок двигается в БД */
+  async function expire(id: string) {
+    await t.db.update(inviteCodes).set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(inviteCodes.id, id));
   }
   const rowFor = async (addr: string) => (await t.db.select().from(emailVerifications)
     .where(eq(emailVerifications.email, addr)).limit(1))[0] ?? null;
@@ -93,11 +104,11 @@ suite('подтверждение почты при регистрации (ча
         set: { codeHash: hashEmailCode(code, addr), attempts: 0, sentAt: at, expiresAt: new Date(at.getTime() + EMAIL_CODE_TTL_MS), usedAt: null },
       });
   }
-  const reg = (addr: string, invite: string, emailCode?: string) => app.inject({
-    method: 'POST', url: '/api/auth/register',
+  const reg = (addr: string, token: string, emailCode?: string) => app.inject({
+    method: 'POST', url: '/api/invitations/register',
     payload: {
       firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
-      code: invite, ...(emailCode ? { emailCode } : {}),
+      token, ...(emailCode ? { emailCode } : {}),
     },
   });
 
@@ -107,7 +118,7 @@ suite('подтверждение почты при регистрации (ча
     expect(res.json()).toEqual({ lessonPersist: true, emailVerification: true });
   });
 
-  it('полный путь: письмо → код → аккаунт → вход', async () => {
+  it('полный путь: письмо → код → аккаунт по ссылке → вход', async () => {
     const addr = `f1${Date.now()}@x.io`;
     const invite = await newInvite();
 
@@ -123,20 +134,22 @@ suite('подтверждение почты при регистрации (ча
     const code = email.lastCode();
 
     // без кода регистрация не случается
-    const noCode = await reg(addr, invite);
+    const noCode = await reg(addr, invite.token);
     expect(noCode.statusCode).toBe(400);
     // Task B (2026-10-23): к коду ошибки добавился reqId — короткий id, который ученик
     // диктует учителю; он разный на каждый запрос, поэтому сверяется только сам код.
     expect(noCode.json()).toMatchObject({ error: 'emailCodeRequired' });
     expect(REQUEST_ID_PATTERN.test(String((noCode.json() as { reqId?: string }).reqId))).toBe(true);
 
-    const ok = await reg(addr, invite, code);
-    expect(ok.statusCode, ok.body).toBe(200);
+    const ok = await reg(addr, invite.token, code);
+    expect(ok.statusCode, String(ok.json().error ?? 'no error')).toBe(200);
     expect(ok.json().user).toMatchObject({ email: addr, name: 'Алия', lastName: 'Каримова' });
 
     const row = await rowFor(addr);
     expect(row, 'строка кода остаётся различимой до уборки').not.toBeNull();
     expect(row!.usedAt, 'код списан').not.toBeNull();
+    const [link] = await t.db.select({ usedAt: inviteCodes.usedAt }).from(inviteCodes).where(eq(inviteCodes.id, invite.id)).limit(1);
+    expect(link.usedAt, 'подтверждённая регистрация расходует и приглашение').toBeTruthy();
 
     // и вход этим же логином работает — подтверждение НЕ гейтит login
     const li = await app.inject({
@@ -154,7 +167,7 @@ suite('подтверждение почты при регистрации (ча
       payload: { firstName: 'Алия', lastName: 'Каримова', email: addr, locale: 'ru' },
     });
     const before = email.sent.length;
-    expect(await reg(addr, invite, email.lastCode())).toMatchObject({ statusCode: 200 });
+    expect(await reg(addr, invite.token, email.lastCode())).toMatchObject({ statusCode: 200 });
 
     const again = await app.inject({
       method: 'POST', url: '/api/auth/email-code',
@@ -167,36 +180,80 @@ suite('подтверждение почты при регистрации (ча
     expect(row!.usedAt, 'списанный код не воскресает от запроса занятого адреса').not.toBeNull();
   });
 
-  it('неверный код и ошибка класса откатывают списание: код остаётся живым', async () => {
+  /**
+   * Уровень сервиса — потому что здесь важны ПОРЯДОК проверок и откат, а не текст ответа.
+   *
+   * Прежняя формулировка этого блока звучала «неверный код и ошибка КЛАССА откатывают списание».
+   * Ошибка класса выведена, и на её месте — состояние токена приглашения. Меняется одна деталь,
+   * которую надо знать, а не подсматривать в зелёный тест: регистрация по ссылке смотрит на
+   * токен ДО проверки письма (дешёвое чтение по хешу перед дорогой работой), поэтому промах по
+   * токену вообще не доходит до счётчика попыток. Число попыток после такого промаха то же —
+   * одна, засчитанная первым прогоном, — и списание остаётся неотменённым во всех четырёх
+   * ветках: «не угадал», «токена нет», «токен истёк», и успех тем же письмом.
+   */
+  it('неверный код и неверное приглашение откатывают списание: код остаётся живым', async () => {
     const addr = `f2${Date.now()}@x.io`;
     const invite = await newInvite();
+    const dead = await newInvite();
+    await expire(dead.id);
     await seedCode(addr, '654321');
 
-    const wrong = await registerStudentByCode(t.db, {
+    const wrong = await registerStudentByInviteLink(t.db, {
       firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
-      code: invite, emailCode: '000000',
+      token: invite.token, emailCode: '000000',
     });
     expect(wrong).toEqual({ ok: false, error: 'emailCodeInvalid' });
     const afterWrong = await rowFor(addr);
     expect(afterWrong!.attempts, 'попытка засчитана').toBe(1);
     expect(afterWrong!.usedAt, 'но НЕ списана').toBeNull();
 
-    // не тот код класса: списание откатилось вместе с аккаунтом, попыток не прибавилось
-    const badClass = await registerStudentByCode(t.db, {
+    // токен, которого нет: отказ по приглашению, а не по адресу — и письмо не тронуто
+    const badToken = await registerStudentByInviteLink(t.db, {
       firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
-      code: genCode(), emailCode: '654321',
+      token: 'x'.repeat(32), emailCode: '654321',
     });
-    expect(badClass).toEqual({ ok: false, error: 'invalidCode' });
+    expect(badToken).toEqual({ ok: false, error: 'inviteInvalid' });
+    // истёкший токен — то же свойство другими словами: письмо обязано дожить до новой ссылки
+    const expiredToken = await registerStudentByInviteLink(t.db, {
+      firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
+      token: dead.token, emailCode: '654321',
+    });
+    expect(expiredToken).toEqual({ ok: false, error: 'inviteExpired' });
+
     const afterClass = await rowFor(addr);
-    expect(afterClass!.attempts, 'откат вернул счётчик попыток').toBe(1);
+    expect(afterClass!.attempts, 'отказ по приглашению не додавил счётчик попыток').toBe(1);
     expect(afterClass!.usedAt).toBeNull();
 
     // тем же кодом, без перевыпуска — успех
-    const fine = await registerStudentByCode(t.db, {
+    const fine = await registerStudentByInviteLink(t.db, {
       firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
-      code: invite, emailCode: '654321',
+      token: invite.token, emailCode: '654321',
     });
     expect(fine.ok).toBe(true);
+    const afterOk = await rowFor(addr);
+    expect(afterOk!.usedAt, 'тот же код из того же письма списился').not.toBeNull();
+  });
+
+  /**
+   * Занятый адрес — отказ по ХОРОШЕМУ токену, и он обязан откатить списание письма: человек
+   * пойдёт к учителю, а учитель добавит его прежним подтверждением либо даст новую ссылку, но
+   * платить вторым письмом за чужую занятость он не должен.
+   */
+  it('отказ по занятой почте откатывает списание: письмо живо, ссылка не сожжена', async () => {
+    const addr = `f3b${Date.now()}@x.io`;
+    await makeTeacher(t.sql, addr);
+    const invite = await newInvite();
+    await seedCode(addr, '654321');
+
+    const taken = await registerStudentByInviteLink(t.db, {
+      firstName: 'Алия', lastName: 'Каримова', email: addr, password: 'Secret1234',
+      token: invite.token, emailCode: '654321',
+    });
+    expect(taken).toEqual({ ok: false, error: 'emailTaken' });
+    const row = await rowFor(addr);
+    expect(row!.usedAt, 'письмо не израсходовано чужой занятостью').toBeNull();
+    const [link] = await t.db.select({ usedAt: inviteCodes.usedAt }).from(inviteCodes).where(eq(inviteCodes.id, invite.id)).limit(1);
+    expect(link.usedAt, 'и приглашение тоже').toBeNull();
   });
 
   it('сбой провайдера не списывает код: прежний остаётся живым, хэш и срок не тронуты', async () => {
@@ -279,8 +336,8 @@ suite('подтверждение почты при регистрации (ча
       method: 'POST', url: '/api/auth/email-code',
       payload: { firstName: 'Алия', lastName: 'Каримова', email: addr, locale: 'ru' },
     });
-    const ok = await reg(addr, invite, email.lastCode());
-    expect(ok.statusCode, ok.body).toBe(200);
+    const ok = await reg(addr, invite.token, email.lastCode());
+    expect(ok.statusCode, String(ok.json().error ?? 'no error')).toBe(200);
     const removed = await app.inject({
       method: 'DELETE', url: '/api/me', headers: { authorization: `Bearer ${ok.json().accessToken}` },
     });
@@ -302,13 +359,13 @@ suite('подтверждение почты при регистрации (ча
       expect(code.statusCode).toBe(400);
       const invite = await newInvite();
       const r = await plain.inject({
-        method: 'POST', url: '/api/auth/register',
+        method: 'POST', url: '/api/invitations/register',
         payload: {
           firstName: 'Алия', lastName: 'Каримова', email: `f9${Date.now()}@x.io`,
-          password: 'Secret1234', code: invite,
+          password: 'Secret1234', token: invite.token,
         },
       });
-      expect(r.statusCode, r.body).toBe(200);
+      expect(r.statusCode, String(r.json().error ?? 'no error')).toBe(200);
     } finally {
       await plain.close();
     }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_TIMEZONE, INVITE_MAX_TTL_DAYS, INVITE_MIN_TTL_DAYS, SUPPORTED_LOCALES } from './constants.js';
+import { DEFAULT_TIMEZONE, SUPPORTED_LOCALES } from './constants.js';
 import { INVITE_LABEL_MAX, INVITE_LINK_DEFAULT_TTL_DAYS, INVITE_LINK_TTL_DAYS, isInviteToken } from './inviteLinks.js';
 
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -33,27 +33,31 @@ export const passwordPolicy = z
 const loginPassword = z.string().min(1).max(128);
 
 /**
- * Item 9 — registration step 2: given name + family name are separate,
- * both required. Step 1 (check-code) never reaches this schema.
+ * Аккаунт ученика, который создаёт учитель (2026-10-27, задача «упростить приём в класс»).
+ *
+ * Поля и политика — ровно те же, что у саморегистрации по приглашению (`inviteRegisterSchema` за
+ * вычетом токена): пароль здесь набирает человек и передаёт его ученику, поэтому он обязан пройти
+ * ту же `passwordPolicy`, что и при самостоятельной регистрации, — «12345678» не проходит и тут.
+ * Ослаблять политику ради «временного» пароля нельзя: временный пароль и есть самый удобный канал
+ * подобрать лёгкий.
+ *
+ * Чего в схеме сознательно нет:
+ *  • `classId` — класс берётся из пути (`/api/classes/:id/students`) и полномочия на него проверяет
+ *    маршрут; тело не может выбрать чужой класс;
+ *  • `emailCode` — подтверждение почты подтверждает адрес того, кто регистрируется сам. Адрес
+ *    здесь называет учитель по памяти, и письмо на него ничего не подтверждает;
+ *  • `locale` — язык ещё никто не выбирал. Аккаунт получает продуктовый default, а ученик сам укажет
+ *    свой в профиле; `localeExplicit` при вставке остаётся false (тот же контракт, что у
+ *    регистрации без выбора языка).
+ *
+ * `mustChangePassword` поднимает СЕРВИС, а не схема: флаг — свойство созданного аккаунта, и
+ * решение «после первого входа пароль обязаны сменить» не должно зависеть от тела запроса.
  */
-export const registerByCodeSchema = z.object({
+export const studentCreateSchema = z.object({
   firstName: z.string().trim().min(2, 'name2').max(80),
   lastName: z.string().trim().min(2, 'name2').max(80),
   email,
   password: passwordPolicy,
-  code: z.string().trim().toUpperCase(),
-  /**
-   * Часть F (2026-10-16): код из письма. ПОЛЕ ОБЯЗАТЕЛЬНО, когда включено подтверждение, — и это
-   * решает маршрут, а не схема: при `EMAIL_PROVIDER=none` его не существует, и прежний клиент
-   * (и прежний тест) регистрирует аккаунт ровно тем же запросом, что раньше.
-   */
-  emailCode: z.string().trim().regex(/^\d{6}$/, 'emailCodeRequired').optional(),
-  /**
-   * Language (task 1): the register screen has a language switch too, and a choice made BEFORE
-   * the account exists used to be thrown away — the INSERT took the column default instead.
-   * Optional, so an older client still registers.
-   */
-  locale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
 /**
@@ -69,16 +73,15 @@ export const emailCodeRequestSchema = z.object({
   locale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
-/** Item 9 — step 1 validation only; never consumes the code. */
-export const checkCodeSchema = z.object({
-  code: z.string().trim().min(4).max(12),
-});
-
 export const loginSchema = z.object({ email, password: loginPassword });
 
-export const joinByCodeSchema = z.object({
-  code: z.string().trim().toUpperCase(),
-});
+/*
+ * 2026-10-27 — приём в класс по восьмизначному коду класса выведен из продукта, вместе с ним
+ * ушли `checkCodeSchema` («проверить код, не расходуя»), `joinByCodeSchema` (вход в класс по коду)
+ * и `inviteCreateSchema` (выпуск кода учителем). Коды больше не создаются, не проверяются и не
+ * расходятся: остаются только одноразовые ссылки-приглашения ниже и аккаунты, которые создаёт
+ * учитель.
+ */
 
 export const classCreateSchema = z.object({
   name: name.max(120),
@@ -119,16 +122,6 @@ export const classUpdateSchema = z.object({
     .optional(),
   botPublicSchedule: z.boolean().optional(),
   boardArchivePublic: z.boolean().optional(),
-});
-
-export const inviteCreateSchema = z.object({
-  ttlDays: z
-    .number()
-    .int()
-    .min(INVITE_MIN_TTL_DAYS)
-    .max(INVITE_MAX_TTL_DAYS)
-    .optional()
-    .default(7),
 });
 
 export const profileUpdateSchema = z.object({
@@ -190,10 +183,20 @@ const inviteTokenField = z.string().trim().refine(isInviteToken, 'inviteInvalid'
 export const invitePreviewSchema = z.object({ token: inviteTokenField });
 
 /**
- * Регистрация по приглашению — те же поля и та же политика пароля, что у регистрации по коду
- * (part B), и токен вместо кода класса: класс берётся из приглашения на сервере, а не из тела.
- * `emailCode` здесь сознательно НЕТ: подтверждение почты выключено, и просить его было бы
- * обещанием, которое продукт не выполняет.
+ * Регистрация по приглашению — те же поля и та же политика пароля, что у аккаунта, который
+ * создаёт учитель, и токен вместо кода класса: класс берётся из приглашения на сервере, а не из
+ * тела.
+ *
+ * `emailCode` здесь ПОЯВИЛСЯ 2026-10-27 и это осознанная смена решения, а не опечатка. раньше его
+ * не было, потому что подтверждение почты было выключено, а единственным путём саморегистрации
+ * оставался код класса. Когда приём по коду выведен из продукта, ссылка стала единственным
+ * публичным способом завести аккаунт — и если владелец включит `EMAIL_PROVIDER`, требование кода
+ * из письма должно действовать именно здесь. Иначе получился бы тихий отказ средства защиты:
+ * включатель есть, письмо приходит, а спросить его не у чего.
+ *
+ * Поле остаётся ОПЦИОНАЛЬНЫМ в схеме: при `EMAIL_PROVIDER=none` его не существует, и прежний
+ * клиент регистрирует аккаунт ровно тем же запросом, что раньше. Обязательность решает маршрут, а
+ * не схема, — это то же разделение, что было у регистрации по коду.
  */
 export const inviteRegisterSchema = z.object({
   token: inviteTokenField,
@@ -201,6 +204,7 @@ export const inviteRegisterSchema = z.object({
   lastName: z.string().trim().min(2, 'name2').max(80),
   email,
   password: passwordPolicy,
+  emailCode: z.string().trim().regex(/^\d{6}$/, 'emailCodeRequired').optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
@@ -217,10 +221,8 @@ export const memberResetPasswordSchema = z.object({
   password: passwordPolicy.optional(),
 });
 
-export type RegisterByCodeInput = z.infer<typeof registerByCodeSchema>;
+export type StudentCreateInput = z.infer<typeof studentCreateSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
-export type JoinByCodeInput = z.infer<typeof joinByCodeSchema>;
 export type ClassCreateInput = z.infer<typeof classCreateSchema>;
 export type ClassUpdateInput = z.infer<typeof classUpdateSchema>;
-export type InviteCreateInput = z.infer<typeof inviteCreateSchema>;
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;

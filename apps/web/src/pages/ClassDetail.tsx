@@ -33,8 +33,6 @@ export default function ClassDetail() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const [newCode, setNewCode] = useState<string | null>(null);
-  const [ttlDays, setTtlDays] = useState(7);
   // задача 2026-10-23: ссылка-приглашение. `newLink` живёт только в памяти этой страницы —
   // сервер отдаёт её ровно один раз, и «показать ещё раз» честного способа не имеет.
   const [linkLabel, setLinkLabel] = useState('');
@@ -57,6 +55,17 @@ export default function ClassDetail() {
   // Поиск и членство разведены намеренно: по одной почте в класс попадал человек, которого
   // учитель ни разу не видел, а «Ann@X.io» в 7-Б мог оказаться совсем не той Анной.
   const [addMatch, setAddMatch] = useState<StudentMatch | null>(null);
+  // 2026-10-27: аккаунт ученика создаёт учитель. Имя, фамилия, почта и ВРЕМЕННЫЙ пароль, который
+  // набирает сам учитель, — так экран перестаёт быть тупиком «пусть сначала зарегистрируется сам».
+  // Пароль живёт только в состоянии этой формы: он нигде не сохраняется, в ответ сервера не
+  // приходит и после удачного создания форму покидает.
+  const [scFirst, setScFirst] = useState('');
+  const [scLast, setScLast] = useState('');
+  const [scEmail, setScEmail] = useState('');
+  const [scPw1, setScPw1] = useState('');
+  const [scPw2, setScPw2] = useState('');
+  const [scDone, setScDone] = useState('');
+  const [scTaken, setScTaken] = useState('');
   // feedback is a toast, not `window.alert` (task 3, 2026-10-10): a native modal blocks the
   // renderer until somebody dismisses it, and a page that still has one open when the client
   // wants to leave it cannot finish closing — measured as `page.close` taking 235 s in the e2e
@@ -109,12 +118,9 @@ export default function ClassDetail() {
     enabled: me?.role === 'teacher',
   });
 
-  const createInvite = useMutation({
-    mutationFn: () => api<{ code: string }>(`/api/classes/${id}/invites`, {
-      method: 'POST', body: JSON.stringify({ ttlDays }),
-    }),
-    onSuccess: (r) => { setNewCode(r.code); void qc.invalidateQueries({ queryKey: ['invitations', id] }); },
-  });
+  /* способ с кодом класса убран отсюда 2026-10-27 вместе с самим маршрутом: `POST
+     /api/classes/:id/invites` теперь отвечает 410, и кнопки, которая бы на него ходила,
+     на экране больше нет */
   const createLink = useMutation({
     mutationFn: () => api<{ id: string; url: string; expiresAt: string }>(`/api/classes/${id}/invites/link`, {
       method: 'POST', body: JSON.stringify({ label: linkLabel, ttlDays: linkTtl }),
@@ -127,6 +133,41 @@ export default function ClassDetail() {
   const removeMember = useMutation({
     mutationFn: (userId: string) => api(`/api/classes/${id}/members/${userId}`, { method: 'DELETE' }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['members', id] }),
+  });
+  /**
+   * Способ 1 (2026-10-27): создать аккаунт ученика и добавить его в класс.
+   *
+   * Успех — это один вызов, который обязан вернуть и аккаунт, и членство сразу: сервер делает
+   * это одной транзакцией, поэтому экран не «создаёт, а потом добавляет» и не оставляет ученика
+   * без класса на середине пути.
+   *
+   * Занятая почта (`emailTaken`, 409) — не ошибка формы, а другой сценарий, и экран обязан
+   * повести себя по-честному: ничего не было создано и ничей пароль не изменён; показываем тот же
+   * блок «найти и подтвердить», что и для существующего аккаунта, с уже набранным адресом.
+   * Пароли при этом ОБЯЗАНЫ обнулиться: их некуда передавать, и оставлять введённый пароль в
+   * полях под кнопкой «добавить существующего» было бы приглашением сбросить чужой пароль.
+   * Серверный сброс пароля этот путь не вызывает и не может вызвать: он требует членства.
+   */
+  const createStudent = useMutation({
+    mutationFn: (p: { firstName: string; lastName: string; email: string; password: string }) =>
+      api<{ ok: true; userId: string; name: string; email: string; mustChangePassword: boolean }>(
+        `/api/classes/${id}/students`, { method: 'POST', body: JSON.stringify(p) }),
+    onSuccess: (r) => {
+      setScFirst(''); setScLast(''); setScEmail(''); setScPw1(''); setScPw2('');
+      setScTaken('');
+      setScDone(t('classes.createDone', { name: r.name }));
+      void qc.invalidateQueries({ queryKey: ['members', id] });
+    },
+    onError: (err) => {
+      setScPw1(''); setScPw2('');
+      const code = (err as { code?: string }).code;
+      if (code !== 'emailTaken') { setScTaken(''); return; }
+      const mail = scEmail.trim();
+      setScTaken(t('classes.emailTakenNotice'));
+      setAddNotice('');
+      setAddMatch(null);
+      if (mail) lookupStudent.mutate(mail);
+    },
   });
   /**
    * Шаг 1 — поиск (2026-10-27, часть B): только чтение. Сервер отвечает личностью найденного
@@ -203,101 +244,84 @@ export default function ClassDetail() {
       <Feed classId={id} />
       {me?.role === 'teacher' && (
         <>
-          {/* задача 2026-10-23, часть A: «Добавить ученика». Ссылка — основной способ, код —
-              запасной. Ссылка показывается ОДИН раз: сервер хранит только её хеш, поэтому
-              «вспомнить» её невозможно, и это надо сказать прямо, а не оставить пустую кнопку. */}
+          {/* 2026-10-27: «Добавить ученика» — один экран с тремя понятными способами, и кнопка
+              «создать код» с него убрана совсем. Учитель больше не читает восемь символов вслух:
+              если данные уже есть в голове, аккаунт заводится здесь же; если аккаунт уже есть —
+              он находится по почте и добавляется после явного подтверждения; ссылка остаётся
+              способом для того, кто должен зарегистрироваться сам. */}
           <div className="card" data-testid="add-student">
             <h2>{t('classes.addStudent')}</h2>
             <p className="muted" style={{ fontSize: '.88rem' }}>{t('classes.addStudentHint')}</p>
 
-            <div className="row invite-row">
-              <div className="field">
-                <label htmlFor="invite-label">{t('classes.invite.linkLabel')}</label>
-                <input id="invite-label" data-testid="invite-link-label" value={linkLabel} maxLength={INVITE_LABEL_MAX}
-                  onChange={(e) => setLinkLabel(e.target.value)} />
-              </div>
-              <div className="field">
-                <label htmlFor="invite-ttl">{t('classes.invite.linkTtl')}</label>
-                <select id="invite-ttl" data-testid="invite-link-ttl" value={linkTtl} style={{ marginTop: 0 }}
-                  onChange={(e) => setLinkTtl(Number(e.target.value))}>
-                  {INVITE_LINK_TTL_DAYS.map((d) => <option key={d} value={d}>{t(`classes.invite.ttl${d}`)}</option>)}
-                </select>
-              </div>
-              <button data-testid="create-invite-link" onClick={() => { setLinkCopied(false); createLink.mutate(); }}
-                disabled={createLink.isPending}>
-                {t('classes.invite.createLink')}
-              </button>
-            </div>
-
-            {newLink && (
-              <div className="invite-reveal" data-testid="invite-link-box">
-                <p className="invite-warn" role="status" data-testid="invite-link-warn">{t('classes.invite.warn')}</p>
-                <div className="invite-url" dir="ltr">{newLink}</div>
-                <div className="row invite-actions">
-                  <button type="button" data-testid="invite-link-copy" onClick={() => {
-                    void navigator.clipboard?.writeText(newLink).then(() => setLinkCopied(true)).catch(() => undefined);
-                  }}>
-                    {linkCopied ? t('classes.invite.copied') : t('classes.invite.copy')}
-                  </button>
-                  {/* обычная ссылка share-URL Telegram: без бота, без токена и без отправки —
-                      мессенджер открывается у самого учителя, и сообщение остаётся его */}
-                  <a className="secondary invite-tg" data-testid="invite-link-telegram"
-                    href={`https://t.me/share/url?url=${encodeURIComponent(newLink)}`}
-                    target="_blank" rel="noopener noreferrer">{t('classes.invite.sendTg')}</a>
-                  <button type="button" className="ghost" data-testid="invite-link-done" style={{ marginTop: 0 }}
-                    onClick={() => { setNewLink(null); setLinkLabel(''); }}>
-                    {t('classes.invite.done')}
-                  </button>
+            {/* способ 1 — аккаунт создаёт учитель: имя, фамилия, почта и временный пароль */}
+            <div className="student-create" data-testid="student-create">
+              <h3>{t('classes.addCreateTitle')}</h3>
+              <p className="muted" style={{ fontSize: '.88rem' }}>{t('classes.createHint')}</p>
+              <form data-testid="student-create-form" onSubmit={(e) => {
+                e.preventDefault();
+                const first = scFirst.trim();
+                const last = scLast.trim();
+                const mail = scEmail.trim();
+                if (!first || !last || !mail) return;
+                if (scPw1 !== scPw2) return;
+                if (!passwordPolicy.safeParse(scPw1).success) return;
+                setScDone('');
+                setScTaken('');
+                createStudent.mutate({ firstName: first, lastName: last, email: mail, password: scPw1 });
+              }}>
+                <div className="row invite-row">
+                  <div className="field">
+                    <label htmlFor="sc-first">{t('auth.firstName')}</label>
+                    <input id="sc-first" data-testid="sc-first" value={scFirst} maxLength={80} required
+                      onChange={(e) => { setScFirst(e.target.value); setScTaken(''); }} autoComplete="off" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="sc-last">{t('auth.lastName')}</label>
+                    <input id="sc-last" data-testid="sc-last" value={scLast} maxLength={80} required
+                      onChange={(e) => { setScLast(e.target.value); setScTaken(''); }} autoComplete="off" />
+                  </div>
                 </div>
-                <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.invite.linkOnce')}</p>
-              </div>
-            )}
-
-            {/* Запасной способ тоже виден всегда: «спряхать под details» означало бы, что
-                учителю нужен клик, чтобы найти то, чем он пользовался месяцами, а старый
-                тест (flow/zz8) жмет кнопку сразу. */}
-            <div className="invite-code-fallback" data-testid="invite-code-fallback">
-              <h3>{t('classes.invite.create')}</h3>
-              <div className="row invite-row">
-                <label style={{ margin: 0 }}>{t('classes.invite.ttlDays')}</label>
-                <input type="number" min={1} max={30} value={ttlDays} style={{ width: 80 }}
-                  onChange={(e) => setTtlDays(Number(e.target.value))} />
-                <button className="secondary" data-testid="create-invite" style={{ marginTop: 0 }}
-                  onClick={() => createInvite.mutate()} disabled={createInvite.isPending}>
-                  {t('classes.invite.create')}
+                <div className="field">
+                  <label htmlFor="sc-email">{t('common.email')}</label>
+                  <input id="sc-email" data-testid="sc-email" type="email" value={scEmail} required
+                    onChange={(e) => { setScEmail(e.target.value); setScTaken(''); }}
+                    autoComplete="off" spellCheck={false} />
+                </div>
+                <div className="row invite-row">
+                  <div className="field">
+                    <label htmlFor="sc-password">{t('classes.tempPassword')}</label>
+                    <input id="sc-password" data-testid="sc-password" type="password" value={scPw1} required
+                      minLength={10} autoComplete="new-password" onChange={(e) => setScPw1(e.target.value)} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="sc-password2">{t('classes.tempPasswordConfirm')}</label>
+                    <input id="sc-password2" data-testid="sc-password2" type="password" value={scPw2} required
+                      autoComplete="new-password" onChange={(e) => setScPw2(e.target.value)} />
+                  </div>
+                </div>
+                <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.pwHint')}</p>
+                {scPw1 !== '' && scPw2 !== '' && scPw1 !== scPw2 && (
+                  <p className="error" role="alert" data-testid="sc-mismatch">{t('classes.pwMismatch')}</p>
+                )}
+                <button type="submit" data-testid="sc-submit"
+                  disabled={createStudent.isPending || !scFirst.trim() || !scLast.trim() || !scEmail.trim()}>
+                  {t('classes.createSubmit')}
                 </button>
-              </div>
-              {newCode && (
-                <div style={{ marginTop: 12 }}>
-                  <div data-testid="invite-code" className="code-box">{newCode}</div>
-                  <p className="muted">{t('classes.invite.showOnce')}</p>
-                </div>
+              </form>
+              {/* Занятая почта выведена из общего вывода ошибок намеренно: `auth.emailTaken`
+                  написан для ученика («войдите этой почтой — попадёте в класс»), а здесь перед
+                  нами экран учителя, и у этого отказа уже есть своя строка (`sc-taken`) плюс
+                  найденный аккаунт ниже. Две фразы об одном отказе человек прочитал бы как две
+                  разные проблемы. Остальные отказы идут обычным переводимым текстом. */}
+              {createStudent.error && (createStudent.error as { code?: string }).code !== 'emailTaken' && (
+                <AuthError code={(createStudent.error as { code?: string }).code ?? 'errorGeneric'} />
               )}
+              {scTaken && <p className="error" role="status" data-testid="sc-taken">{scTaken}</p>}
+              {scDone && <p className="ok" role="status" data-testid="sc-done">{scDone}</p>}
             </div>
 
-            {/* задача 2026-10-24 (часть B): вместо таблицы истории на экране класса — одна
-                компактная кнопка. Записи никуда не деваются и не удаляются: меняется только то,
-                где они показываются. Кнопка всегда на месте, чтобы узкий экран не оставлял
-                учителя без доступа к истории. */}
-            <div className="row invite-history-row">
-              <button type="button" className="secondary" data-testid="invite-history-open"
-                aria-haspopup="dialog" aria-expanded={historyOpen}
-                onClick={() => setHistoryOpen(true)}>
-                {t('classes.inviteHistory')}
-              </button>
-              <span className="muted invite-history-hint" data-testid="invite-history-hint">
-                {t('classes.inviteHistoryHint')}
-              </span>
-            </div>
-          </div>
-
-          <InviteHistory classId={id} open={historyOpen} onClose={() => setHistoryOpen(false)} />
-
-          <div className="card" data-testid="class-members">
-            <h2>{t('classes.members')}</h2>
-
-            {/* учитель ищет уже существующий аккаунт; пароль не трогается, пока он сам не
-                нажмёт сброс в появившейся строке */}
+            {/* способ 2 — существующий аккаунт: найти, посмотреть, подтвердить. Пароль не
+                трогается, пока учитель сам не нажмёт сброс в появившейся строке списка. */}
             <div className="add-existing" data-testid="add-existing">
               <h3>{t('classes.addExistingTitle')}</h3>
               <p className="muted" style={{ fontSize: '.88rem' }}>{t('classes.addExistingHint')}</p>
@@ -323,14 +347,11 @@ export default function ClassDetail() {
                 </button>
               </form>
               {lookupStudent.error && !addMatch && (
-                <AuthError
-                  code={(lookupStudent.error as { code?: string }).code ?? 'errorGeneric'}
-                  reqId={(lookupStudent.error as { reqId?: string }).reqId}
-                />
+                <AuthError code={(lookupStudent.error as { code?: string }).code ?? 'errorGeneric'} />
               )}
 
-              {/* Шаг 2 — явное подтверждение (часть B). Показаны все три факта, которые учитель
-                  обязан сверить: имя, почта найденного аккаунта и класс, в который он попадёт.
+              {/* Шаг 2 — явное подтверждение. Показаны все три факта, которые учитель обязан
+                  сверить: имя, почта найденного аккаунта и класс, в который он попадёт.
                   Кнопка «Отмена» возвращает к поиску и ничего не создаёт. */}
               {addMatch && (
                 <div className="card add-existing-match" data-testid="add-existing-match"
@@ -372,16 +393,82 @@ export default function ClassDetail() {
                     <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.addExistingMatchWrong')}</p>
                   )}
                   {addExisting.error && (
-                    <AuthError
-                      code={(addExisting.error as { code?: string }).code ?? 'errorGeneric'}
-                      reqId={(addExisting.error as { reqId?: string }).reqId}
-                    />
+                    <AuthError code={(addExisting.error as { code?: string }).code ?? 'errorGeneric'} />
                   )}
                 </div>
               )}
               {addNotice && <p className="ok" role="status" data-testid="add-existing-done">{addNotice}</p>}
             </div>
 
+            {/* способ 3 — одноразовая ссылка: для ученика, который регистрируется сам.
+                Показывается ОДИН раз: сервер хранит только её хеш, поэтому «вспомнить» её
+                невозможно, и это надо сказать прямо, а не оставить пустую кнопку. */}
+            <div className="invite-link-section" data-testid="invite-link-section">
+              <h3>{t('classes.addLinkTitle')}</h3>
+              <div className="row invite-row">
+                <div className="field">
+                  <label htmlFor="invite-label">{t('classes.invite.linkLabel')}</label>
+                  <input id="invite-label" data-testid="invite-link-label" value={linkLabel} maxLength={INVITE_LABEL_MAX}
+                    onChange={(e) => setLinkLabel(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="invite-ttl">{t('classes.invite.linkTtl')}</label>
+                  <select id="invite-ttl" data-testid="invite-link-ttl" value={linkTtl} style={{ marginTop: 0 }}
+                    onChange={(e) => setLinkTtl(Number(e.target.value))}>
+                    {INVITE_LINK_TTL_DAYS.map((d) => <option key={d} value={d}>{t(`classes.invite.ttl${d}`)}</option>)}
+                  </select>
+                </div>
+                <button data-testid="create-invite-link" onClick={() => { setLinkCopied(false); createLink.mutate(); }}
+                  disabled={createLink.isPending}>
+                  {t('classes.invite.createLink')}
+                </button>
+              </div>
+
+              {newLink && (
+                <div className="invite-reveal" data-testid="invite-link-box">
+                  <p className="invite-warn" role="status" data-testid="invite-link-warn">{t('classes.invite.warn')}</p>
+                  <div className="invite-url" dir="ltr">{newLink}</div>
+                  <div className="row invite-actions">
+                    <button type="button" data-testid="invite-link-copy" onClick={() => {
+                      void navigator.clipboard?.writeText(newLink).then(() => setLinkCopied(true)).catch(() => undefined);
+                    }}>
+                      {linkCopied ? t('classes.invite.copied') : t('classes.invite.copy')}
+                    </button>
+                    {/* обычная ссылка share-URL Telegram: без бота, без токена и без отправки —
+                        мессенджер открывается у самого учителя, и сообщение остаётся его */}
+                    <a className="secondary invite-tg" data-testid="invite-link-telegram"
+                      href={`https://t.me/share/url?url=${encodeURIComponent(newLink)}`}
+                      target="_blank" rel="noopener noreferrer">{t('classes.invite.sendTg')}</a>
+                    <button type="button" className="ghost" data-testid="invite-link-done" style={{ marginTop: 0 }}
+                      onClick={() => { setNewLink(null); setLinkLabel(''); }}>
+                      {t('classes.invite.done')}
+                    </button>
+                  </div>
+                  <p className="muted" style={{ fontSize: '.82rem' }}>{t('classes.invite.linkOnce')}</p>
+                </div>
+              )}
+            </div>
+
+            {/* задача 2026-10-24 (часть B): вместо таблицы истории на экране класса — одна
+                компактная кнопка. Записи никуда не деваются и не удаляются: меняется только то,
+                где они показываются. Кнопка всегда на месте, чтобы узкий экран не оставлял
+                учителя без доступа к истории. */}
+            <div className="row invite-history-row">
+              <button type="button" className="secondary" data-testid="invite-history-open"
+                aria-haspopup="dialog" aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen(true)}>
+                {t('classes.inviteHistory')}
+              </button>
+              <span className="muted invite-history-hint" data-testid="invite-history-hint">
+                {t('classes.inviteHistoryHint')}
+              </span>
+            </div>
+          </div>
+
+          <InviteHistory classId={id} open={historyOpen} onClose={() => setHistoryOpen(false)} />
+
+          <div className="card" data-testid="class-members">
+            <h2>{t('classes.members')}</h2>
             {(members.data ?? []).length === 0 && <p className="muted">{t('classes.noMembers')}</p>}
             <table>
               <tbody>

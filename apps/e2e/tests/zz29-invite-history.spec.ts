@@ -5,7 +5,10 @@
  *  • на экране класса записей НЕ видно, пока учитель не нажал кнопку — это и есть требование
  *    «no large history table on the main class screen»;
  *  • окно открывают и закрывают, и закрытое окно не оставляет записей в DOM;
- *  • видны ОБА вида приглашений (ссылка и прежний код) со статусом, подписью и временем расхода;
+ *  • запись ссылки видна со статусом, подписью и временем: это то, что учитель обязан сверить;
+ *  • строка прежнего кода остаётся в истории (её вставляют в таблицу напрямую: выпустить новую
+ *    нечем — приём по коду выведен из продукта 2026-10-27), окно по-прежнему её показывает, но
+ *    помеченной («устарел»), а не активной, и без кнопки отзыва;
  *  • активное приглашение отзывается прямо из окна;
  *  • пустой класс даёт понятную пустоту, а не голую таблицу;
  *  • интерфейс не показывает сырые ключи локализации.
@@ -21,6 +24,7 @@
 import { test, expect, request as pw } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import postgres from 'postgres';
 import { BASE, loginUi } from './boardFixtures';
 
 /** `.stack.json` появляется на полсекунды позже health-check'а — читаем терпеливо, как flow.spec. */
@@ -55,7 +59,15 @@ async function apiLogin(api: any): Promise<string> {
 test.describe.serial('invitation history behind a button', () => {
   let classId = '';
   let linkId = '';
-  let codeId = '';
+  let legacyCodeId = '';
+
+  /**
+   * История invites_code читается окном напрямую, а spec e2e живёт в том же стеке, что и API:
+   * строка вставляется той же таблицей, что и продукт (`kind='code'`), чтобы доказать: прошлые
+   * коды НИКУДА не делись. Создать НОВУЮ такую строку уже нечем — `POST /api/classes/:id/invites`
+   * с 2026-10-27 отвечает 410, и кнопка «создать код» с экрана убрана.
+   */
+  const DB = 'postgres://klass:klass@127.0.0.1:5455/klass';
 
   /**
    * Вход + страница класса одним шагом. Без входа `/classes/<id>` отдаёт экран «Вход», и любой
@@ -67,9 +79,10 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.getByTestId('add-student')).toBeVisible({ timeout: 20_000 });
   }
 
-  test('teacher: fresh class with one link and one code, both through the real endpoints', async () => {
+  test('teacher: fresh class with a link, plus one legacy code row in the table', async () => {
     const api = await pw.newContext({ baseURL: BASE });
     const token = await apiLogin(api);
+    const me = await (await api.get('/api/me', { headers: { authorization: `Bearer ${token}` } })).json();
     const cls = await (await api.post('/api/classes', {
       headers: { authorization: `Bearer ${token}` }, data: { name: `E2E История ${Date.now()}` },
     })).json();
@@ -82,11 +95,21 @@ test.describe.serial('invitation history behind a button', () => {
     expect(link.status()).toBe(201);
     linkId = (await link.json()).id as string;
 
-    const code = await api.post(`/api/classes/${classId}/invites`, {
-      headers: { authorization: `Bearer ${token}` }, data: { ttlDays: 7 },
-    });
-    expect(code.status()).toBe(201);
-    codeId = (await code.json()).id as string;
+    /*
+     * Строка-наследие: ровно те же колонки, что пишет сервис (`code_hash` здесь — произвольный
+     * хеш, настоящего кода никто не знает и угадать его по этому значению нельзя). kind='code'
+     * остаётся только как запись прошлого: право на вход даёт исключительно kind='link'.
+     */
+    const sql = postgres(DB, { max: 1 });
+    try {
+      const rows = await sql`
+        insert into invite_codes (class_id, code_hash, created_by, expires_at, kind, label)
+        values (${classId}, ${`e2e-legacy-${Date.now()}`}, ${String(me.id)},
+                now() + interval '7 days', 'code', '')
+        returning id`;
+      legacyCodeId = String(rows[0]!.id);
+      expect(legacyCodeId).toBeTruthy();
+    } finally { await sql.end({ timeout: 5 }); }
     await api.dispose();
   });
 
@@ -98,7 +121,7 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.getByTestId('invite-history-open')).toBeVisible();
   });
 
-  test('the button opens the view, and both kinds of invitation are there with their facts', async ({ page }) => {
+  test('the button opens the view, and a link row shows its facts', async ({ page }) => {
     await openClass(page);
     await page.getByTestId('invite-history-open').click();
 
@@ -109,16 +132,30 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(dialog).toHaveAttribute('aria-modal', 'true');
 
     await expect(page.getByTestId(`invite-record-${linkId}`)).toBeVisible();
-    await expect(page.getByTestId(`invite-record-${codeId}`)).toBeVisible();
     await expect(page.getByTestId(`invite-kind-${linkId}`)).toHaveText(/Ссылка|Link|Havola/);
-    await expect(page.getByTestId(`invite-kind-${codeId}`)).toHaveText(/Код|Code|Kod/);
     await expect(page.getByTestId(`invite-label-${linkId}`)).toContainText('Азиза');
-    // код создаётся без подписи — вместо пустой клетки обязан быть переводимый текст
-    await expect(page.getByTestId(`invite-label-${codeId}`)).not.toHaveText('');
     await expect(page.getByTestId(`invite-status-${linkId}`)).toHaveText(/Активн|Active|Faol/);
     await expect(page.getByTestId(`invite-created-${linkId}`)).not.toBeEmpty();
     await expect(page.getByTestId(`invite-expires-${linkId}`)).not.toBeEmpty();
     await expect(page.getByTestId(`invite-used-by-${linkId}`)).toContainText(/не израсходовано|not redeemed|ishlatilmagan/);
+
+    /*
+     * Строка КОДА здесь — наследие, вставленное в таблицу напрямую (см. setup): маршрут выпуска
+     * кода отвечает 410, и НОВОЙ строки kind='code' в продукте больше не существует. Утверждение
+     * осталось ровно о том же, о чём было: историю не вычеркивают, вид и подпись она показывает.
+     */
+    await expect(page.getByTestId(`invite-record-${legacyCodeId}`)).toBeVisible();
+    await expect(page.getByTestId(`invite-kind-${legacyCodeId}`)).toHaveText(/Код|Code|Kod|kodi/);
+    // код создавался без подписи — вместо пустой клетки обязан быть переводимый текст
+    await expect(page.getByTestId(`invite-label-${legacyCodeId}`)).not.toHaveText('');
+    /*
+     * И он НЕ выглядит живым: неистёкший по сроку код прежнего способа показан помеченным, а не
+     * «Активным» (2026-10-27) — войти по нему нечем, и зелёная плашка на выключенной двери была бы
+     * обещанием, которое экран не может выполнить.
+     */
+    await expect(page.getByTestId(`invite-status-${legacyCodeId}`)).toHaveText(/Устарел|Retired|Eskirgan/);
+    await expect(page.getByTestId(`invite-status-${legacyCodeId}`)).not.toHaveText(/Активн|Active|Faol/);
+
     // и ни один токен/код наружу не уехал: в окне есть только идентификатор-разметка
     expect(await dialog.innerText()).not.toMatch(/[A-Za-z0-9_-]{32}/);
 
@@ -127,6 +164,8 @@ test.describe.serial('invitation history behind a button', () => {
 
     // отзыв живёт только у активного
     await expect(page.getByTestId(`invite-revoke-${linkId}`)).toBeVisible();
+    // у помеченной строки кода кнопки отзыва нет: закрывать нечего, способ выведен целиком
+    await expect(page.getByTestId(`invite-revoke-${legacyCodeId}`)).toHaveCount(0);
   });
 
   test('revoke works from the view and the record stays readable', async ({ page }) => {
@@ -152,7 +191,7 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(open).toBeFocused();
     // и снова открывается — закрытие не ломает запрос
     await open.click();
-    await expect(page.getByTestId(`invite-record-${codeId}`)).toBeVisible();
+    await expect(page.getByTestId(`invite-record-${legacyCodeId}`)).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('invite-history')).toHaveCount(0);
   });
@@ -171,7 +210,7 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.locator('[data-testid^="invite-record-"]')).toHaveCount(0);
   });
 
-  test('creating a link and a code from the card still works after the move', async ({ page }) => {
+  test('creating a link from the card still works after the move', async ({ page }) => {
     await openClass(page);
     // ссылка
     await page.getByTestId('invite-link-label').fill('Бека');
@@ -183,9 +222,13 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.getByTestId('invite-link-warn')).toBeVisible();
     await page.getByTestId('invite-link-done').click();
     await expect(page.getByTestId('invite-link-box')).toHaveCount(0);
-    // прежний путь — код
-    await page.getByTestId('create-invite').click();
-    await expect(page.getByTestId('invite-code')).toBeVisible({ timeout: 15_000 });
+    /*
+     * прежний путь — код — с этого экрана убран совсем (2026-10-27): кнопки `create-invite` и
+     * блока `invite-code` в DOM быть не может, а их маршрут отвечает 410. Это та же проверка
+     * «создать приглашение можно», только на surviving-путе.
+     */
+    await expect(page.getByTestId('create-invite')).toHaveCount(0);
+    await expect(page.getByTestId('invite-code')).toHaveCount(0);
   });
 
   test('a phone-sized screen reaches the view too, and does not scroll sideways', async ({ page }) => {
@@ -203,6 +246,6 @@ test.describe.serial('invitation history behind a button', () => {
     }));
     expect(inside.scrollW, `окно не должно резать содержимое: ${JSON.stringify(inside)}`)
       .toBeLessThanOrEqual(inside.clientW + 1);
-    await expect(page.getByTestId(`invite-record-${codeId}`)).toBeVisible();
+    await expect(page.getByTestId(`invite-record-${legacyCodeId}`)).toBeVisible();
   });
 });

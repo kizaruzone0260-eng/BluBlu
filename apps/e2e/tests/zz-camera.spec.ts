@@ -44,17 +44,23 @@ async function loginUi(page: import('@playwright/test').Page, email: string, pas
   throw new Error('login failed after retries (rate limit?)');
 }
 
-async function registerStudent(page: import('@playwright/test').Page, first: string, last: string, email: string, password: string, code: string) {
-  await page.goto('/register');
-  await page.getByTestId('reg-code').fill(code);
-  await page.getByTestId('reg-email').fill(email);
-  await page.getByTestId('reg-password').fill(password);
-  await page.getByTestId('register-step1').click();
-  await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('reg-first').fill(first);
-  await page.getByTestId('reg-last').fill(last);
-  await page.getByTestId('reg-consent').check();
-  await page.getByTestId('register-submit').click();
+/**
+ * Ученик заходит по одноразовой ССЫЛКЕ-приглашению (2026-10-27: приём по коду класса выведен,
+ * экран `/register` больше не форма, а `/api/auth/register` отвечает 410). Поле подтверждения
+ * почты на этом экране не нажимается: в e2e-стеке транспорт почты выключен, и оно не рисуется.
+ */
+async function registerStudent(page: import('@playwright/test').Page, first: string, last: string, email: string, password: string, linkUrl: string) {
+  await page.goto(`/join#${linkUrl.split('#')[1]}`);
+  await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('join-first').fill(first);
+  await page.getByTestId('join-last').fill(last);
+  await page.getByTestId('join-email').fill(email);
+  await page.getByTestId('join-password').fill(password);
+  await page.getByTestId('join-consent').check();
+  await page.getByTestId('join-register').click();
+  await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(/\/classes\//, { timeout: 20_000 });
+  await page.goto('/');
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -94,7 +100,7 @@ test('camera: both participants see each other with fake devices (real RTC)', as
     return;
   }
 
-  const inv = await (await api.post(`/api/classes/${cls.id}/invites`, { headers: H, data: {} })).json();
+  const link = await (await api.post(`/api/classes/${cls.id}/invites/link`, { headers: H, data: {} })).json();
 
   const ctxT = await browser.newContext({ permissions: ['camera', 'microphone'] });
   const pT = await ctxT.newPage();
@@ -107,7 +113,7 @@ test('camera: both participants see each other with fake devices (real RTC)', as
 
   const ctxS = await browser.newContext({ permissions: ['camera', 'microphone'] });
   const pS = await ctxS.newPage();
-  await registerStudent(pS, 'Камера', 'Тест', `e2ecam${Date.now()}@x.io`, 'Secret1234', inv.code as string);
+  await registerStudent(pS, 'Камера', 'Тест', `e2ecam${Date.now()}@x.io`, 'Secret1234', link.url as string);
   await pS.goto(`/lesson?classId=${cls.id}`);
   await pS.getByTestId('check-devices').click();
   await expect(pS.getByTestId('join-lesson')).toBeEnabled({ timeout: 20_000 });

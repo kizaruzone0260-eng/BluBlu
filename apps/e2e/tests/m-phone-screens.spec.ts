@@ -111,7 +111,7 @@ test.describe('телефон: все экраны (Pixel 7, 393 px)', () => {
   let classId = '';
   let className = '';
   let studentEmail = '';
-  let studentCode = '';
+  let studentLink = '';
 
   test.beforeAll(async () => {
     api = await pw.newContext({ baseURL: BASE });
@@ -119,7 +119,7 @@ test.describe('телефон: все экраны (Pixel 7, 393 px)', () => {
     await pinTeacherRussian(api, token);
     const lesson = await makeLesson(api, token, 'Телефон');
     classId = lesson.classId; className = lesson.className;
-    studentCode = lesson.inviteCode;
+    studentLink = lesson.linkUrl;
     studentEmail = `ph${Date.now()}@x.io`;
   });
 
@@ -186,7 +186,7 @@ test.describe('телефон: все экраны (Pixel 7, 393 px)', () => {
     test.setTimeout(240_000);
     const reg = await browser.newContext();
     const p = await reg.newPage();
-    await registerStudent(p, studentCode, 'Фатоэ', studentEmail);
+    await registerStudent(p, studentLink, 'Фатоэ', studentEmail);
     await reg.close();
 
     const page = await (await browser.newContext()).newPage();

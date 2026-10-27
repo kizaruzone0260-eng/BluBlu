@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { consumeJoinToken, JOIN_TOKEN_KEY, passwordPolicy, POLICY_VERSION } from '@klass/shared';
-import { joinByInvite, login, logout, previewInvite, registerByInvite, acceptPolicy } from '../lib/api';
+import { joinByInvite, login, logout, previewInvite, registerByInvite, acceptPolicy, requestEmailCode } from '../lib/api';
 import { forgetJoinToken } from '../lib/joinToken';
 import { clearJoinFlow, readJoinFlow, saveJoinFlow, type JoinFlowError } from '../lib/joinFlow';
 import { useAuth } from '../App';
 import AuthError from '../components/AuthError';
 import { storedLocale } from '../i18n';
 import { fmtDateTime } from '../lib/format';
+import { useFeatures } from '../lib/features';
 
 /**
  * Вход по одноразовой ссылке (задача 2026-10-23, часть B; починка 2026-10-26).
@@ -82,7 +83,8 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
     return token ? 'loading' : 'broken';
   });
   const [preview, setPreview] = useState<Preview | null>(null);
-  /** ошибка сервера = код + reqId; экран переводит код, id печатает для учителя */
+  /** ошибка сервера = код + reqId; экран переводит код, а id только переносится между шагами:
+   *  с 2026-10-27 он не показывается (см. `AuthError`), но остаётся в ответе и в access-логе */
   const [err, setErr] = useState<JoinFlowError | null>(saved?.error ?? null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<'register' | 'signin'>(saved?.mode ?? 'register');
@@ -93,6 +95,15 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
   const [email, setEmail] = useState(saved?.email ?? '');
   const [password, setPassword] = useState('');
   const [accepted, setAccepted] = useState(false);
+  /*
+   * Часть F (переехала сюда 2026-10-27 с экрана регистрации по коду). Подтверждение почты —
+   * свойство транспорта, а не способа входа: если владелец включил `EMAIL_PROVIDER`, спросить
+   * код из письма обязан и путь по ссылке. Поле и кнопка показываются ТОЛЬКО когда включатель
+   * стоит: при выключенном экране не становится больше на одну лишнюю строчку.
+   */
+  const { emailVerification } = useFeatures();
+  const [emailCode, setEmailCode] = useState('');
+  const [codeRequested, setCodeRequested] = useState(false);
   // форма входа существующего аккаунта
   const [loginEmail, setLoginEmail] = useState(saved?.loginEmail ?? '');
   const [loginPassword, setLoginPassword] = useState('');
@@ -180,6 +191,24 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
     setPhase('joined');
   }
 
+  /**
+   * Запрос письма. Отдельный обработчик, а не часть отправки: человек должен видеть, что код
+   * вот-вот придёт, и иметь возможность попросить его заново, не теряя введённого. Имя и фамилия
+   * к этому моменту уже набраны — письмо обращается к человеку, а не к «уважаемый пользователь».
+   */
+  async function sendCode() {
+    setErr(null);
+    setBusy(true);
+    try {
+      await requestEmailCode(firstName.trim(), lastName.trim(), email.trim(), storedLocale() ?? undefined);
+      setCodeRequested(true);
+    } catch (e: unknown) {
+      rememberError(e, 'emailUnavailable');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitRegister(e: React.FormEvent) {
     e.preventDefault();
     if (!token) return;
@@ -187,11 +216,15 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
     if (!accepted) { setErr({ code: 'mustAccept', reqId: '' }); return; }
     // проверка на этой стороне — только чтобы не слать заведомо пустое; решает сервер
     if (!passwordPolicy.safeParse(password).success) { setErr({ code: 'passwordTooWeak', reqId: '' }); return; }
+    // часть F: сначала письмо, потом шесть цифр — ровно в том же порядке, что был на экране
+    // регистрации по коду, потому что порядок этот про обращение в письме, а не про способ входа
+    if (emailVerification && !codeRequested) { await sendCode(); return; }
+    if (emailVerification && !/^\d{6}$/.test(emailCode)) { setErr({ code: 'emailCodeRequired', reqId: '' }); return; }
     setBusy(true);
     try {
       const r = await registerByInvite(
         token, firstName.trim(), lastName.trim(), email.trim(), password, storedLocale() ?? undefined,
-        { deferNotify: true },
+        { deferNotify: true, ...(emailVerification ? { emailCode } : {}) },
       );
       // согласие с этого экрана и есть принятие документов: тот же шаг, что делает регистрация по коду
       await acceptPolicy(POLICY_VERSION).catch(() => undefined);
@@ -296,7 +329,7 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
       <div className="card join-card" data-testid="join-broken">
         <h1>{t('join.title')}</h1>
         {token
-          ? <AuthError code={err?.code ?? 'inviteInvalid'} reqId={err?.reqId} />
+          ? <AuthError code={err?.code ?? 'inviteInvalid'} />
           : (
             <>
               <p className="error" role="alert">{t('join.noToken')}</p>
@@ -344,7 +377,7 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
               </button>
             </div>
           )}
-          {err && <AuthError code={err.code} reqId={err.reqId}>{errHint(err.code)}</AuthError>}
+          {err && <AuthError code={err.code}>{errHint(err.code)}</AuthError>}
         </div>
       )}
 
@@ -377,10 +410,44 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
                   </span>
                 </label>
               </p>
+              {/* часть F: письмо просится один раз, потом поле на шесть цифр. Оба живут ВНУТРИ
+                  формы регистрации, чтобы имя и фамилия успели попасть в обращение письма. */}
+              {emailVerification && !codeRequested && (
+                <p className="muted" data-testid="join-email-code-hint" style={{ fontSize: '.85rem' }}>
+                  {t('auth.emailStepHint')}
+                </p>
+              )}
+              {emailVerification && codeRequested && (
+                <>
+                  <p className="muted" data-testid="join-code-sent" style={{ fontSize: '.85rem' }}>{t('auth.codeSent')}</p>
+                  <label htmlFor="join-email-code">{t('auth.emailCode')}</label>
+                  <input id="join-email-code" data-testid="join-email-code" value={emailCode} inputMode="numeric"
+                    autoComplete="one-time-code" maxLength={6}
+                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, ''))}
+                    style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 4 }} />
+                </>
+              )}
               {err && (err.code === 'mustAccept'
                 ? <p className="error" role="alert" data-testid="join-error">{t('consent.mustAccept')}</p>
-                : <AuthError code={err.code} reqId={err.reqId}>{errHint(err.code)}</AuthError>)}
-              <button type="submit" data-testid="join-register" disabled={busy}>{t('common.register')}</button>
+                : <AuthError code={err.code}>{errHint(err.code)}</AuthError>)}
+              {emailVerification && !codeRequested ? (
+                /*
+                 * `type="submit"`, а не кнопка со своим обработчиком: иначе браузерная проверка
+                 * обязательных полей (имя, фамилия) не запускается, и человек получает письмо
+                 * «введите имя» постфактум. Отправка формы эту проверку делает сама.
+                 */
+                <button type="submit" data-testid="join-send-code" disabled={busy}>{t('auth.sendCode')}</button>
+              ) : (
+                <button type="submit" data-testid="join-register" disabled={busy}>{t('common.register')}</button>
+              )}
+              {/* новый код доступен и после ошибки: пять попыток — потолок на письмо, а не на
+                  человека, и лишать кнопки «попросить ещё» значило бы запереть форму */}
+              {emailVerification && codeRequested && (
+                <button className="ghost" type="button" style={{ marginTop: 0 }} data-testid="join-resend"
+                  disabled={busy || !firstName.trim() || !lastName.trim()} onClick={() => void sendCode()}>
+                  {t('auth.resend')}
+                </button>
+              )}
               <p className="muted">
                 <button type="button" className="ghost link-button" data-testid="join-to-signin"
                   style={{ marginTop: 0 }} onClick={goSignin}>
@@ -397,7 +464,7 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
               <label htmlFor="join-login-password">{t('common.password')}</label>
               <input id="join-login-password" data-testid="join-login-password" type="password" value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)} required autoComplete="current-password" />
-              {err && <AuthError code={err.code} reqId={err.reqId}>{errHint(err.code)}</AuthError>}
+              {err && <AuthError code={err.code}>{errHint(err.code)}</AuthError>}
               <div className="row">
                 <button type="submit" data-testid="join-signin" disabled={busy}>{t('common.login')}</button>
                 <button type="button" className="ghost" style={{ marginTop: 0 }} data-testid="join-to-register"
@@ -409,7 +476,7 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
           )}
         </>
       )}
-      <p className="muted" style={{ fontSize: '.82rem' }}>{t('join.noEmailStep')}</p>
+      {!emailVerification && <p className="muted" style={{ fontSize: '.82rem' }}>{t('join.noEmailStep')}</p>}
     </div>
   );
 

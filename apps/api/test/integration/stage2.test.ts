@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes, classMembers, users, files } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
-import { eq } from 'drizzle-orm';
+import { classes, files } from '../../src/db/schema.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -36,32 +34,21 @@ suite('stage 2: materials, files, teacher notes', () => {
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Hist' }).returning();
     classId = cls!.id;
 
-    // two students via invite codes
-    const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-    const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-    async function enroll(email: string) {
-      const code = genCode();
-      await t.db.insert(inviteCodes).values({
-        classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
-        createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
-      });
-      const app = await buildApp(t.db);
-      const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil K', lastName: 'Test', email, password: 'Secret1234', code } });
-      await app.close();
-      return r.json().accessToken as string;
-    }
-    studentToken = await enroll(`al${Date.now()}@x.io`);
+    /*
+     * Ученики фикстуры — `makeStudent` + `loginToken` (2026-10-27). Приём в класс по
+     * восьмизначному коду выведен из продукта, а этому файлу от ученика нужно ровно одно свойство:
+     * «в систему вошёл ученик этого класса» (и вторым — «ученик ЧУЖОГО класса»). Проверяется здесь
+     * всё остальное: материалы, файлы, заметки, права на скачивание. Токен получается обычным
+     * входом, тем же маршрутом, которым входит браузер.
+     */
+    const app = await buildApp(t.db);
+    const member = await makeStudent(t.sql, { classId, email: `al${Date.now()}@x.io`, name: 'Pupil K' });
+    studentToken = await loginToken(app, member.email, member.password);
     // outsider: student of ANOTHER class, must not access classId
     const [other] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Other' }).returning();
-    const code2 = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId: other!.id, codeHash: hashInviteCode(code2, process.env.JWT_SECRET!),
-      createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
-    });
-    const app0 = await buildApp(t.db);
-    const r0 = await app0.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Out S', lastName: 'Test', email: `out${Date.now()}@x.io`, password: 'Secret1234', code: code2 } });
-    outsiderToken = r0.json().accessToken as string;
-    await app0.close();
+    const outsider = await makeStudent(t.sql, { classId: other!.id, email: `out${Date.now()}@x.io`, name: 'Out S' });
+    outsiderToken = await loginToken(app, outsider.email, outsider.password);
+    await app.close();
   });
 
   afterAll(async () => { await t?.sql.end(); });

@@ -197,7 +197,7 @@ export default function App() {
             <Suspense fallback={<div className="container muted">…</div>}>
             <Routes>
               <Route path="/login" element={<Login onDone={refresh} />} />
-              <Route path="/register" element={<Register onDone={refresh} />} />
+              <Route path="/register" element={<Register />} />
               {/* человек пришёл по ссылке приглашения — это вход в продукт, а не «404, иди на /login»:
                   до роутера страница уже успела вычистить токен из адреса */}
               <Route path="/join" element={<Join onDone={refresh} />} />

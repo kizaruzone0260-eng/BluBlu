@@ -46,27 +46,34 @@ async function forceRuProfile(email?: string, password?: string) {
   await api.dispose();
 }
 
-let classCode = '';
+let classLink = '';
 let classIdForFlow = '';
 
-async function registerStudent(page: import('@playwright/test').Page, first: string, last: string, email: string, password: string, code: string) {
-  // item 9 — two-step: code+email+password are validated first (no burn),
-  // the account and the code consumption happen only on step 2
-  await page.goto('/register');
-  await page.getByTestId('reg-code').fill(code);
-  await page.getByTestId('reg-email').fill(email);
-  await page.getByTestId('reg-password').fill(password);
-  await page.getByTestId('register-step1').click();
-  await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
-  await page.getByTestId('reg-first').fill(first);
-  await page.getByTestId('reg-last').fill(last);
-  await page.getByTestId('reg-consent').check();
-  await page.getByTestId('register-submit').click();
+/**
+ * Ученик регистрируется сам по одноразовой ссылке (2026-10-27: приём по коду класса выведен,
+ * `/api/auth/register` отвечает 410, а экрана `/register` больше не форма — там объяснение).
+ * Письмо-подтверждение здесь не нажимается: в e2e-стеке транспорт почты выключен, и поля
+ * `join-send-code`/`join-email-code` просто не рисуются.
+ */
+async function registerStudent(page: import('@playwright/test').Page, first: string, last: string, email: string, password: string, linkUrl: string) {
+  const token = linkUrl.includes('#') ? linkUrl.split('#')[1] : linkUrl;
+  await page.goto(`/join#${token}`);
+  await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('join-first').fill(first);
+  await page.getByTestId('join-last').fill(last);
+  await page.getByTestId('join-email').fill(email);
+  await page.getByTestId('join-password').fill(password);
+  await page.getByTestId('join-consent').check();
+  await page.getByTestId('join-register').click();
+  await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+  // экран сам ведёт в приглашённый класс; «в приложении» = Главная, она следующим шагом
+  await expect(page).toHaveURL(/\/classes\//, { timeout: 20_000 });
+  await page.goto('/');
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 }
 
 test.describe.serial('klass core flows', () => {
-  test('teacher: login, create class, create invite code', async ({ page }) => {
+  test('teacher: login, create class, create an invitation link', async ({ page }) => {
     await forceRuProfile();
     await page.goto('/login');
     await page.getByTestId('email').fill(stack.teacherEmail);
@@ -83,21 +90,41 @@ test.describe.serial('klass core flows', () => {
 
     await page.getByTestId('class-card').first().locator('a').first().click();
     await expect(page).toHaveURL(/\/classes\/[0-9a-f-]+/);
-    await page.getByTestId('create-invite').click();
-    await expect(page.getByTestId('invite-code')).toBeVisible();
-    classCode = (await page.getByTestId('invite-code').textContent())!.trim();
-    expect(classCode).toMatch(/^[2-9A-HJ-KMNP-Z]{8}$/);
+    // кнопки «создать код» больше нет совсем: её тест был утверждением про восьмизначный алфавит,
+    // теперь это утверждение про то, что алфавиту месту в продукте быть не может
+    await expect(page.getByTestId('create-invite')).toHaveCount(0);
+    await expect(page.getByTestId('invite-code')).toHaveCount(0);
+    await expect(page.getByTestId('invite-link-section')).toBeVisible();
+
+    await page.getByTestId('invite-link-label').fill('Проверка');
+    await page.getByTestId('create-invite-link').click();
+    const box = page.getByTestId('invite-link-box');
+    await expect(box).toBeVisible({ timeout: 15_000 });
+    classLink = (await box.locator('.invite-url').innerText()).trim();
+    // токен живёт во фрагменте и ровно в этом ответе: 32 символа [A-Za-z0-9_-]
+    expect(classLink).toMatch(/#([A-Za-z0-9_-]{32})$/);
+
+    await page.getByTestId('invite-link-done').click();
+    // «показать ещё раз» честного способа нет: сервер хранит хеш, ссылка отдаётся один раз
+    await expect(page.getByTestId('invite-link-box')).toHaveCount(0);
+    await page.getByTestId('create-invite-link').click();
+    await expect(page.getByTestId('invite-link-box')).toBeVisible({ timeout: 15_000 });
+    const again = (await page.getByTestId('invite-link-box').locator('.invite-url').innerText()).trim();
+    expect(again, 'вторая ссылка — новый токен, а не возврат прежнего').not.toBe(classLink);
+    await page.getByTestId('invite-link-done').click();
   });
 
-  test('student registers by code and sees the class', async ({ browser }) => {
+  test('student registers by an invitation link and sees the class', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await registerStudent(page, 'Ученик', 'Тест', `e2estudent${Date.now()}@x.io`, 'Secret1234', classCode);
+    await registerStudent(page, 'Ученик', 'Тест', `e2estudent${Date.now()}@x.io`, 'Secret1234', classLink);
     await page.goto('/classes');
     await expect(page.getByTestId('class-card').first()).toContainText('E2E Математика 7А');
-    // code is single-use: try to register again with the same one
+    // ссылка одноразовая: второй заход той же ссылкой обязан быть отказом
     const page2 = await ctx.newPage();
-    await page2.goto('/login');
+    await page2.goto(classLink);
+    await expect(page2.getByTestId('join-broken')).toBeVisible({ timeout: 20_000 });
+    await expect(page2.getByTestId('auth-error')).toContainText(/уже использована|already been used|ishlatilgan/i);
     await ctx.close();
   });
 
@@ -137,11 +164,12 @@ test.describe.serial('klass core flows', () => {
     // student context
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    // create fresh code for this student
-    const inv = await api.post(`/api/classes/${cls.id}/invites`, { headers: { authorization: `Bearer ${token}` }, data: {} });
-    const code = (await inv.json()).code as string;
+    // create a fresh one-time link for this student (ссылка расходуется первым удачным входом)
+    const inv = await api.post(`/api/classes/${cls.id}/invites/link`, { headers: { authorization: `Bearer ${token}` }, data: {} });
+    expect(inv.status(), `учитель обязан уметь выпускать ссылку: ${inv.status()}`).toBe(201);
+    const linkUrl = String((await inv.json()).url as string);
     const sheetStudent = `e2esheet${Date.now()}@x.io`;
-    await registerStudent(page, 'Листок', 'Тест', sheetStudent, 'Secret1234', code);
+    await registerStudent(page, 'Листок', 'Тест', sheetStudent, 'Secret1234', linkUrl);
     // the assertions below read Russian UI strings («Сохранено»), so this account chooses Russian
     await forceRuProfile(sheetStudent, 'Secret1234');
 

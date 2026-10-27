@@ -80,11 +80,17 @@ try {
   const classes = await (await fetch(`${BASE}/api/classes`, { headers: { authorization: `Bearer ${TT}` } })).json();
   let cls = classes.find((c) => c.name === '7B — camera shots');
   if (!cls) cls = await post('/api/classes', { name: '7B — camera shots', description: '', color: '#0ea5a5' }, TT);
-  const inv = await post(`/api/classes/${cls.id}/invites`, { ttlDays: 30 }, TT);
   const stuEmail = 'timinglesson@x.io', sPass = 'TimingPass123';
   let ST = await login(stuEmail, sPass);
-  if (!ST) ST = (await post('/api/auth/register',
-    { firstName: 'Тим', lastName: 'Инг', email: stuEmail, password: sPass, code: inv.code }))?.accessToken;
+  // ученик заводится одноразовой ССЫЛКОЙ: приём по коду класса выведен 2026-10-27, и
+  // `POST /api/classes/:id/invites` с `/api/auth/register` отвечают 410
+  if (!ST) {
+    const link = await post(`/api/classes/${cls.id}/invites/link`, { ttlDays: 30 }, TT);
+    ST = (await post('/api/invitations/register', {
+      token: String(link?.url ?? '').split('#')[1] ?? '',
+      firstName: 'Тим', lastName: 'Инг', email: stuEmail, password: sPass,
+    }))?.accessToken;
+  }
   const session = await post('/api/lessons/start', { classId: cls.id }, TT);
 
   // ── 3: регионы, которые сервер проекта отдаёт клиенту (токен из /join, не печатается) ──

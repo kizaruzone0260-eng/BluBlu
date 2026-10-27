@@ -2,133 +2,27 @@ import { sql, eq, and, isNull, gt, desc } from 'drizzle-orm';
 import { inviteCodes, classes, users, classMembers } from '../db/schema.js';
 import type { DB, Tx } from '../db/index.js';
 import { env } from '../env.js';
-import { generateInviteCode, hashInviteCode } from '../lib/invite.js';
 import { generateInviteToken, hashInviteToken } from '../lib/inviteLink.js';
 import { randomUUID } from 'node:crypto';
 
-export interface RedeemResult {
-  ok: boolean;
-  classId?: string;
-}
-
-export async function createInviteCode(
-  db: DB,
-  classId: string,
-  createdBy: string,
-  ttlDays: number,
-): Promise<{ id: string; code: string; expiresAt: Date }> {
-  const code = generateInviteCode();
-  const id = randomUUID();
-  const expiresAt = new Date(Date.now() + ttlDays * 86_400_000);
-  await db.insert(inviteCodes).values({
-    id,
-    classId,
-    codeHash: hashInviteCode(code, env.JWT_SECRET),
-    createdBy,
-    expiresAt,
-  });
-  return { id, code, expiresAt };
-}
-
-/**
- * Atomic single-statement redemption (acceptance criterion of stage 1):
- * two concurrent requests can never consume the same code, because the row
- * is locked by the UPDATE itself and only an unused, unrevoked, unexpired row matches.
+/*
+ * ─── восьмизначный КОД класса выведен из продукта (2026-10-27) ───────────────────────────
+ *
+ * Отсюда ушли `createInviteCode`, `peekInviteCode`, `redeemInviteCode`, `listInviteCodes`,
+ * `revokeInviteCode` и `getActiveInviteForClass`, а вместе с ними и `lib/invite.ts`
+ * (генератор алфавита, нормализация и хеш-ветка `code.`). Причина не в том, что код плохой: он
+ * был честным одноразовым приглашением и пережил столько проверок, сколько пережила ссылка.
+ * Причина в том, что для приёма ученика в классе учителю нужно было УМЕТЬ две вещи — прочитать
+ * восемь символов вслух или переслать их по слову, и ни та, ни другая не похожа на работу
+ * человека, у которого перед глазами список класса.
+ *
+ * Что это обязано значить для старых строк: право на вход теперь даёт ТОЛЬКО `kind = 'link'`.
+ * Строки `kind = 'code'` не удалены и не переписаны (история есть история, и массовое UPDATE или
+ * DELETE ради удобства интерфейса стёр бы аудиторский след), но не читаются нигде как credential:
+ * функция, которая их расходовала, физически отсутствует в сборке. Отзывы тоже не трогают ссылки:
+ * отозвать можно и старую активную строку кода — через общий `revokeInvitation` ниже, где `kind`
+ * просто попадает в журнал.
  */
-/**
- * Item 9 step 1 — verify WITHOUT consuming: active, unredeemed, unexpired, unrevoked.
- * The caller must answer with ONE generic error for every failing state, so an
- * attacker cannot tell a wrong code from a used or expired one.
- */
-export async function peekInviteCode(db: DB, plainCode: string): Promise<boolean> {
-  const hash = hashInviteCode(plainCode, env.JWT_SECRET);
-  const [row] = await db
-    .select({ id: inviteCodes.id })
-    .from(inviteCodes)
-    .where(and(
-      eq(inviteCodes.codeHash, hash),
-      // «code» — чтобы ссылка-приглашение никогда не могла притвориться кодом класса, даже если
-      // когда-нибудь чья-то хеш-функция совпадёт (сейчас их разделяет доменный префикс).
-      eq(inviteCodes.kind, 'code'),
-      isNull(inviteCodes.usedAt),
-      isNull(inviteCodes.revokedAt),
-      gt(inviteCodes.expiresAt, new Date()),
-    ))
-    .limit(1);
-  return Boolean(row);
-}
-
-export async function redeemInviteCode(db: DB, plainCode: string, userId: string): Promise<RedeemResult> {
-  const hash = hashInviteCode(plainCode, env.JWT_SECRET);
-  const res = await db.execute(sql`
-    UPDATE invite_codes
-       SET used_by = ${userId}, used_at = now()
-     WHERE code_hash = ${hash}
-       AND kind = 'code'
-       AND used_at IS NULL
-       AND revoked_at IS NULL
-       AND expires_at > now()
-    RETURNING class_id`);
-  const rows = (Array.isArray(res) ? res : (res as { rows?: unknown[] }).rows ?? []) as { class_id: string }[];
-  const row = rows[0];
-  if (!row) return { ok: false };
-  return { ok: true, classId: row.class_id };
-}
-
-export type InviteStatus = 'active' | 'used' | 'expired' | 'revoked';
-
-export async function listInviteCodes(db: DB, classId: string) {
-  const rows = await db
-    .select({
-      id: inviteCodes.id,
-      createdAt: inviteCodes.createdAt,
-      expiresAt: inviteCodes.expiresAt,
-      usedAt: inviteCodes.usedAt,
-      revokedAt: inviteCodes.revokedAt,
-      usedByName: sql<string | null>`(select name from users where users.id = invite_codes.used_by)`,
-    })
-    .from(inviteCodes)
-    .where(and(eq(inviteCodes.classId, classId), eq(inviteCodes.kind, 'code')))
-    .orderBy(desc(inviteCodes.createdAt));
-  const now = Date.now();
-  return rows.map((r) => ({
-    ...r,
-    status: (r.revokedAt ? 'revoked' : r.usedAt ? 'used' : r.expiresAt.getTime() <= now ? 'expired' : 'active') as InviteStatus,
-  }));
-}
-
-/** Only the ACTIVE code of a class may be revoked. Returns true if it was active. */
-export async function revokeInviteCode(db: DB, id: string, classId: string): Promise<boolean> {
-  const res = await db
-    .update(inviteCodes)
-    .set({ revokedAt: new Date() })
-    .where(and(
-      eq(inviteCodes.id, id),
-      eq(inviteCodes.classId, classId),
-      eq(inviteCodes.kind, 'code'),
-      isNull(inviteCodes.usedAt),
-      isNull(inviteCodes.revokedAt),
-      gt(inviteCodes.expiresAt, new Date()),
-    ))
-    .returning({ id: inviteCodes.id });
-  return res.length > 0;
-}
-
-/** Активный КОД класса (ссылки-приглашения здесь не учитываются — у них свой список). */
-export async function getActiveInviteForClass(db: DB, classId: string) {
-  const [row] = await db
-    .select({ id: inviteCodes.id, expiresAt: inviteCodes.expiresAt })
-    .from(inviteCodes)
-    .where(and(
-      eq(inviteCodes.classId, classId),
-      eq(inviteCodes.kind, 'code'),
-      isNull(inviteCodes.usedAt),
-      isNull(inviteCodes.revokedAt),
-      gt(inviteCodes.expiresAt, new Date()),
-    ))
-    .limit(1);
-  return row ?? null;
-}
 
 export async function classExists(db: DB, classId: string) {
   const [c] = await db.select({ id: classes.id }).from(classes).where(eq(classes.id, classId)).limit(1);
@@ -289,6 +183,14 @@ export async function revokeInvitation(
 }
 
 /**
+ * Состояние приглашения для списка. Пять значений: живое, вошедшее, просроченное, отозванное —
+ * и «выведенный способ». Четверо первых существовали вместе с кодами и перешли к ссылкам без
+ * изменения смысла; пятое появилось 2026-10-27, когда приём по восьмизначному коду ушёл из
+ * продукта. Экран `InviteHistory` читает это поле как есть.
+ */
+export type InviteStatus = 'active' | 'used' | 'expired' | 'revoked' | 'retired';
+
+/**
  * Список приглашений класса — обоих видов, с пометкой вида. `usedByName` отдаётся ТОЛЬКО
  * учителю этого класса (маршрут под `authenticateTeacher` + `resolveClass`), и это ровно то,
  * что требует постановка: «Used (show the student's name only to the authorized teacher)».
@@ -310,10 +212,22 @@ export async function listInvitations(db: DB, classId: string) {
     .where(eq(inviteCodes.classId, classId))
     .orderBy(desc(inviteCodes.createdAt));
   const now = Date.now();
-  return rows.map((r) => ({
-    ...r,
-    status: (r.revokedAt ? 'revoked' : r.usedAt ? 'used' : r.expiresAt.getTime() <= now ? 'expired' : 'active') as InviteStatus,
-  }));
+  return rows.map((r) => {
+    const byTime = r.revokedAt ? 'revoked' : r.usedAt ? 'used' : r.expiresAt.getTime() <= now ? 'expired' : 'active';
+    return {
+      ...r,
+      /*
+       * Прежний код (2026-10-27). Строки `kind = 'code'` не удаляются и не переписываются —
+       * это история класса, и `used` / `expired` / `revoked` остаются честными фактами о прошлом.
+       * Но «живая» по сроку строка кода не имеет права называться `active`: способа войти по коду
+       * больше нет, и зелёная плашка «Активная» на выключенной двери — ровно та недоговорённость,
+       * из-за которой учитель посадил бы ученика перед экраном, где ничего не получится.
+       * Поэтому не израсходованный и не отозванный код отдаётся как `retired`: помеченным, но
+       * не ведущим внутрь.
+       */
+      status: (r.kind === 'code' && byTime === 'active' ? 'retired' : byTime) as InviteStatus,
+    };
+  });
 }
 
 /** Имя класса по id — нужно предпросмотру, где приглашение ещё не «принадлежит» запросившему. */

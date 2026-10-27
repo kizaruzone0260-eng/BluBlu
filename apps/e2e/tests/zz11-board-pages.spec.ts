@@ -266,7 +266,7 @@ test.describe('board pages: independence, names, rights (task 1)', () => {
 
   test('students: view-only, they follow the teacher between boards, a late joiner gets the scene', async ({ browser }) => {
     test.setTimeout(300_000);
-    const { classId, sessionId, inviteCode } = await makeLesson(api, token, 'E2E Доски ученик');
+    const { classId, sessionId, linkUrl } = await makeLesson(api, token, 'E2E Доски ученик');
 
     // the teacher draws on board 1 and adds board 2 with its own ink
     const ctxT = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -282,7 +282,7 @@ test.describe('board pages: independence, names, rights (task 1)', () => {
 
     const ctxS = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const s = await ctxS.newPage();
-    await registerStudent(s, inviteCode, 'Наблюдатель', `e2board${Date.now()}@x.io`);
+    await registerStudent(s, linkUrl, 'Наблюдатель', `e2board${Date.now()}@x.io`);
     await openLesson(s, classId);
 
     const studentUi = await s.evaluate(() => {
@@ -326,7 +326,7 @@ test.describe('board pages: independence, names, rights (task 1)', () => {
 
   test('rights: a student cannot create, rename, duplicate, delete or switch boards', async () => {
     test.setTimeout(180_000);
-    const { sessionId, inviteCode } = await makeLesson(api, token, 'E2E Доски права');
+    const { sessionId, inviteToken } = await makeLesson(api, token, 'E2E Доски права');
 
     // the teacher creates a second board first, so "nothing changed" is a real observation
     const tTr = await api.post('/api/ws/ticket', { headers: { authorization: `Bearer ${token}` }, data: { sessionId } });
@@ -338,8 +338,10 @@ test.describe('board pages: independence, names, rights (task 1)', () => {
     tWs.close();
     await new Promise((r) => setTimeout(r, 400));
 
-    const reg = await api.post('/api/auth/register', {
-      data: { firstName: 'Права', lastName: 'Тест', email: `brdr${Date.now()}@x.io`, password: 'Secret1234', code: inviteCode },
+    // ученик заводится одноразовой ССЫЛКОЙ: `/api/auth/register` с кодом класса выведен (410),
+    // `/api/invitations/register` создаёт аккаунт, добавляет в класс и выдаёт токен сессии
+    const reg = await api.post('/api/invitations/register', {
+      data: { token: inviteToken, firstName: 'Права', lastName: 'Тест', email: `brdr${Date.now()}@x.io`, password: 'Secret1234' },
     });
     expect(reg.ok(), `student register ${reg.status()}`).toBe(true);
     const studentToken = String((await reg.json()).accessToken as string);

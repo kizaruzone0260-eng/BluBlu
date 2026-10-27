@@ -5,10 +5,14 @@
  * клиентским (`apps/web/src/App.tsx`): человек с временным паролем и знанием URL API получал
  * полноценный bearer и работал с классами, чужими заметками и доской, не сменив пароль.
  * Здесь проверяется ровно то, что раньше не проверялось: что сервер сам отказывает такому
- * bearer'у на всех маршрутах, кроме смены пароля, чтения своего профиля и выхода.
+ * bearer'у на всех маршрутах, кроме смены пароля, чтения своего профиля, принятия документов и
+ * выхода. Три первых теста — про запрет; четвёртый появился 2026-10-27 и держит ровно обратное:
+ * согласие с документами от этого списка не исчезнет, иначе аккаунт от учителя не может сделать
+ * первый шаг.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
+import { POLICY_VERSION } from '@klass/shared';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
@@ -61,6 +65,36 @@ suite('C2: временный пароль без смены не даёт ра�
     });
     expect(r.statusCode).toBe(403);
     expect(r.json().error).toBe('passwordChangeRequired');
+  });
+
+  /*
+   * 2026-10-27: аккаунт, который создал учитель, arrives with BOTH flags — no policy acceptance
+   * and a temporary password. `App.tsx` shows the legal gate first, so refusing
+   * `POST /api/me/accept-policy` here made such an account unusable: the screen asked for consent,
+   * consent asked for a password change, and the password change screen only opens after consent.
+   * Caught by the browser spec `zz32-teacher-create`, not by review. Standing BEFORE the test that
+   * changes the password, because from that point this precondition no longer holds.
+   */
+  it('принять документы с временным паролем можно — иначе первый вход в ловушке', async () => {
+    const { accessToken } = await login();
+    const ok = await app.inject({
+      method: 'POST', url: '/api/me/accept-policy', headers: bearer(accessToken),
+      payload: { version: POLICY_VERSION },
+    });
+    expect(ok.statusCode, `согласие не должно упираться в гейт: ${ok.body}`).toBe(200);
+
+    // это НЕ лазейка в списке разрешённых: чужую и устаревшую версию маршрута по-прежнему 409
+    const stale = await app.inject({
+      method: 'POST', url: '/api/me/accept-policy', headers: bearer(accessToken),
+      payload: { version: '2000-01-01' },
+    });
+    expect(stale.statusCode, 'устаревшая версия не проходит даже сюда').toBe(409);
+    expect(stale.json().error).toBe('policyVersionStale');
+
+    // и рабочий маршрут остаётся закрытым ПОСЛЕ согласия: список не превратился в пропуск
+    const blocked = await app.inject({ method: 'GET', url: '/api/classes', headers: bearer(accessToken) });
+    expect(blocked.statusCode).toBe(403);
+    expect(blocked.json().error).toBe('passwordChangeRequired');
   });
 
   it('сменить пароль, прочитать свой профиль и выйти всё ещё можно', async () => {

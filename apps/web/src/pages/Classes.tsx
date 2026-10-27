@@ -15,20 +15,12 @@ export default function Classes() {
   const { me } = useAuth();
   const qc = useQueryClient();
   const [name, setName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
-  const [joinErr, setJoinErr] = useState('');
 
   const classes = useQuery({ queryKey: ['classes'], queryFn: () => api<ClassView[]>('/api/classes') });
 
   const createClass = useMutation({
     mutationFn: () => api('/api/classes', { method: 'POST', body: JSON.stringify({ name }) }),
     onSuccess: () => { setName(''); void qc.invalidateQueries({ queryKey: ['classes'] }); },
-  });
-
-  const joinByCode = useMutation({
-    mutationFn: () => api('/api/join-by-code', { method: 'POST', body: JSON.stringify({ code: joinCode }) }),
-    onSuccess: () => { setJoinCode(''); setJoinErr(''); void qc.invalidateQueries({ queryKey: ['classes'] }); },
-    onError: (e: unknown) => setJoinErr((e as { code?: string }).code ?? 'errorGeneric'),
   });
 
   return (
@@ -57,23 +49,15 @@ export default function Classes() {
         </div>
       )}
 
-      {me?.role === 'student' && (
-        <div className="card">
-          <h2>{t('classes.joinByCode')}</h2>
-          <div className="row">
-            <input
-              aria-label={t('classes.joinByCode')}
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              maxLength={9}
-              placeholder="ABCD23EF"
-              style={{ fontFamily: 'ui-monospace, monospace', letterSpacing: 2, flex: 1 }}
-            />
-            <button style={{ marginTop: 0 }} onClick={() => joinByCode.mutate()} disabled={joinCode.length < 8 || joinByCode.isPending}>
-              {t('classes.joinByCode')}
-            </button>
-          </div>
-          {joinErr && <p className="error">{t(`auth.${joinErr}`, { defaultValue: t('common.errorGeneric') })}</p>}
+      {/* 2026-10-27: поле «присоединиться по коду» убрано вместе со способом. Ученик, у которого
+          ещё нет класса, не может взять его ниоткуда: класс либо дают ссылкой-приглашением, либо
+          в него добавляет учитель. Эта карточка — не заглушка, а ответ на вопрос «и что мне
+          делать», тот же, что и на странице «Как попасть в класс». */}
+      {me?.role === 'student' && (classes.data ?? []).length === 0 && (
+        <div className="card" data-testid="no-class-hint">
+          <h2>{t('classes.noClassYet')}</h2>
+          <p className="muted" style={{ fontSize: '.9rem' }}>{t('classes.noClassYetHint')}</p>
+          <p><Link to="/register">{t('auth.howToJoin')}</Link></p>
         </div>
       )}
     </div>

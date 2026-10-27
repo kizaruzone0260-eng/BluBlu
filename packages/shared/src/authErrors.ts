@@ -17,8 +17,8 @@
  * rather than showing a red sentence for something they did not do.
  */
 export const AUTH_ERROR_CODES = [
-  // step 1 — class code, and the register call itself
-  'invalidInput', 'invalidCode', 'emailTaken',
+  // форма и данные (регистрация по ссылке, аккаунт, который создаёт учитель, вход)
+  'invalidInput', 'emailTaken',
   // password policy (three distinct reasons, one screen)
   'passwordTooShort', 'passwordTooSimple', 'passwordTooCommon', 'passwordTooWeak', 'wrongPassword',
   'passwordChangeRequired', 'passwordsMismatch',
@@ -45,6 +45,15 @@ export const AUTH_ERROR_CODES = [
    * `studentAccountRequired` отвечает и публичный вход по ссылке, когда вошёл учитель.
    */
   'studentAccountRequired', 'studentNotFound', 'notAStudent',
+  /*
+   * Приём в класс по восьмизначному коду выведен из продукта (2026-10-27). Код возврата
+   * `enrollmentRetired` (410) отвечают ТРИ маршрута, оставленные наземно именно ради этого
+   * ответа: прежняя сборка SPA, закладочка «/register» и старый скрипт владельца должны получить
+   * переводимое предложение — «регистрация теперь по ссылке от учителя или по аккаунту, который
+   * создал учитель», — а не служебное «Route not found» и не молчаливый 404. Сами эти
+   * маршруты ничего не делают: ни кода не проверяют, ни аккаунта не создают.
+   */
+  'enrollmentRetired',
   // last resorts that must still say something useful
   'serverError', 'policyVersionStale',
 ] as const satisfies readonly string[];

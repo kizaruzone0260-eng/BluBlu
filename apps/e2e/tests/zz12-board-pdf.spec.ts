@@ -28,6 +28,7 @@ import {
   makeLesson,
   openLesson,
   paint,
+  registerStudent,
   stack,
   teacherLessonPage,
   teacherToken,
@@ -210,21 +211,11 @@ test.describe('board → PDF (task 2)', () => {
 
   test('students get no PDF button at all (task 2д)', async ({ browser }) => {
     test.setTimeout(240_000);
-    const { classId, inviteCode } = await makeLesson(api, token, 'E2E PDF ученик');
+    const { classId, linkUrl } = await makeLesson(api, token, 'E2E PDF ученик');
     const ctxS = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const s = await ctxS.newPage();
-    await (async () => {
-      await s.goto('/register');
-      await s.getByTestId('reg-code').fill(inviteCode);
-      await s.getByTestId('reg-email').fill(`e2pdf${Date.now()}@x.io`);
-      await s.getByTestId('reg-password').fill('Secret1234');
-      await s.getByTestId('register-step1').click();
-      await s.getByTestId('reg-first').fill('Смотритель');
-      await s.getByTestId('reg-last').fill('Тест');
-      await s.getByTestId('reg-consent').check();
-      await s.getByTestId('register-submit').click();
-      await expect(s.getByTestId('home-title')).toBeVisible({ timeout: 25_000 });
-    })();
+    // ученик регистрируется сам по одноразовой ссылке (приём по коду класса выведен 2026-10-27)
+    await registerStudent(s, linkUrl, 'Смотритель', `e2pdf${Date.now()}@x.io`);
     await openLesson(s, classId);
     await expect(s.getByTestId('board-pdf')).toHaveCount(0);
     await expect(s.getByTestId('board-publish-png')).toHaveCount(0);

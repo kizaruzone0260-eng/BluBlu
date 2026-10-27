@@ -8,7 +8,14 @@
  *     а из десяти параллельных запросов с одной ссылкой проходит ровно один;
  *  3) наружу не уходит лишнего: ни хеш, ни учителева почта, ни признак «такая почта уже есть»
  *     тому, кто пришёл с мусорным токеном;
- *  4) прежний способ (восьмизначный код) продолжает работать бок о бок со ссылкой.
+ *  4) прежний способ — восьмизначный код класса — выведен из продукта и НЕ работает бок о бок.
+ *
+ * Пункт 4 переписан 2026-10-27: обещание «код живёт рядом со ссылкой», данное в задачах 2026-10-23
+ * и 2026-10-26, отозвано. Причина не в том, что код был плохим, а в том, что приём по нему
+ * требовал от учителя уметь читать восемь символов вслух или пересылать их по слову. Теперь
+ * проверка выглядит так: мёртвые маршруты отвечают 410 и ничего не делают, а строки прежнего
+ * вида (`kind = 'code'`) остаются в базе как история и не являются правом на вход — их не расходует
+ * ни один путь, потому что функции, умевшие это делать, удалены из сборки.
  *
  * Токен в этих тестах никогда не печатается в описаниях проверок — только в assert-сообщениях
  * туда попадают состояния и идентификаторы.
@@ -20,8 +27,7 @@ import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { inviteCodes, users, classMembers, auditLog, classes } from '../../src/db/schema.js';
 import { isInviteToken, INVITE_TOKEN_LENGTH } from '@klass/shared';
-import { hashInviteCode } from '../../src/lib/invite.js';
-import { hashInviteToken } from '../../src/lib/inviteLink.js';
+import { generateInviteToken, hashInviteToken } from '../../src/lib/inviteLink.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -450,50 +456,91 @@ suite('A/B: одноразовые ссылки-приглашения', () => {
     expect(reg.json().error).toBe('inviteInvalid');
   });
 
-  it('прежний восьмизначный код живёт рядом: коды не видны как ссылки и наоборот', async () => {
+  /**
+   * Прежний способ выведен (2026-10-27), и проверка говорит ровно это. Два разных факта, которые
+   * нельзя смешать:
+   *  • маршруты кода живы ТОЛЬКО как ответ 410 — они не проверяют, не выпускают и не расходуют
+   *    ничего, поэтому и аккаунта не создают;
+   *  • строка вида `kind = 'code'` остаётся в базе (историю не удаляли) и не является правом на
+   *    вход. Проверяется сильно: легаси-строке подставлен `code_hash`, который даёт штатный
+   *    токен ссылки, — то есть от живой записи её отличает только вид. Если кто-то однажды
+   *    уберёт фильтр по `kind` в `peekInviteLink`/`redeemInviteLink`, эта проверка станет красной.
+   *
+   * При этом история учителя строку показывает: `GET …/invitations` читает приглашения обоих
+   * видов, и удаление исторических строк не требовалось ни постановке, ни аудиту.
+   */
+  it('выведенный восьмизначный код: маршруты дают 410, а строка kind=code inert и видна в истории', async () => {
     const te = await makeTeacher(t.sql, `lk-legacy-${Date.now()}@x.io`);
     const tok = await teacherToken(te.email);
     const cls = await newClass(tok, 'Legacy');
+    const before = await t.db.select({ id: users.id }).from(users);
 
-    // учитель создаёт и код, и ссылку
-    const codeRes = await app.inject({
-      method: 'POST', url: `/api/classes/${cls}/invites`, headers: bearer(tok), payload: { ttlDays: 7 },
+    const dead: Array<{ method: 'GET' | 'POST'; url: string; payload?: unknown }> = [
+      { method: 'POST', url: `/api/classes/${cls}/invites`, payload: { ttlDays: 7 } },
+      { method: 'GET', url: `/api/classes/${cls}/invites` },
+      { method: 'POST', url: '/api/auth/check-code', payload: { code: 'ABCD2345' } },
+      { method: 'POST', url: '/api/auth/register', payload: {
+        firstName: 'Old', lastName: 'Way', email: `lk-legacy-p-${Date.now()}@x.io`, password: PW, code: 'ABCD2345',
+      } },
+      { method: 'POST', url: '/api/join-by-code', payload: { code: 'ABCD2345' } },
+    ];
+    for (const call of dead) {
+      const r = await app.inject({
+        method: call.method, url: call.url, headers: bearer(tok), payload: call.payload as object,
+      });
+      expect(r.statusCode, `${call.method} ${call.url}`).toBe(410);
+      expect(r.json().error, 'переводимое слово, а не «Route not found»').toBe('enrollmentRetired');
+      expect(r.json().reqId, 'id для разбора в access-логе остаётся').toBeTruthy();
+    }
+    expect(await t.db.select({ id: users.id }).from(users), 'ни один мёртвый маршрут не завёл аккаунта')
+      .toHaveLength(before.length);
+    expect(await t.db.select().from(classMembers).where(eq(classMembers.classId, cls)), 'и не создал членства')
+      .toHaveLength(0);
+
+    // легаси-строка: создать её нечем (маршрут умер), поэтому вставка прямая — как в прежней базе
+    const ghost = generateInviteToken();
+    const legacyId = crypto.randomUUID();
+    await t.db.insert(inviteCodes).values({
+      id: legacyId, classId: cls, codeHash: hashInviteToken(ghost, env.JWT_SECRET), createdBy: te.id,
+      expiresAt: new Date(Date.now() + 7 * 86_400_000), kind: 'code',
     });
-    expect(codeRes.statusCode).toBe(201);
-    const code = codeRes.json().code as string;
-    const link = await newLink(tok, cls);
 
-    // список кодов класса не показывает ссылки, и наоборот
-    const codes = await app.inject({ method: 'GET', url: `/api/classes/${cls}/invites`, headers: bearer(tok) });
-    const codeRows = codes.json() as { id: string }[];
-    expect(codeRows.length, 'в списке кодов только код').toBe(1);
-    expect(codeRows[0]!.id).toBe(codeRes.json().id);
-
-    // ссылка не проходит как код класса (и по форме, и по хеш-ветке)
-    const asCode = await app.inject({
-      method: 'POST', url: '/api/auth/check-code', payload: { code: link.token },
+    // по форме это законный токен ссылки, и хеш совпадает — а расходуется как несуществующий
+    expect(isInviteToken(ghost)).toBe(true);
+    const peek = await preview(ghost);
+    expect(peek.statusCode).toBe(400);
+    expect(peek.json().error, 'вид `code` не читается как приглашение').toBe('inviteInvalid');
+    const reg = await register({
+      token: ghost, firstName: 'Ghost', lastName: 'Code', email: `lk-legacy-g-${Date.now()}@x.io`, password: PW,
     });
-    expect(asCode.statusCode, 'токен ссылки не притворяется восьмизначным кодом').toBe(400);
+    expect(reg.statusCode).toBe(400);
+    expect(reg.json().error).toBe('inviteInvalid');
+    const joinBy = await join(tok, ghost);
+    expect(joinBy.statusCode, 'учитель по такой «ссылке» тоже ничего не может — роль, а не строка').toBe(403);
+    const [row] = await t.db.select().from(inviteCodes).where(eq(inviteCodes.id, legacyId)).limit(1);
+    expect(row.usedAt, 'легаси-строка осталась не тронутой').toBeNull();
+    expect(row.revokedAt).toBeNull();
 
-    // и код не проходит как токен ссылки (помеха в том числе по форме)
-    const asLink = await preview(code);
-    expect(asLink.statusCode).toBe(400);
-    expect(asLink.json().error).toBe('inviteInvalid');
-
-    // обычный вход по коду по-прежнему работает
-    const email = `lk-legacy-p-${Date.now()}@x.io`;
-    const reg = await app.inject({
-      method: 'POST', url: '/api/auth/register',
-      payload: { firstName: 'Old', lastName: 'Way', email, password: PW, code },
-    });
-    expect(reg.statusCode, reg.body).toBe(200);
-    const [u] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
-    const member = await t.db.select().from(classMembers)
-      .where(and(eq(classMembers.classId, cls), eq(classMembers.userId, u!.id))).limit(1);
-    expect(member.length).toBe(1);
-
-    // и хеши двух веток действительно разные при одном и том же pepper
-    expect(hashInviteCode(code, env.JWT_SECRET)).not.toBe(hashInviteToken(code, env.JWT_SECRET));
+    // а в истории она видна: строки истории не удаляются, и экран различает виды
+    const hist = await app.inject({ method: 'GET', url: `/api/classes/${cls}/invitations`, headers: bearer(tok) });
+    expect(hist.statusCode).toBe(200);
+    const listed = hist.json() as { id: string; kind: string; status: string }[];
+    const mine = listed.find((x) => x.id === legacyId);
+    expect(mine, 'учитель видит прежний код в списке приглашений').toBeTruthy();
+    expect(mine!.kind).toBe('code');
+    /*
+     * Не израсходованный и не отозванный код отдаётся как `retired`, а не как `active`: срок у
+     * строки, может быть, ещё не вышел, но войти по нему нечем — способа больше нет в продукте.
+     * Зелёная «Активная» на выключенной двери была бы обещанием, которое экран не может выполнить,
+     * и учитель отправил бы к ней ученика. Исторические пометки при этом читаются как есть:
+     * отозванная или израсходованная строка кода остаётся `revoked` / `used` — это факты прошлого.
+     */
+    expect(mine!.status, 'прежний код показан помеченным, а не живым').toBe('retired');
+    // и чужому учителю — ничего, включая эту строку
+    const stranger = await makeTeacher(t.sql, `lk-legacy-s-${Date.now()}@x.io`);
+    const strangerTok = await teacherToken(stranger.email);
+    const peeked = await app.inject({ method: 'GET', url: `/api/classes/${cls}/invitations`, headers: bearer(strangerTok) });
+    expect(peeked.statusCode).toBe(404);
   });
 
   it('журнал: создание, отзыв, расход и сброс пароля записаны, и ни в одной цели нет токена или пароля', async () => {

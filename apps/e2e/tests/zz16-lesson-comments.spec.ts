@@ -13,7 +13,7 @@
  */
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { loginUi, makeLesson, m, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
+import { loginUi, makeLink, makeLesson, m, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
 import { barClick, openTab } from './controlBar';
 
 const BASE = `http://127.0.0.1:${stack.port}`;
@@ -43,7 +43,7 @@ test.describe('lesson comments (task 2)', () => {
   let sessionId = '';
   let s1 = '';
   let s2 = '';
-  let invite2 = '';
+  let link2 = '';
 
   test.beforeAll(async ({ browser }) => {
     api = await pw.newContext({ baseURL: BASE });
@@ -51,16 +51,14 @@ test.describe('lesson comments (task 2)', () => {
     const lesson = await makeLesson(api, token, 'Комментарии');
     classId = lesson.classId; sessionId = lesson.sessionId;
     s1 = `cmt1${Date.now()}@x.io`; s2 = `cmt2${Date.now()}@x.io`;
-    // a second one-time code for the second student
-    invite2 = String((await (await api.post(`/api/classes/${classId}/invites`, {
-      headers: { authorization: `Bearer ${token}` }, data: {},
-    })).json()).code as string);
-    // both accounts go through the real registration form (it also accepts the policy)
+    // вторая одноразовая ссылка — для второго ученика (ссылка списывается первым удачным входом)
+    link2 = (await makeLink(api, token, classId)).url;
+    // both accounts go through the real registration screen (it also accepts the policy)
     const p1 = await (await browser.newContext()).newPage();
-    await registerStudent(p1, lesson.inviteCode, 'Коммент', s1);
+    await registerStudent(p1, lesson.linkUrl, 'Коммент', s1);
     await p1.context().close();
     const p2 = await (await browser.newContext()).newPage();
-    await registerStudent(p2, invite2, 'Изоль', s2);
+    await registerStudent(p2, link2, 'Изоль', s2);
     await p2.context().close();
   });
 

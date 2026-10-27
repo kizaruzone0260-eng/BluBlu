@@ -81,13 +81,17 @@ try {
   if (!cls) cls = await json(await post('/api/classes', { name: '7B — camera shots', description: '', color: '#0ea5a5' }, TT));
   const session = await json(await post('/api/lessons/start', { classId: cls.id }, TT));
 
-  // N учеников: каждый со своим пригласительным кодом (код одноразовый)
+  // N учеников: каждый со своей ССЫЛКОЙ-приглашением (ссылка одноразовая: её расходует первый
+  // удачный вход). Приём по восьмизначному коду класса выведен из продукта 2026-10-27, и
+  // `POST /api/classes/:id/invites` вместе с `/api/auth/register` отвечают 410.
   const students = [];
   for (let i = 0; i < N; i++) {
-    const inv = await json(await post(`/api/classes/${cls.id}/invites`, { ttlDays: 30 }, TT));
+    const link = await json(await post(`/api/classes/${cls.id}/invites/link`, { ttlDays: 30 }, TT));
+    const token = String(link?.url ?? '').split('#')[1] ?? '';
+    if (!token) throw new Error(`учитель не выпустил ссылку для ученика ${i}: ${JSON.stringify(link)?.slice(0, 80)}`);
     const email = `tiles${i}${Date.now()}@x.io`;
-    const reg = await json(await post('/api/auth/register',
-      { firstName: `Ученик${i}`, lastName: 'Тайл', email, password: 'Tiles12345', code: inv.code }));
+    const reg = await json(await post('/api/invitations/register',
+      { token, firstName: `Ученик${i}`, lastName: 'Тайл', email, password: 'Tiles12345' }));
     if (!reg?.accessToken) throw new Error(`ученик ${i} не зарегистрирован: ${JSON.stringify(reg)?.slice(0, 80)}`);
     students.push({ email, password: 'Tiles12345' });
   }

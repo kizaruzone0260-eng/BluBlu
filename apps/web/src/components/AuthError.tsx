@@ -1,53 +1,38 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 /**
- * One auth error, three languages, and a code the pupil can send.
+ * Одна ошибка входа, три языка, и ничего технического рядом с ней.
  *
- * Task B (2026-10-23): a registration failure used to end in «Something went wrong. Please try
- * again.» — true only for the person watching, useless for the teacher who gets the complaint.
- * Every server answer now carries a short request id (`reqId`), it is in the access log under
- * the same value, and it is printed here in small type with a copy button, so the message that
- * reaches the teacher is «вот мой код: k3f9d2xq1m» instead of «что-то не работает».
+ * Задача B (2026-10-23): отказ регистрации кончался фразой «что-то пошло не так», и ребёнок,
+ * пришедший с этим к учителю, не мог рассказать ничего. Тогда к предложению добавили короткий
+ * идентификатор запроса (`reqId`): он стоит в access-логе под тем же значением, и «вот мой код:
+ * k3f9d2xq1m» превращал жалобу в строку, которую можно найти.
  *
- * `code` is the raw server code — never shown, only translated. An unknown code falls back to
- * the generic sentence, but the id still shows, because that is the part that makes it fixable.
+ * 2026-10-27 — из экрана этот идентификатор убран по требованию владельца. Он был прав, но не для
+ * ученика и не для учителя на уроке: набор букв под красной строкой выглядит как часть поломки, а
+ * кнопка «копировать» рядом — как предложение куда-то её вставить.
+ *
+ * Контракт при этом не изменился: сервер по-прежнему кладёт `reqId` в каждое тело ошибки, он
+ * остаётся в access-логе и в заголовке `x-request-id`, и владелец находит по нему строку. Просто
+ * экран его больше не показывает и не просит набрать. Компонент поэтому НЕ принимает это поле:
+ * принимал бы и молча выбрасывал — и однажды кто-нибудь решил бы, что код «потерялся», и вернул
+ * бы его на экран.
+ *
+ * `code` — сырой код сервера: он никогда не показывается как есть, только переводится. Неизвестный
+ * код складывается в общую фразу (`common.errorGeneric`) — вёрстка не обязана знать словарь
+ * сервера, чтобы не сломаться на новом коде.
  */
-export default function AuthError({ code, reqId, children }: {
+export default function AuthError({ code, children }: {
   code: string;
-  reqId?: string;
   /** optional action under the sentence, e.g. a link to the sign-in screen */
   children?: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    if (!reqId) return;
-    try {
-      await navigator.clipboard.writeText(reqId);
-      setCopied(true);
-    } catch {
-      /* a browser without clipboard permission: the id is still on screen to read aloud */
-    }
-  }
 
   return (
     <>
       <p className="error" role="alert" data-testid="auth-error">{t(`auth.${code}`, { defaultValue: t('common.errorGeneric') })}</p>
       {children}
-      {reqId ? (
-        <p className="muted auth-req-id" data-testid="auth-error-code" style={{ marginTop: '-6px', fontSize: '.78rem' }} dir="ltr">
-          {t('auth.errorCodeLabel')}: <code>{reqId}</code>
-          {' '}
-          <button
-            type="button" className="ghost link-button" data-testid="auth-error-copy"
-            onClick={copy} aria-label={`${t('auth.copyCode')}: ${reqId}`}
-          >
-            {copied ? t('auth.copied') : t('auth.copyCode')}
-          </button>
-        </p>
-      ) : null}
     </>
   );
 }

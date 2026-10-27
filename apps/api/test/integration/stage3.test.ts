@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes } from '../../src/db/schema.js';
 import { randomUUID } from 'node:crypto';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -13,22 +12,20 @@ suite('stage 3: calendar, repeats, edit scopes, ICS', () => {
   let teacher: { id: string; email: string; password: string; token: string };
   let studentToken = '';
 
-  const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-  const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
     teacher = await makeTeacher(t.sql, `cal${Date.now()}@x.io`) as typeof teacher;
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Cal class' }).returning();
     classId = cls!.id;
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
-      createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
-    });
+    /*
+     * Ученик фикстуры — `makeStudent` + `loginToken` (2026-10-27), после вывода приёма по коду
+     * класса. Файл про календарь: повтор, области прав на редактирование серии, ICS. От ученика
+     * здесь требуется только «он состоит в этом классе и вошёл обычным входом», поэтому фикстура
+     * больше не держится за способ приёма.
+     */
     const app = await buildApp(t.db);
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: `cal${Date.now()}@x.io`, password: 'Secret1234', code } });
-    studentToken = r.json().accessToken as string;
+    const member = await makeStudent(t.sql, { classId, email: `cal${Date.now()}@x.io` });
+    studentToken = await loginToken(app, member.email, member.password);
     await app.close();
   });
   afterAll(async () => { await t?.sql.end(); });

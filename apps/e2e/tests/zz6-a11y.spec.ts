@@ -40,7 +40,24 @@ async function expectAccessible(page: import('@playwright/test').Page, name: str
 
 test.describe('a11y (Phase 3)', () => {
   test('login screen', async ({ page }) => { await page.goto('/login'); await expectAccessible(page, 'login'); });
-  test('register screen', async ({ page }) => { await page.goto('/register'); await expectAccessible(page, 'register'); });
+  test('register screen: the explainer and the invitation screen without a token', async ({ page }) => {
+    /*
+     * This audit used to point at the two-step "register with a class code" form. That form is
+     * gone (2026-10-27: joining by code was retired), and `/register` is now the static
+     * "how to get into a class" explainer — it stays audited because school browsers still hold
+     * bookmarks to it. Registration itself lives on `/join`, and `/join` without a token is the
+     * refusal screen: a visitor who arrives there must get an accessible answer too.
+     */
+    await page.goto('/register');
+    await expect(page.getByTestId('register-explainer')).toBeVisible({ timeout: 20_000 });
+    await expectAccessible(page, 'register');
+    // none of the retired code form may survive here
+    await expect(page.getByTestId('reg-code')).toHaveCount(0);
+
+    await page.goto('/join');
+    await expect(page.getByTestId('join-broken')).toBeVisible({ timeout: 20_000 });
+    await expectAccessible(page, 'join-no-token');
+  });
 
   test('authenticated screens', async ({ browser }) => {
     const ctx = await browser.newContext();

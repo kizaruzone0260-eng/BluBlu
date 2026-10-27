@@ -40,9 +40,18 @@ describe('auth error vocabulary is translatable in all three languages', () => {
 
   it('an unknown code falls back to a key that exists, never to a bare string', () => {
     expect(authErrorKey('Too Many Requests')).toBe('auth.invalidInput');
-    expect(authErrorKey('invalidCode')).toBe('auth.invalidCode');
+    expect(authErrorKey('inviteExpired')).toBe('auth.inviteExpired');
     expect(isAuthErrorCode('connection refused')).toBe(false);
     expect(isAuthErrorCode('emailTaken')).toBe(true);
+    /*
+     * 2026-10-27: приём в класс по коду выведен, и `invalidCode` больше НЕ код сервера. Стоит
+     * проверить это здесь, а не молча вычеркнуть строку: если маршрут однажды снова ответит
+     * таким кодом, экран покажет общую фразу вместо внятной — и единственный способ заметить
+     * заранее что словарь сервера изменился, это этот тест.
+     */
+    expect(isAuthErrorCode('invalidCode'), 'кода класса больше нет').toBe(false);
+    expect(authErrorKey('invalidCode'), 'он сворачивается в общую фразу').toBe('auth.invalidInput');
+    expect(isAuthErrorCode('enrollmentRetired'), 'а отказ выведенного способа — переводимый код').toBe(true);
   });
 
   it('«email taken» does not state that an account exists, and offers signing in', () => {
@@ -56,7 +65,7 @@ describe('auth error vocabulary is translatable in all three languages', () => {
   });
 });
 
-describe('request id (the code a pupil can send)', () => {
+describe('request id (the code the owner can grep)', () => {
   it('is 10 characters from a read-aloud alphabet and carries no personal data', () => {
     for (let i = 0; i < 200; i++) {
       const id = newRequestId();
@@ -66,7 +75,7 @@ describe('request id (the code a pupil can send)', () => {
   });
 
   it('every error body built through the helper has the id next to the code', () => {
-    expect(errorBody('abc', 'invalidCode')).toEqual({ error: 'invalidCode', reqId: 'abc' });
+    expect(errorBody('abc', 'enrollmentRetired')).toEqual({ error: 'enrollmentRetired', reqId: 'abc' });
     expect(errorBody(undefined, 'serverError').reqId).toBe('');
   });
 });

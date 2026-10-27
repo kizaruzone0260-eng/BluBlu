@@ -12,24 +12,32 @@
  *     registered» with no way forward.
  *
  * What the suite now requires instead: a shared address is generous (120 requests per 10 minutes
- * per auth route), the strict windows live on the CREDENTIAL (one mailbox, one class code) and on
- * failures only, every refusal carries a code the interface can translate plus a `reqId` that
- * matches the access log, and a failed step 2 leaves nothing behind — no half-created account,
- * no burned invitation.
+ * per auth route), the strict windows live on the CREDENTIAL (one mailbox, one invitation token)
+ * and on failures only, every refusal carries a code the interface can translate plus a `reqId`
+ * that matches the access log, and a failed registration leaves nothing behind — no half-created
+ * account, no burned invitation.
+ *
+ * 2026-10-27. Приём по восьмизначному коду класса выведен, и всё, что здесь ЗАВОДИЛО аккаунт,
+ * переехало на выживший публичный вход: одноразовую ссылку (`POST /api/invitations/register`), а
+ * ссылки создаёт учитель тем маршрутом, которым их создаёт экран (`makeInviteLink`). Свойство не
+ * изменилось: адрес школы — один на весь класс, и он же платит за перебор. Изменилась только
+ * форма учётной записи, по которой считается бюджет: вместо кода класса это токен приглашения, а
+ * привратник промахов по нему — общий для трёх публичных маршрутов (`lib/inviteThrottle.ts`).
+ * Проверки именно входа (`/api/auth/login`) не тронуты: их фикстура не зависела от кода.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import {
+  TEST_DATABASE_URL, preparedDb, makeTeacher, loginToken, makeInviteLink, type TestDB,
+} from './util.js';
 import { buildApp } from '../../src/app.js';
+import { env } from '../../src/env.js';
 import { classMembers, classes, inviteCodes, users } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
 import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
-
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
+const PAGE_ORIGIN = 'https://blublu.example';
 
 /**
  * `set-cookie` is a string when Fastify set one cookie and an array when it set several, so
@@ -45,26 +53,32 @@ suite('auth behind a shared school IP', () => {
   let t: TestDB;
   let app: FastifyInstance;
   let teacherId = '';
+  let teacherTok = '';
   let classId = '';
   let seq = 0;
 
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
+    env.PUBLIC_URL = PAGE_ORIGIN;    // без публичного адреса ссылка не собирается (503)
     app = await buildApp(t.db);
     const teacher = await makeTeacher(t.sql, `nat-teacher@x.io`);
     teacherId = teacher.id;
+    teacherTok = await loginToken(app, teacher.email, teacher.password);
     const [c] = await t.db.insert(classes).values({ teacherId, name: 'NAT class' }).returning();
     classId = c!.id;
   });
-  afterAll(async () => { await app?.close(); await t?.sql.end(); });
+  afterAll(async () => {
+    env.PUBLIC_URL = '';
+    await app?.close(); await t?.sql.end();
+  });
 
-  async function newInvite(): Promise<string> {
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacherId,
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
-    return code;
+  /**
+   * Одноразовая ссылка этого класса — та же фикстура, чем был код: один предмет приглашения на
+   * одного ученика. Возвращаем и `id` (чтобы посмотреть строку в базе), и `token` (то, что
+   * человек принёс по ссылке).
+   */
+  async function newInvite(): Promise<{ id: string; token: string }> {
+    return makeInviteLink(app, teacherTok, classId);
   }
   const email = () => `nat${Date.now()}-${seq++}@x.io`;
   /*
@@ -78,9 +92,14 @@ suite('auth behind a shared school IP', () => {
     method: 'POST', url: '/api/auth/login', remoteAddress: ip,
     payload: { email: mail, password },
   });
-  const registerWith = (mail: string, code: string, ip: string) => app.inject({
-    method: 'POST', url: '/api/auth/register', remoteAddress: ip,
-    payload: { firstName: 'Pupil', lastName: 'One', email: mail, password: 'Secret1234', code },
+  /**
+   * Регистрация по ссылке С ЗАДАНЫМ адресом: `registerViaLink` из `util.ts` бьёт с адреса
+   * процесса по умолчанию, а здесь как раз и проверяется бюджет адреса — поэтому вызов
+   * повторяется локально, тем же маршрутом и тем же телом.
+   */
+  const registerWith = (mail: string, token: string, ip: string) => app.inject({
+    method: 'POST', url: '/api/invitations/register', remoteAddress: ip,
+    payload: { token, firstName: 'Pupil', lastName: 'One', email: mail, password: 'Secret1234' },
   });
   /** `error` and `reqId` are the two fields every auth failure must now carry. */
   function expectRejected(res: { statusCode: number; payload: string }, status: number, code: string) {
@@ -133,10 +152,11 @@ suite('auth behind a shared school IP', () => {
 
   it('registers twelve pupils from one address in one minute, all successfully', async () => {
     const ip = cleanIp();
-    const codes = await Promise.all(Array.from({ length: 12 }, () => newInvite()));
+    const links = await Promise.all(Array.from({ length: 12 }, () => newInvite()));
     for (let i = 0; i < 12; i++) {
-      const res = await registerWith(`pupil-${Date.now()}-${i}@x.io`, codes[i]!, ip);
-      expect(res.statusCode, `pupil ${i}: ${res.payload}`).toBe(200);
+      const res = await registerWith(`pupil-${Date.now()}-${i}@x.io`, links[i]!.token, ip);
+      // в сообщение — только код отказа: тело успешного ответа содержит почту ученика
+      expect(res.statusCode, `pupil ${i}: ${String(res.json().error ?? 'ok')}`).toBe(200);
       expect(typeof res.json().accessToken).toBe('string');
     }
     const members = await t.db.select({ id: classMembers.userId }).from(classMembers)
@@ -148,16 +168,16 @@ suite('auth behind a shared school IP', () => {
     const ip = cleanIp();
     const mail = email();
     const first = await newInvite();
-    expect((await registerWith(mail, first, ip)).statusCode).toBe(200);
+    expect((await registerWith(mail, first.token, ip)).statusCode).toBe(200);
 
     const second = await newInvite();
-    const taken = await registerWith(mail, second, ip);
+    const taken = await registerWith(mail, second.token, ip);
     expectRejected(taken, 409, 'emailTaken');
 
     // nothing was consumed and nothing was left behind
     const [row] = await t.db.select({ usedAt: inviteCodes.usedAt }).from(inviteCodes)
-      .where(eq(inviteCodes.codeHash, hashInviteCode(second, process.env.JWT_SECRET!)));
-    expect(row?.usedAt, 'the second code was spent by a failed registration').toBeNull();
+      .where(eq(inviteCodes.id, second.id));
+    expect(row?.usedAt, 'ссылка не израсходована отказом — учитель не получит «она не работает»').toBeNull();
     const created = await t.db.select({ id: users.id }).from(users).where(and(
       eq(users.email, mail), isNull(users.deletedAt),
     ));
@@ -167,8 +187,8 @@ suite('auth behind a shared school IP', () => {
   it('a wrong password and an unknown address answer identically, and the log id differs', async () => {
     const ip = cleanIp();
     const known = email();
-    const code = await newInvite();
-    expect((await registerWith(known, code, ip)).statusCode).toBe(200);
+    const link = await newInvite();
+    expect((await registerWith(known, link.token, ip)).statusCode).toBe(200);
     const badPassword = await loginWith(known, 'NotThePassword1', ip);
     const noAccount = await loginWith(`nobody-${Date.now()}@x.io`, 'NotThePassword1', ip);
     const strip = (payload: string) => JSON.stringify({ ...(JSON.parse(payload) as object), reqId: '' });
@@ -179,8 +199,8 @@ suite('auth behind a shared school IP', () => {
   it('an in-app browser with no Origin keeps working; a cross-site one is still refused', async () => {
     const ip = cleanIp();
     const mail = email();
-    const code = await newInvite();
-    const registered = await registerWith(mail, code, ip);
+    const link = await newInvite();
+    const registered = await registerWith(mail, link.token, ip);
     expect(registered.statusCode).toBe(200);
     const cookie = refreshCookie(registered.headers['set-cookie']);
     expect(cookie, `no refresh cookie was issued: ${JSON.stringify(registered.headers['set-cookie'])}`).toBeTruthy();

@@ -100,16 +100,21 @@ test.describe('language default and persistence (task 1)', () => {
     await api.patch('/api/me/profile', { headers: { authorization: `Bearer ${token}` }, data: { ...original } });
   });
 
-  /** a class + an invite, so a test can register a student through the real UI */
+  /**
+   * Класс + ОДНОРАЗОВАЯ ССЫЛКА-приглашение, чтобы тест мог зарегистрировать ученика настоящим
+   * экраном. Приём по коду класса выведен 2026-10-27, поэтому хелпер возвращает и адрес ссылки,
+   * и токен из её фрагмента: `/join#<токен>` — единственный публичный экран регистрации.
+   */
   async function invite() {
     const cls = await (await api.post('/api/classes', {
       headers: { authorization: `Bearer ${token}` },
       data: { name: `E2E язык ${Date.now()}`, description: '', color: '#0ea5a5' },
     })).json();
-    const inv = await (await api.post(`/api/classes/${(cls as { id: string }).id}/invites`, {
+    const inv = await (await api.post(`/api/classes/${(cls as { id: string }).id}/invites/link`, {
       headers: { authorization: `Bearer ${token}` }, data: {},
     })).json();
-    return String((inv as { code: string }).code);
+    const url = String((inv as { url: string }).url);
+    return { url, token: new URL(url, BASE).hash.slice(1) };
   }
 
   /**
@@ -117,12 +122,16 @@ test.describe('language default and persistence (task 1)', () => {
    * i.e. nobody has chosen anything. Tests 2 and 4 need exactly that starting point — the shared
    * teacher's profile carries a chosen language (other tests set it), and by the rules of this
    * task an explicit profile WINS over the device, which would make the premise false.
+   *
+   * `POST /api/invitations/register` — это ровно та половинка, которую делает экран `/join`
+   * (без второго вызова `acceptPolicy`, поэтому аккаунт и тут остаётся «не выбиравшим язык»:
+   * `locale` не отправляется вовсе).
    */
   const PW = 'Secret1234';
   async function freshStudent(): Promise<string> {
     const mail = `langs${Date.now()}@x.io`;
-    const reg = await api.post('/api/auth/register', {
-      data: { firstName: 'Новый', lastName: 'Ученик', email: mail, password: PW, code: await invite() },
+    const reg = await api.post('/api/invitations/register', {
+      data: { token: (await invite()).token, firstName: 'Новый', lastName: 'Ученик', email: mail, password: PW },
     });
     expect(reg.ok(), 'the student registered').toBe(true);
     const tok = String((await reg.json()).accessToken as string);
@@ -253,22 +262,32 @@ test.describe('language default and persistence (task 1)', () => {
     }
   });
 
+  /**
+   * Язык, выбранный ДО создания аккаунта, обязан пережить регистрацию.
+   *
+   * Прежняя версия шла через `/register` с кодом класса. Экран выведен, и регистрация теперь
+   * живёт на `/join#<токен>` — тот же экран несёт и переключатель языка: он в шапке
+   * (`LangDropdown me={null}`), а `registerByInvite` отправляет `storedLocale()`, то есть ровно
+   * тот выбор, который человек сделал до отправки. Утверждение осталось тем же.
+   */
   test('registration keeps the language chosen before signing up', async ({ browser }) => {
-    const code = await invite();
+    const link = await invite();
     const email = `lang${Date.now()}@x.io`;
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     try {
-      await page.goto('/register');
+      await page.goto(`/join#${link.token}`);
+      await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 20_000 });
       await pickLanguage(page, 'uz');
-      await page.getByTestId('reg-code').fill(code);
-      await page.getByTestId('reg-email').fill(email);
-      await page.getByTestId('reg-password').fill('Secret1234');
-      await page.getByTestId('register-step1').click();
-      await page.getByTestId('reg-first').fill('Лингва');
-      await page.getByTestId('reg-last').fill('Тест');
-      await page.getByTestId('reg-consent').check();
-      await page.getByTestId('register-submit').click();
+      await page.getByTestId('join-first').fill('Лингва');
+      await page.getByTestId('join-last').fill('Тест');
+      await page.getByTestId('join-email').fill(email);
+      await page.getByTestId('join-password').fill('Secret1234');
+      await page.getByTestId('join-consent').check();
+      await page.getByTestId('join-register').click();
+      await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 25_000 });
+      // экран сам ведёт в приглашённый класс, а «язык аккаунта» смотрят на Home
+      await page.goto('/');
       await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 25_000 });
       const justRegistered = await uiLang(page);
       m('right after registration', justRegistered);

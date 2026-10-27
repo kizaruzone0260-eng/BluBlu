@@ -1,21 +1,27 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeInviteLink, registerViaLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
-import { classes, inviteCodes, users, auditLog, telegramLinks } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes, users, auditLog, telegramLinks } from '../../src/db/schema.js';
 import { processUpdate } from '../../src/services/telegramBot.js';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
 
 suite('stage 7: security hardening', () => {
   let t: TestDB;
-  beforeAll(async () => { t = await preparedDb(TEST_DATABASE_URL); });
-  afterAll(async () => { await t?.sql.end(); });
-
-  const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-  const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
+  beforeAll(async () => {
+    t = await preparedDb(TEST_DATABASE_URL);
+    /*
+     * Публичный адрес нужен фикстурам этого файла: ученик заводится одноразовой ссылкой класса, а
+     * маршрут `POST /api/classes/:id/invites/link` без `PUBLIC_URL` отвечает 503 и ссылку не
+     * выдаёт. Приём по восьмизначному коду класса выведен из продукта 2026-10-27, поэтому прежняя
+     * фикстура (строка `invite_codes` + `POST /api/auth/register`) переехала на живые пути — там,
+     * где тесту важен НАСТОЯЩИЙ аккаунт ученика, это регистрация по ссылке.
+     */
+    env.PUBLIC_URL = 'https://stage7.example';
+  });
+  afterAll(async () => { env.PUBLIC_URL = ''; await t?.sql.end(); });
 
   it('security headers on API responses (helmet): CSP, nosniff, frame-ancestors, HSTS-ready', async () => {
     const app = await buildApp(t.db);
@@ -88,16 +94,28 @@ suite('stage 7: security hardening', () => {
     } finally { env.LIVEKIT_URL = prev; }
   });
 
+  /*
+   * 2026-10-27: фикстура больше не выпускает восьмизначный код класса — способ выведен. Ученик
+   * регистрируется по одноразовой ссылке, то есть тем же публичным путём, что и в браузере: это
+   * важно именно здесь, потому что тесту нужен НАСТОЯЩИЙ refresh-cookie из ответа регистрации,
+   * который сброс учителем обязан убить. Подстановка аккаунта прямой вставкой в базу этот cookie
+   * бы не дала, и проверка стала бы бутафорской.
+   */
+  const SELF_PW = 'Secret1234';
+
   it('teacher resets student password: temp works, old sessions revoked', async () => {
     const app = await buildApp(t.db);
     const teacher = await makeTeacher(t.sql, `rst${Date.now()}@x.io`);
     const l = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
     const tk = l.json().accessToken as string;
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Rst' }).returning();
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({ classId: cls!.id, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
     const email = `rstst${Date.now()}@x.io`;
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil R', lastName: 'Test', email, password: 'Secret1234', code } });
+    const link = await makeInviteLink(app, tk, cls!.id);
+    const reg = await app.inject({
+      method: 'POST', url: '/api/invitations/register',
+      payload: { token: link.token, firstName: 'Pupil R', lastName: 'Test', email, password: SELF_PW },
+    });
+    expect(reg.statusCode, reg.body).toBe(200);
     const studentId = reg.json().user.id as string;
     const regCookie = (reg.headers['set-cookie'] as string).split(';')[0]!;
 
@@ -113,7 +131,7 @@ suite('stage 7: security hardening', () => {
     const dead = await app.inject({ method: 'POST', url: '/api/auth/refresh', headers: { cookie: regCookie } });
     expect(dead.statusCode).toBe(401);
     // and login works only with the new password
-    const oldPw = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: 'Secret1234' } });
+    const oldPw = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: SELF_PW } });
     expect(oldPw.statusCode).toBe(401);
     const newPw = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: temp } });
     expect(newPw.statusCode).toBe(200);
@@ -126,18 +144,37 @@ suite('stage 7: security hardening', () => {
     const l = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
     const tk = l.json().accessToken as string;
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Aud' }).returning();
-    await app.inject({ method: 'POST', url: `/api/classes/${cls!.id}/invites`, headers: { authorization: `Bearer ${tk}` }, payload: {} });
+    /*
+     * Раньше здесь стоял `invite_create` — журнал выпуска кода класса. Код выведен вместе с
+     * маршрутом, и действие больше некому порождать; живой аналог тот же по смыслу (учитель создал
+     * приглашение) называется `invite_link_create`. Проверяется то же самое: привилегированное
+     * действие оставляет след в журнале, и журнал пишется без ожидания ответа.
+     */
+    const link = await makeInviteLink(app, tk, cls!.id);
     // audit() is intentionally fire-and-forget (never blocks the response); poll
     // for the row instead of a fixed sleep so the assertion is deterministic on
-    // loaded CI runners (a fixed 100 ms wait was a timing race).
+    // loaded CI runners (a fixed 100 ms wait was a timing race). Ждём СВОЮ строку, а не любую:
+    // другие тесты файла тоже создают ссылки, и «появилась хоть одна» означало бы флуктуацию.
     const until = Date.now() + 4000;
-    let rows: { action: string }[] = [];
+    let rows: { action: string; actorId: string | null; target: unknown }[] = [];
+    let ours: typeof rows[number] | undefined;
     do {
-      rows = await t.db.select().from(auditLog).where(eq(auditLog.action, 'invite_create'));
-      if (rows.length) break;
+      rows = await t.db.select({ action: auditLog.action, actorId: auditLog.actorId, target: auditLog.target })
+        .from(auditLog).where(eq(auditLog.action, 'invite_link_create'));
+      ours = rows.find((r) => (r.target as { inviteId?: string }).inviteId === link.id);
+      if (ours) break;
       await new Promise((r) => setTimeout(r, 50));
     } while (Date.now() < until);
     expect(rows.length).toBeGreaterThan(0);
+    // форма проверки та же, что была у выпуска кода: строка есть, её автор — учитель, в цели
+    // лежат идентификаторы класса и приглашения и не лежит ничего лишнего: ни токена ссылки,
+    // ни почты учителя
+    const row = ours;
+    expect(row, 'our invitation link is the one the audit recorded').toBeTruthy();
+    expect(row!.actorId).toBe(teacher.id);
+    expect((row!.target as { classId?: string }).classId).toBe(cls!.id);
+    expect(JSON.stringify(row!.target)).not.toContain(link.token);
+    expect(JSON.stringify(row!.target)).not.toContain(teacher.email);
     await app.close();
   });
 
@@ -160,16 +197,18 @@ suite('stage 7: security hardening', () => {
     const app = await buildApp(t.db);
     const teacher = await makeTeacher(t.sql, `del${Date.now()}@x.io`);
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Del' }).returning();
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({ classId: cls!.id, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
+    // тот же переезд, что выше: ученик регистрируется по ссылке, а не по коду класса
+    const tl = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
     const email = `dels${Date.now()}@x.io`;
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Del P', lastName: 'Test', email, password: 'Secret1234', code } });
-    const at = reg.json().accessToken as string;
+    const link = await makeInviteLink(app, tl.json().accessToken as string, cls!.id);
+    const reg = await registerViaLink(app, link.token, { email, firstName: 'Del P', password: 'Secret1234' });
+    expect(reg.statusCode, reg.body).toBe(200);
+    const at = reg.json.accessToken as string;
     const del = await app.inject({ method: 'DELETE', url: '/api/me', headers: { authorization: `Bearer ${at}` } });
     expect(del.statusCode).toBe(200);
     const me = await app.inject({ method: 'GET', url: '/api/me', headers: { authorization: `Bearer ${at}` } });
     expect(me.statusCode).toBe(401);
-    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: 'Secret1234' } });
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: reg.password } });
     expect(login.statusCode).toBe(401);
     await app.close();
   });

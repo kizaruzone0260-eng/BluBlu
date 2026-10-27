@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, classMembers, inviteCodes, users } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes } from '../../src/db/schema.js';
 import { hashPassword } from '../../src/lib/password.js';
 import { TokenVerifier } from 'livekit-server-sdk';
-import { eq } from 'drizzle-orm';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
 
@@ -16,25 +14,21 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
   let studentId = '';
   let studentToken = '';
 
-  const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-  const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
     teacher = await makeTeacher(t.sql, `les${Date.now()}@x.io`) as typeof teacher;
     const [cls] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Lesson class' }).returning();
     classId = cls!.id;
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
-      createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000),
-    });
+    /*
+     * Ученик фикстуры — `makeStudent` + `loginToken` (2026-10-27): приём по восьмизначному коду
+     * класса выведен, а этому файлу нужен «просто вошедший ученик этого класса» — дальше идут
+     * уроки, права на роли в токенах и модерация. Ид ученика берётся прямо из фикстуры, поэтому
+     * второй раз читать таблицу `users` незачем.
+     */
     const app = await buildApp(t.db);
-    const studentEmail = `les${Date.now()}@x.io`;
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: studentEmail, password: 'Secret1234', code } });
-    studentToken = r.json().accessToken as string;
-    const [u] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, studentEmail)).limit(1);
-    studentId = u!.id;
+    const member = await makeStudent(t.sql, { classId, email: `les${Date.now()}@x.io` });
+    studentId = member.id;
+    studentToken = await loginToken(app, member.email, member.password);
     await app.close();
   });
   afterAll(async () => { await t?.sql.end(); });
@@ -83,11 +77,10 @@ suite('stage 4: lesson sessions, rights, moderation API', () => {
 
     // foreign student → 404
     const outApp = await fresh();
-    const oc = genCode();
     const [otherClass] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'Other L' }).returning();
-    await t.db.insert(inviteCodes).values({ classId: otherClass!.id, codeHash: hashInviteCode(oc, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const reg = await outApp.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Out L', lastName: 'Test', email: `ol${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
-    const oj = await outApp.inject({ method: 'POST', url: `/api/lessons/${sessionId}/join`, headers: auth(reg.json().accessToken) });
+    const foreign = await makeStudent(t.sql, { classId: otherClass!.id, email: `ol${Date.now()}@x.io`, name: 'Out L' });
+    const foreignToken = await loginToken(outApp, foreign.email, foreign.password);
+    const oj = await outApp.inject({ method: 'POST', url: `/api/lessons/${sessionId}/join`, headers: auth(foreignToken) });
     expect(oj.statusCode).toBe(404);
     await outApp.close();
 

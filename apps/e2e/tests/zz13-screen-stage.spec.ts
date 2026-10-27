@@ -117,11 +117,11 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
       test.skip(true, 'LiveKit is not reachable — this file needs LIVEKIT_* in the env (CI skips it; the stage logic itself is unit-tested)');
       return null;
     }
-    const inv = await (await api.post(`/api/classes/${classId}/invites`, { headers: H, data: {} })).json();
-    return { classId, sessionId: String((session as { id: string }).id), inviteCode: String((inv as { code: string }).code) };
+    const inv = await (await api.post(`/api/classes/${classId}/invites/link`, { headers: H, data: {} })).json();
+    return { classId, sessionId: String((session as { id: string }).id), linkUrl: String((inv as { url: string }).url) };
   }
 
-  async function twoParticipants(browser: import('@playwright/test').Browser, room: { classId: string; sessionId: string; inviteCode: string }, share: boolean) {
+  async function twoParticipants(browser: import('@playwright/test').Browser, room: { classId: string; sessionId: string; linkUrl: string }, share: boolean) {
     const ctxT = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 800 } });
     if (share) await fakeScreenShare(ctxT);
     const pT = await ctxT.newPage();
@@ -130,16 +130,24 @@ test.describe('screen demonstration in the lesson (task 1, real RTC)', () => {
 
     const ctxS = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 800 } });
     const pS = await ctxS.newPage();
-    await pS.goto('/register');
-    await pS.getByTestId('reg-code').fill(room.inviteCode);
-    await pS.getByTestId('reg-email').fill(`e2scr${Date.now()}@x.io`);
-    await pS.getByTestId('reg-password').fill('Secret1234');
-    await pS.getByTestId('register-step1').click();
-    await pS.getByTestId('reg-first').fill('Экран');
-    await pS.getByTestId('reg-last').fill('Тест');
-    await pS.getByTestId('reg-consent').check();
-    await pS.getByTestId('register-submit').click();
-    await expect(pS.getByTestId('home-title')).toBeVisible({ timeout: 25_000 });
+    /*
+     * Ученик регистрируется сам по одноразовой ссылке: прежний экран `/register` с кодом класса
+     * выведен из продукта (2026-10-27), и `/api/classes/:id/invites` теперь отвечает 410. Токен
+     * берётся из фрагмента адреса ссылки — ровно так же его читает сам экран.
+     */
+    const token = room.linkUrl.split('#')[1] ?? '';
+    await pS.goto(`/join#${token}`);
+    await expect(pS.getByTestId('join-first')).toBeVisible({ timeout: 20_000 });
+    await pS.getByTestId('join-first').fill('Экран');
+    await pS.getByTestId('join-last').fill('Тест');
+    await pS.getByTestId('join-email').fill(`e2scr${Date.now()}@x.io`);
+    await pS.getByTestId('join-password').fill('Secret1234');
+    await pS.getByTestId('join-consent').check();
+    await pS.getByTestId('join-register').click();
+    await expect(pS.getByTestId('join-done-text')).toBeVisible({ timeout: 25_000 });
+    await expect(pS).toHaveURL(/\/classes\//, { timeout: 25_000 });
+    await pS.goto('/');
+    await expect(pS.getByTestId('home-title')).toBeVisible({ timeout: 25_000 }); // logged in + token set
     await joinWithCam(pS, room.classId);
 
     const H = { authorization: `Bearer ${token}` };

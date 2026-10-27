@@ -183,25 +183,13 @@ export async function login(email: string, password: string, { deferNotify = fal
   return j.user;
 }
 
-/** item 9 step 1 — verify the class code WITHOUT consuming it (throws on invalid). */
-export async function checkCode(code: string): Promise<void> {
-  await api<{ ok: true }>('/api/auth/check-code', { method: 'POST', body: JSON.stringify({ code }) });
-}
-
-export async function registerByCode(firstName: string, lastName: string, email: string, password: string, code: string, locale?: string, emailCode?: string) {
-  const j = await api<{ accessToken: string; user: Me }>('/api/auth/register', {
-    // the language picked on the register screen travels with the account (task 1)
-    method: 'POST',
-    body: JSON.stringify({
-      firstName, lastName, email, password, code,
-      ...(locale ? { locale } : {}),
-      // часть F: код из письма; при выключенном подтверждении поля просто нет
-      ...(emailCode ? { emailCode } : {}),
-    }),
-  });
-  setAccessToken(j.accessToken);
-  return j.user;
-}
+/*
+ * 2026-10-27: вместе с приёмом в класс по восьмизначному коду из клиента убраны `checkCode`
+ * («проверить код, не расходуя») и `registerByCode`. Маршруты ещё отвечают — 410 с переводимой
+ * причиной, — но экран, который умел только этот способ, больше не существует: аккаунт ученика
+ * либо заводит учитель (`createStudent`), либо человек регистрируется сам по одноразовой ссылке
+ * (`registerByInvite`).
+ */
 
 /**
  * Часть F (2026-10-16): попросить шестизначный код на почту. Отдельная функция именно потому,
@@ -231,13 +219,15 @@ export async function previewInvite(token: string): Promise<{ className: string;
 /** Регистрация по приглашению: аккаунт + класс + расход токена одним запросом. */
 export async function registerByInvite(
   token: string, firstName: string, lastName: string, email: string, password: string, locale?: string,
-  { deferNotify = false }: AuthNotifyOption = {},
+  { deferNotify = false, emailCode }: AuthNotifyOption & { emailCode?: string } = {},
 ): Promise<{ user: Me; classId: string }> {
   const j = await api<{ accessToken: string; user: Me; classId: string }>('/api/invitations/register', {
     method: 'POST',
     body: JSON.stringify({
       token, firstName, lastName, email, password,
       ...(locale ? { locale } : {}),
+      // часть F (переехала сюда 2026-10-27): при выключенном подтверждении поля просто нет
+      ...(emailCode ? { emailCode } : {}),
     }),
   });
   setAccessToken(j.accessToken, !deferNotify);

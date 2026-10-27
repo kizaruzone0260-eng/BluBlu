@@ -67,17 +67,25 @@ const TT = (await (await fetch(`${BASE}/api/auth/login`, {
 const classes = (await api(TT, 'GET', '/api/classes')).json;
 let cls = classes.find((c) => c.name === '7B — camera shots');
 if (!cls) cls = (await api(TT, 'POST', '/api/classes', { name: '7B — camera shots', description: '', color: '#0ea5a5' })).json;
-const inv = (await api(TT, 'POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 })).json;
 const stuEmail = 'shotslesson@x.io';
 const sPass = 'ShotPass123';
 let ST = (await (await fetch(`${BASE}/api/auth/login`, {
   method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ email: stuEmail, password: sPass }),
 })).json().catch(() => ({})))?.accessToken;
-if (!ST) ST = (await (await fetch(`${BASE}/api/auth/register`, {
-  method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ firstName: 'Азиза', lastName: 'Каримова', email: stuEmail, password: sPass, code: inv.code }),
-})).json()).accessToken;
+// ученик заводится одноразовой ССЫЛКОЙ-приглашением: приём по коду класса выведен 2026-10-27,
+// `POST /api/classes/:id/invites` и `/api/auth/register` отвечают 410. Ссылку просим только если
+// аккаунта ещё нет — она расходуется первым удачным входом.
+if (!ST) {
+  const link = (await api(TT, 'POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 30 })).json;
+  ST = (await (await fetch(`${BASE}/api/invitations/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      token: String(link?.url ?? '').split('#')[1] ?? '',
+      firstName: 'Азиза', lastName: 'Каримова', email: stuEmail, password: sPass,
+    }),
+  })).json().catch(() => ({})))?.accessToken;
+}
 
 const session = (await api(TT, 'POST', '/api/lessons/start', { classId: cls.id })).json;
 

@@ -17,8 +17,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { WebSocket } from 'ws';
 import pino from 'pino';
 import type { FastifyInstance } from 'fastify';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeInviteLink, type TestDB } from './util.js';
 import { accessLogOptions, buildApp } from '../../src/app.js';
+import { env } from '../../src/env.js';
 import { REQUEST_ID_PATTERN } from '../../src/lib/requestId.js';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -32,7 +33,7 @@ suite('access log output (task 5)', () => {
   let classId = '';
   let sessionId = '';
   let icsToken = '';
-  let inviteCode = '';
+  let inviteToken = '';
   let port = 0;
 
   const auth = (tok: string) => ({ authorization: `Bearer ${tok}` });
@@ -65,9 +66,16 @@ suite('access log output (task 5)', () => {
     icsToken = ical.json().token as string;
     expect(icsToken.length, 'a real ICS token, not a made-up one').toBeGreaterThan(10);
 
-    const inv = await app.inject({ method: 'POST', url: `/api/classes/${classId}/invites`,
-      headers: auth(teacherTok), payload: {} });
-    inviteCode = inv.json().code as string;
+    /*
+     * Раньше «секретом, которого не должно быть в логе» служил выданный код класса. Код выведен из
+     * продукта (2026-10-27), и роль секрета переехала на токен одноразовой ссылки: это ровно тот
+     * же класс опасности — длинная случайная строка, которую сервер показывает один раз и которая
+     * не имеет права ни попасть в access-лог, ни быть напечатанной маршрутом.
+     */
+    env.PUBLIC_URL = env.PUBLIC_URL || 'http://127.0.0.1:3123';
+    const inv = await makeInviteLink(app, teacherTok, classId);
+    inviteToken = inv.token;
+    expect(inviteToken.length, 'токен ссылки — настоящая случайная строка, а не пустая').toBeGreaterThan(20);
 
     // a route that throws is registered inside buildApp's own lifecycle, which we do not own —
     // the 500 below is produced the way it happens in production: a dependency that stops working.
@@ -114,13 +122,13 @@ suite('access log output (task 5)', () => {
     expect(out(), 'the route is still recognizable').toContain('/api/ical/[redacted]');
   });
 
-  it('an invite code and a chat body are not logged either', async () => {
-    expect(inviteCode.length).toBeGreaterThan(3);
+  it('an invitation link token and a chat body are not logged either', async () => {
+    expect(inviteToken.length).toBeGreaterThan(3);
     const said = await app.inject({ method: 'POST', url: `/api/classes/${classId}/chat/messages`,
       headers: auth(teacherTok), payload: { text: 'ЧАТ-ТЕЛО-МАРКЕР-не-в-лог' } });
     expect(said.statusCode, said.body.slice(0, 200)).toBeLessThan(300);
     expect(out(), 'request bodies are not logged').not.toContain('ЧАТ-ТЕЛО-МАРКЕР');
-    expect(out(), 'and an issued invite code is not echoed either').not.toContain(inviteCode);
+    expect(out(), 'and an issued invitation token is not echoed either').not.toContain(inviteToken);
   });
 
   it('neither the bearer token nor a cookie appears in the output', async () => {

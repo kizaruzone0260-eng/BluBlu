@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes } from '../../src/db/schema.js';
 import { mergeElements, type ExEl } from '../../src/services/board.js';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -31,9 +30,6 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
   let port = 0;
   let sessionId = '';
 
-  const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-  const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
-
   /** The boards of a session as the database sees them (page_no, title, live elements). */
   async function dbBoardRows(sessionId: string) {
     const { whiteboards: wb } = await import('../../src/db/schema.js');
@@ -56,10 +52,14 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
     port = typeof addr === 'object' && addr ? addr.port : 0;
     const l = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: teacher.email, password: teacher.password } });
     teacher.token = l.json().accessToken as string;
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({ classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email: `brd${Date.now()}@x.io`, password: 'Secret1234', code } });
-    studentToken = r.json().accessToken as string;
+    /*
+     * Ученик фикстуры — `makeStudent` + `loginToken` (2026-10-27), потому что приём по коду класса
+     * выведен из продукта. Файл про доски: права на запись в WS, позднее подключение, личные
+     * тетради ученика. От ученика нужно только «он вошёл и состоит в этом классе», поэтому фикстура
+     * вставляет аккаунт с членством и входит им — сама проверка ничего не теряет.
+     */
+    const member = await makeStudent(t.sql, { classId, email: `brdstu${Date.now()}@x.io` });
+    studentToken = await loginToken(app, member.email, member.password);
     const st = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: { authorization: `Bearer ${teacher.token}` }, payload: { classId } });
     sessionId = st.json().id as string;
   });
@@ -164,11 +164,10 @@ suite('stage 5: board WS rights + late joiner + student sheets', () => {
     const theft = await app.inject({ method: 'PATCH', url: `/api/student-notes/${noteId}`, headers: { authorization: `Bearer ${teacher.token}` }, payload: { body: 'x' } });
     expect(theft.statusCode).toBe(404);
     // foreign student cannot read it
-    const oc = genCode();
     const [otherClass] = await t.db.insert(classes).values({ teacherId: teacher.id, name: 'OC' }).returning();
-    await t.db.insert(inviteCodes).values({ classId: otherClass!.id, codeHash: hashInviteCode(oc, process.env.JWT_SECRET!), createdBy: teacher.id, expiresAt: new Date(Date.now() + 86400000) });
-    const reg = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Other P', lastName: 'Test', email: `op${Date.now()}@x.io`, password: 'Secret1234', code: oc } });
-    const oth = await app.inject({ method: 'GET', url: '/api/student-notes', headers: { authorization: `Bearer ${reg.json().accessToken}` } });
+    const foreign = await makeStudent(t.sql, { classId: otherClass!.id, email: `op${Date.now()}@x.io`, name: 'Other P' });
+    const foreignToken = await loginToken(app, foreign.email, foreign.password);
+    const oth = await app.inject({ method: 'GET', url: '/api/student-notes', headers: { authorization: `Bearer ${foreignToken}` } });
     expect(oth.json()).toEqual([]);
   });
 

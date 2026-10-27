@@ -5,19 +5,30 @@
  * ownership filters (notes/sheets) → 404 for foreign ids; LiveKit/board tokens
  * only for active-session members. Also: lesson session cannot bind an event of
  * another class.
+ *
+ * 2026-10-27. Приём в класс по восьмизначному коду выведен из продукта, и это коснулось файла
+ * с двух сторон. Фикстура (`enroll()`) больше не заводит ученика кодом: ученик вставляется через
+ * `makeStudent` и входит тем же маршрутом, которым входит браузер (`loginToken`) — прав-то
+ * проверяются именно на входе, а не на регистрации. А строки матрицы про коды (`GET/POST
+ * /api/classes/:id/invites`, `POST /api/join-by-code`) переставлены на то, что эти маршруты дают
+ * теперь: 410. Отдельно названо, что делает реализация: у мёртвых маршрутов НЕТ проверки прав и
+ * они не смотрят ни на класс, ни на тело, поэтому чужой класс здесь отвечает тем же 410, а не
+ * 404, — и ни о чём не сообщает, потому что сообщать нечем. Выжившие же учительские маршруты
+ * держат прежнюю тройку (401 / 403 / 404), и проверка этой тройки добавлена для
+ * `POST /api/classes/:id/students` и `POST /api/classes/:id/members/lookup`. Ни одна строка
+ * атаки из этого файла не выброшена.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, makeInviteLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes, posts, files as filesTable, users } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { env } from '../../src/env.js';
+import { classes, posts, files as filesTable, users } from '../../src/db/schema.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
+const PAGE_ORIGIN = 'https://blublu.example';
 
 suite('§7 rights audit', () => {
   let t: TestDB;
@@ -27,20 +38,21 @@ suite('§7 rights audit', () => {
   let classA = '', classB = '', teacherAId = '', studentAId = '', studentBId = '';
   let postA = '', fileA = '', noteA = '', eventA = '', sessionA = '', sheetA = '', inviteA = '';
 
+  /*
+   * Ученик в фикстуре — вставленный аккаунт и обычный вход. Прежний способ («код класса →
+   * /api/auth/register») выведен, а тестам этого файла нужен человек с токеном, а не сценарий
+   * приёма: проверяются права на чужих ресурсах.
+   */
   async function enroll(email: string, classId: string, who: string) {
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
-      createdBy: teacherAId, expiresAt: new Date(Date.now() + 86400000),
-    });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email, password: 'Secret1234', code } });
-    tok[who] = r.json().accessToken as string;
-    if (who === 'studentA') studentAId = r.json().user.id;
-    if (who === 'studentB') studentBId = r.json().user.id;
+    const pupil = await makeStudent(t.sql, { classId, email });
+    tok[who] = await loginToken(app, pupil.email, pupil.password);
+    if (who === 'studentA') studentAId = pupil.id;
+    if (who === 'studentB') studentBId = pupil.id;
   }
 
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
+    env.PUBLIC_URL = PAGE_ORIGIN;   // ссылка-приглашение без публичного адреса не собирается
     app = await buildApp(t.db);
     const tA = await makeTeacher(t.sql, `audA${Date.now()}@x.io`);
     teacherAId = tA.id;
@@ -64,8 +76,12 @@ suite('§7 rights audit', () => {
     await enroll(`bb${Date.now()}@x.io`, classB, 'studentB');
 
     // victim resources in class A
-    const inv = await app.inject({ method: 'POST', url: `/api/classes/${classA}/invites`, headers: { authorization: `Bearer ${tok.teacherA}` }, payload: {} });
-    inviteA = inv.json().id;
+    /*
+     * Строка приглашения для проверки отзыва: раньше её выпускали маршрутом кодов, теперь —
+     * маршрутом ссылок. Для матрицы прав это не меняет ничего: отзыв (`…/invites/:id/revoke`)
+     * выжил и проверяется ровно так же, а id строки нужен только чтобы было что отзывать.
+     */
+    inviteA = (await makeInviteLink(app, tok.teacherA, classA)).id;
     const up = Buffer.concat([Buffer.from('%PDF-1.4'), Buffer.from('x'.repeat(200))]);
     const head = `--BND\r\nContent-Disposition: form-data; name="title"\r\n\r\nVictim doc\r\n--BND\r\nContent-Disposition: form-data; name="file"; filename="d.pdf"\r\nContent-Type: application/octet-stream\r\n\r\n`;
     const mat = await app.inject({
@@ -74,7 +90,7 @@ suite('§7 rights audit', () => {
       payload: Buffer.concat([Buffer.from(head, 'utf8'), up, Buffer.from('\r\n--BND--\r\n', 'utf8')]),
     });
     postA = mat.json().id;
-    if (mat.statusCode !== 201) throw new Error(`material upload failed ${mat.statusCode} ${mat.body.slice(0, 200)} tok=${String(tok.teacherA).slice(0, 18)}…`);
+    if (mat.statusCode !== 201) throw new Error(`material upload failed ${mat.statusCode} ${mat.body.slice(0, 200)}`);
     const feed = await app.inject({ method: 'GET', url: `/api/classes/${classA}/feed`, headers: { authorization: `Bearer ${tok.studentA}` } });
     fileA = feed.json().find((p: { id: string }) => p.id === postA).attachments[0].file.id;
 
@@ -92,16 +108,55 @@ suite('§7 rights audit', () => {
     const ics = await app.inject({ method: 'POST', url: '/api/me/ical-token', headers: { authorization: `Bearer ${tok.teacherA}` } });
     id.icsA = ics.json().token;
   });
-  afterAll(async () => { await app?.close(); await t?.sql.end(); });
+  afterAll(async () => {
+    env.PUBLIC_URL = '';
+    await app?.close(); await t?.sql.end();
+  });
 
   const a = (who: string) => ({ authorization: `Bearer ${tok[who]}` });
 
   // ── classes & members ───────────────────────────────────────────────────────
   it('anonymous → 401 on every member-scoped GET', async () => {
-    for (const url of ['/api/classes', `/api/classes/${classA}/feed`, '/api/events', '/api/notes', '/api/student-notes', `/api/classes/${classA}/members`, `/api/classes/${classA}/invites`, `/api/lessons/active?classId=${classA}`, `/api/files/${fileA}`]) {
+    // список приглашений (`…/invitations`) встал сюда вместо умершего `…/invites`: это выживший
+    // учительский GET, и он обязан требовать сессию ровно как остальные
+    for (const url of ['/api/classes', `/api/classes/${classA}/feed`, '/api/events', '/api/notes', '/api/student-notes', `/api/classes/${classA}/members`, `/api/classes/${classA}/invitations`, `/api/lessons/active?classId=${classA}`, `/api/files/${fileA}`]) {
       const r = await app.inject({ method: 'GET', url });
       expect(r.statusCode, url).toBe(401);
     }
+  });
+
+  /**
+   * Мёртвые маршруты приёма по коду (410) — что делает реализация, а не что было бы удобно.
+   * `retiredEnrollment` висит на них ОДНИМ выражением и без `preHandler`: он не читает ни id
+   * класса, ни тело, ни сессию. Значит «владение проверяется первым, и чужой класс отвечает
+   * 404» здесь неприменимо — чужой класс, свой класс, ученик и аноним получают ОДИН ответ 410.
+   * Дыры в этом нет: по разнице ответов нельзя узнать существование класса, потому что разницы
+   * нет вообще; и ни одна строка не создаётся (см. «join-by-code» ниже и http.test.ts).
+   */
+  it('retired code endpoints: 410 for everyone, own or foreign class alike', async () => {
+    const dead: Array<{ method: 'GET' | 'POST'; url: string; payload?: unknown }> = [
+      { method: 'POST', url: '/api/auth/register', payload: { firstName: 'P', lastName: 'P', email: 'x@x.io', password: 'Secret1234', code: 'ABCDEFGH' } },
+      { method: 'POST', url: '/api/auth/check-code', payload: { code: 'ABCDEFGH' } },
+      { method: 'POST', url: `/api/classes/${classA}/invites`, payload: {} },
+      { method: 'GET', url: `/api/classes/${classA}/invites` },
+      // чужой класс: ровно тот же ответ, потому что маршруту нечем проверять владение
+      { method: 'POST', url: `/api/classes/${classB}/invites`, payload: {} },
+      { method: 'GET', url: `/api/classes/${classB}/invites` },
+    ];
+    const shapes = new Set<string>();
+    for (const call of dead) {
+      for (const who of ['teacherA', 'teacherB', 'studentA'] as const) {
+        const r = await app.inject({ method: call.method, url: call.url, headers: a(who), payload: call.payload as object });
+        expect(r.statusCode, `${who} ${call.method} ${call.url}`).toBe(410);
+        expect(r.json().error).toBe('enrollmentRetired');
+        expect(r.json().reqId, 'отказ обязан оставаться находимым в access-логе').toBeTruthy();
+        shapes.add(JSON.stringify({ ...r.json(), reqId: '' }));
+      }
+      const anon = await app.inject({ method: call.method, url: call.url, payload: call.payload as object });
+      expect(anon.statusCode, `anon ${call.method} ${call.url}`).toBe(410);
+      expect(anon.json().error).toBe('enrollmentRetired');
+    }
+    expect(shapes.size, 'ответ мёртвого маршрута не зависит от того, кто и куда стучится').toBe(1);
   });
 
   it('B cannot touch A class: patch/archive/members/invites/reset → 404; A students list is invisible', async () => {
@@ -113,8 +168,13 @@ suite('§7 rights audit', () => {
       ['DELETE', `/api/classes/${classA}/members/${studentAId}`],
       ['POST', `/api/classes/${classA}/members/${studentAId}/move`, { toClassId: classB }],
       ['POST', `/api/classes/${classA}/members/${studentAId}/reset-password`],
-      ['POST', `/api/classes/${classA}/invites`, {}],
-      ['GET', `/api/classes/${classA}/invites`],
+      // выжившие учительские маршруты приёма: вместо «выпустить код» — «завести аккаунт» и
+      // «найти по почте». Тела заведомо валидные: 404 обязан быть отказом по владению, а не по
+      // форме запроса.
+      ['POST', `/api/classes/${classA}/students`, { firstName: 'Чужой', lastName: 'Учитель', email: `r-priv${Date.now()}@x.io`, password: 'Secret1234' }],
+      ['POST', `/api/classes/${classA}/members/lookup`, { email: `r-look${Date.now()}@x.io` }],
+      ['GET', `/api/classes/${classA}/invitations`],
+      ['POST', `/api/classes/${classA}/invites/link`, { ttlDays: 7 }],
       ['POST', `/api/classes/${classA}/invites/${inviteA}/revoke`],
       ['POST', `/api/classes/${classA}/events`, { kind: 'other', title: 'x', startLocal: '2026-11-03T10:00', durationMin: 60, tz: 'UTC' }],
       ['GET', `/api/classes/${classA}/telegram`],
@@ -132,16 +192,72 @@ suite('§7 rights audit', () => {
   it('student on teacher routes → 403 (not 404 — route-level role)', async () => {
     const r1 = await app.inject({ method: 'GET', url: `/api/classes/${classA}/members`, headers: a('studentA') });
     expect(r1.statusCode).toBe(403);
-    const r2 = await app.inject({ method: 'POST', url: `/api/classes/${classA}/invites`, headers: a('studentA'), payload: {} });
+    // выживший маршрут выпуска приглашений: вместо «создать код» — «создать ссылку»
+    const r2 = await app.inject({ method: 'POST', url: `/api/classes/${classA}/invites/link`, headers: a('studentA'), payload: {} });
     expect(r2.statusCode).toBe(403);
     const r3 = await app.inject({ method: 'POST', url: '/api/notes', headers: a('studentA'), payload: { classId: classA } });
     expect(r3.statusCode).toBe(403);
   });
 
-  it('B student cannot join A class without code; B teacher cannot add A student to B class by id enumeration', async () => {
-    const wrong = await app.inject({ method: 'POST', url: '/api/join-by-code', headers: a('studentB'), payload: { code: 'ZZZZZZZZ' } });
-    expect(wrong.statusCode).toBe(400);
-    expect(wrong.json().error).toBe('invalidCode');
+  /**
+   * Тройка ответов на выживших маршрутах приёма — та же, что у остальной учительской половины
+   * API: аноним 401, ученик 403, чужой класс 404. Порядок проверок у двух маршрутов разный, и
+   * это названо: `students` смотрит владение ДО разбора тела (поэтому чужой класс отвечает 404
+   * даже с кривым телом), а `members/lookup` разбирает тело первым — с валидным письмом он всё
+   * равно приходит к 404, но с мусорным телом ответил бы 400.
+   */
+  it('enrollment routes keep the trio: anon 401, student 403, foreign class 404', async () => {
+    const studentBody = { firstName: 'Новый', lastName: 'Ученик', email: `r-trio${Date.now()}@x.io`, password: 'Secret1234' };
+
+    const anonCreate = await app.inject({ method: 'POST', url: `/api/classes/${classA}/students`, payload: studentBody });
+    expect(anonCreate.statusCode).toBe(401);
+    const pupilCreate = await app.inject({ method: 'POST', url: `/api/classes/${classA}/students`, headers: a('studentA'), payload: studentBody });
+    expect(pupilCreate.statusCode, pupilCreate.body).toBe(403);
+    const foreignCreate = await app.inject({ method: 'POST', url: `/api/classes/${classA}/students`, headers: a('teacherB'), payload: studentBody });
+    expect(foreignCreate.statusCode).toBe(404);
+    // владение раньше тела: кривое тело на чужом классе — тот же 404, а не 400
+    const foreignBad = await app.inject({ method: 'POST', url: `/api/classes/${classA}/students`, headers: a('teacherB'), payload: { firstName: 'Ч' } });
+    expect(foreignBad.statusCode, 'чужой класс не светит ответом на плохое тело').toBe(404);
+
+    const lookupBody = { email: `r-lookup${Date.now()}@x.io` };
+    const anonLookup = await app.inject({ method: 'POST', url: `/api/classes/${classA}/members/lookup`, payload: lookupBody });
+    expect(anonLookup.statusCode).toBe(401);
+    const pupilLookup = await app.inject({ method: 'POST', url: `/api/classes/${classA}/members/lookup`, headers: a('studentA'), payload: lookupBody });
+    expect(pupilLookup.statusCode).toBe(403);
+    const foreignLookup = await app.inject({ method: 'POST', url: `/api/classes/${classA}/members/lookup`, headers: a('teacherB'), payload: lookupBody });
+    expect(foreignLookup.statusCode).toBe(404);
+
+    // и своим классом оба маршрута живые: отказ по правам не сломал их
+    const own = await app.inject({ method: 'POST', url: `/api/classes/${classB}/students`, headers: a('teacherB'), payload: studentBody });
+    expect(own.statusCode, String(own.json().error ?? 'no error')).toBe(201);
+    const ownLookup = await app.inject({ method: 'POST', url: `/api/classes/${classB}/members/lookup`, headers: a('teacherB'), payload: lookupBody });
+    expect(ownLookup.statusCode, 'несуществующая почта — это 404 studentNotFound, а не отказ прав')
+      .toBe(404);
+    expect(ownLookup.json().error).toBe('studentNotFound');
+
+    // никто из посторонних не создал аккаунта
+    expect(await t.db.select({ id: users.id }).from(users).where(eq(users.email, studentBody.email)),
+      'аккаунт появился только от собственного учителя').toHaveLength(1);
+  });
+
+  /**
+   * Прежний «присоединиться по коду второго класса» выведен, и строка проверки говорит теперь
+   * ровно это: маршрут отвечает 410 — ученику, чужому учителю и анонему одинаково, — и не
+   * создаёт членства. Дальше идёт то, что проверялось всегда: учитель MAY добавить существующего
+   * ученика по uuid, но не учителя.
+   */
+  it('retired join-by-code answers 410; B teacher cannot add A student to B class by id enumeration', async () => {
+    for (const [who, expected] of [['studentB', 410], ['teacherB', 410], ['anon', 410]] as const) {
+      const r = await app.inject({
+        method: 'POST', url: '/api/join-by-code',
+        ...(who === 'anon' ? {} : { headers: a(who) }), payload: { code: 'ZZZZZZZZ' },
+      });
+      expect(r.statusCode, `${who} /api/join-by-code`).toBe(expected);
+      expect(r.json().error).toBe('enrollmentRetired');
+    }
+    const membersBefore = await app.inject({ method: 'GET', url: `/api/classes/${classB}/members`, headers: a('teacherB') });
+    expect((membersBefore.json() as unknown[]).some((m) => (m as { userId: string }).userId === studentAId)).toBe(false);
+
     // by design a teacher MAY add an existing student knowing their uuid (uuid is unguessable; §3.2 direct-add)
     const add = await app.inject({ method: 'POST', url: `/api/classes/${classB}/members`, headers: a('teacherB'), payload: { userId: studentAId } });
     expect(add.statusCode).toBe(200);
@@ -390,9 +506,12 @@ suite('§7 rights audit', () => {
     // sheets scoped by someone else's session → empty
     const sb = await app.inject({ method: 'GET', url: `/api/student-notes?sessionId=${sessionA}`, headers: a('studentB') });
     expect(sb.json()).toEqual([]);
-    // teacher cannot join via class code as if a student
+    // учитель не может «присоединиться к классу по коду»: маршрут выведен и отвечает 410 тому,
+    // кто стучится, — роли и владения он не спрашивает вовсе (был 403 по роли, стал 410 по факту
+    // вывода способа: проверять роль в маршруте, который ничего не делает, нечем)
     const tj = await app.inject({ method: 'POST', url: '/api/join-by-code', headers: a('teacherB'), payload: { code: 'ABCDEFGH' } });
-    expect(tj.statusCode).toBe(403);
+    expect(tj.statusCode).toBe(410);
+    expect(tj.json().error).toBe('enrollmentRetired');
     // AUDIT-H3 check: moderation of an ENDED session → 404 (like missing)
     const sk = await app.inject({ method: 'POST', url: `/api/lessons/${sessionA}/kick`, headers: a('teacherA'), payload: { identity: teacherAId } });
     expect(sk.statusCode).toBe(404);

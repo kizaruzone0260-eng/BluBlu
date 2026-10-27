@@ -1,14 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { inviteCreateSchema, inviteLinkCreateSchema, inviteUrlFor } from '@klass/shared';
+import { inviteLinkCreateSchema, inviteUrlFor } from '@klass/shared';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { effectiveSiteBase } from '../lib/prodConfig.js';
 import { audit } from '../services/audit.js';
 import { resolveClass } from '../services/classes.js';
+import { retiredEnrollment } from '../lib/retired.js';
 import {
-  createInviteCode, listInviteCodes, revokeInvitation,
-  createInviteLink, listInvitations,
+  revokeInvitation, createInviteLink, listInvitations,
 } from '../services/invites.js';
 
 const params = z.object({ id: z.string().uuid(), inviteId: z.string().uuid().optional() });
@@ -16,26 +16,15 @@ const params = z.object({ id: z.string().uuid(), inviteId: z.string().uuid().opt
 /** Teacher-only. Foreign/unknown class → 404 (§7). */
 export function registerInviteRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
   return async function invites(app) {
-    app.post('/api/classes/:id/invites', { preHandler: app.authenticateTeacher }, async (req, reply) => {
-      const p = params.safeParse(req.params);
-      if (!p.success) return reply.code(404).send({ error: 'notFound' });
-      const parsed = inviteCreateSchema.safeParse(req.body ?? {});
-      if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
-      const cls = await resolveClass(db, req.user!.id, 'teacher', p.data.id);
-      if (!cls) return reply.code(404).send({ error: 'notFound' });
-      const { id, code, expiresAt } = await createInviteCode(db, cls.id, req.user!.id, parsed.data.ttlDays);
-      audit(db, req.user!.id, 'invite_create', { classId: cls.id, inviteId: id });
-      // The plain code is returned exactly once and never stored.
-      return reply.code(201).send({ id, code, expiresAt });
-    });
-
-    app.get('/api/classes/:id/invites', { preHandler: app.authenticateTeacher }, async (req, reply) => {
-      const p = params.safeParse(req.params);
-      if (!p.success) return reply.code(404).send({ error: 'notFound' });
-      const cls = await resolveClass(db, req.user!.id, 'teacher', p.data.id);
-      if (!cls) return reply.code(404).send({ error: 'notFound' });
-      return listInviteCodes(db, cls.id);
-    });
+    /*
+     * Выпуск и список восьмизначных кодов класса (2026-10-27). Оба маршрута выведены: учитель
+     * больше не создаёт код, не читает его вслух и не пересылает по слову. Ответ 410 с
+     * переводимой причиной стоит здесь ровно за тем же, что и в `routes/auth.ts`: закладочка,
+     * прежняя сборка и скрипт владельца должны получить объяснение, а не «Route not found».
+     * Создать код теперь нечем — `createInviteCode` и `listInviteCodes` удалены из сервиса.
+     */
+    app.post('/api/classes/:id/invites', retiredEnrollment);
+    app.get('/api/classes/:id/invites', retiredEnrollment);
 
     /* ─── одноразовые ссылки-приглашения (2026-10-23, часть A) ─────────────────────────── */
 

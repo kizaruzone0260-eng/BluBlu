@@ -13,7 +13,7 @@
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import postgres from 'postgres';
 import {
-  BASE, boardGeom, boardScene, expectInk, geomShift, inkAll, inkSeen, loginUi, makeLesson, m,
+  BASE, boardGeom, boardScene, expectInk, geomShift, inkAll, inkSeen, loginUi, makeLink, makeLesson, m,
   openLesson, paintStable, registerStudent, revealInk, stack, teacherToken, waitBoard,
   watchBoardSocket, winOf, type Ctx,
 } from './boardFixtures';
@@ -57,15 +57,12 @@ test.describe('students drawing on the board (part 3)', () => {
     // только строчные буквы: сервер нормализует почту в lower case, а поиск id идёт по
     // точному значению — с заглавной «А» ученик не находился (бордка makeTeacher об этом же)
     aEmail = `bda${stamp}@x.io`; bEmail = `bdb${stamp}@x.io`;
-    // код приглашения одноразовый: на каждого ученика — свой
-    const codes = [lesson.inviteCode];
-    const extra = await api.post(`/api/classes/${classId}/invites`,
-      { headers: { authorization: `Bearer ${token}` }, data: {} });
-    expect(extra.status(), 'учитель обязан уметь выпускать новый одноразовый код').toBe(201);
-    codes.push(String((await extra.json()).code as string));
-    for (const [[email, name], code] of [[[aEmail, 'Анна'], codes[0]], [[bEmail, 'Борис'], codes[1]]] as const) {
+    // ссылка-приглашение одноразовая: на каждого ученика — своя
+    const links = [lesson.linkUrl];
+    links.push((await makeLink(api, token, classId)).url);
+    for (const [[email, name], link] of [[[aEmail, 'Анна'], links[0]], [[bEmail, 'Борис'], links[1]]] as const) {
       const p = await (await browser.newContext()).newPage();
-      await registerStudent(p, code, name, email);
+      await registerStudent(p, link, name, email);
       await p.context().close();
     }
   });

@@ -2,23 +2,21 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { eq, and, isNull } from 'drizzle-orm';
 import {
-  registerByCodeSchema, loginSchema, profileUpdateSchema, checkCodeSchema,
-  emailCodeRequestSchema, normalizeEmailCode, POLICY_VERSION, CODE_ATTEMPTS_PER_MIN,
-  passwordIssueCode,
+  loginSchema, profileUpdateSchema,
+  emailCodeRequestSchema, POLICY_VERSION,
 } from '@klass/shared';
 import { users, refreshTokens, policyAcceptances } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import {
-  registerStudentByCode, login, issueRefreshSession, rotateRefresh, logout, signAccessTokenForUser,
+  login, issueRefreshSession, rotateRefresh, logout, signAccessTokenForUser,
 } from '../services/auth.js';
-import { peekInviteCode } from '../services/invites.js';
-import { normalizeInviteCode } from '../lib/invite.js';
 import { requestOriginAllowed } from '../lib/origin.js';
 import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
-import { effectiveCodeMax, effectiveIpFailMax, effectiveLoginMax } from '../lib/prodConfig.js';
+import { effectiveIpFailMax, effectiveLoginMax } from '../lib/prodConfig.js';
 import { REFRESH_COOKIE, refreshCookieOpts } from '../lib/sessionCookie.js';
 import { errorBody } from '../lib/requestId.js';
+import { retiredEnrollment } from '../lib/retired.js';
 import type { EmailTransport } from '../services/email.js';
 import { requestEmailCode } from '../services/emailVerify.js';
 
@@ -60,6 +58,11 @@ function checkSameOrigin(req: import('fastify').FastifyRequest, reply: import('f
   return false;
 }
 
+/**
+ * Ответ умершему способу приёма в класс живёт в `lib/retired.ts` — он один на четыре маршрута
+ * (`/api/auth/register`, `/api/auth/check-code`, `/api/join-by-code`, `/api/classes/:id/invites`),
+ * и у маршрута, который больше ничего не умеет, не должно быть собственной копии тела ответа.
+ */
 export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance) => Promise<void> {
   return async function routes(app) {
     /*
@@ -109,92 +112,21 @@ export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance
       return reply.code(202).send({ ok: true });
     });
 
-    // POST /api/auth/register — new student by one-time class code
-    app.post('/api/auth/register', async (req, reply) => {
-      const parsed = registerByCodeSchema.safeParse(req.body);
-      if (!parsed.success) {
-        // Hardening (Phase 1д): surface a SPECIFIC, translated password reason
-        // so the user knows why their password was rejected; every other input
-        // problem stays the generic 'invalidInput' (no field enumeration).
-        // Расшифровка теперь общая (`passwordIssueCode`) — её же требуют и регистрация по
-        // ссылке, и сброс учителем, а три разных объяснения одного отказа это гарантированно
-        // однажды разойдутся.
-        const pw = passwordIssueCode(parsed.error.issues.find((i) => i.path[0] === 'password'));
-        if (pw) return reply.code(400).send(errorBody(req.id, pw));
-        return reply.code(400).send(errorBody(req.id, 'invalidInput'));
-      }
-      // Часть F: при включённом подтверждении без кода регистрация не случается — и это
-      // отдельный ответ, а не «неверные поля»: человеку важно понять, что письмо не пришло.
-      const emailCode = parsed.data.emailCode ? normalizeEmailCode(parsed.data.emailCode) : undefined;
-      if (requireEmailCode && !emailCode) return reply.code(400).send(errorBody(req.id, 'emailCodeRequired'));
-      const key = credKey('reg', req.ip, parsed.data.email);
-      // A wrong CLASS code is the same secret for the whole class, so it gets its own counter —
-      // but it counts FAILURES only: thirty pupils typing their teacher's code correctly cost
-      // nothing, while one address guessing one code stops at 8 a minute.
-      const codeKey = credKey('cc', req.ip, parsed.data.code);
-      const fails = ipFailKey(req.ip);
-      const ipMax = effectiveIpFailMax(env.NODE_ENV, env.RATE_IP_FAIL_MAX);
-      const codeMax = effectiveCodeMax(env.NODE_ENV, env.RATE_CODE_MAX);
-      const gate = throttleCheck(key);
-      const gateCode = throttleCheck(codeKey);
-      const gateIp = throttleCheck(fails);
-      if (!gate.allowed || !gateCode.allowed || !gateIp.allowed) {
-        return reply.code(429)
-          .header('retry-after', String(Math.max(gate.retryAfterSec, gateCode.retryAfterSec, gateIp.retryAfterSec)))
-          .send(errorBody(req.id, 'codeRateLimited'));
-      }
-      throttleRecordAttempt(key, Date.now(), CODE_ATTEMPTS_PER_MIN);
-      const result = await registerStudentByCode(db, {
-        ...parsed.data,
-        code: normalizeInviteCode(parsed.data.code),
-        emailCode: requireEmailCode ? emailCode : undefined,
-      });
-      if (!result.ok) {
-        // Task B: the reason the attempt failed is logged with the request id the pupil can
-        // read off the screen — never with the address or the password.
-        req.log.warn(`register refused: reason=${result.error}`);
-        throttleRecordAttempt(codeKey, Date.now(), codeMax);
-        throttleRecordAttempt(fails, Date.now(), ipMax);
-        // Same generic message for wrong / used / expired code (§3.2)
-        if (result.error === 'invalidCode') return reply.code(400).send(errorBody(req.id, 'invalidCode'));
-        // Код из письма: одна формулировка на «не тот», «истёк», «исчерпан потолок попыток» и
-        // «уже списан» — различать их наружу незачем, а перебор по ответу становится заметным.
-        if (result.error === 'emailCodeInvalid') return reply.code(400).send(errorBody(req.id, 'emailCodeInvalid'));
-        if (result.error === 'emailTaken') return reply.code(409).send(errorBody(req.id, 'emailTaken'));
-        return reply.code(400).send(errorBody(req.id, 'invalidInput'));
-      }
-      throttleReset(key);
-      const session = await issueRefreshSession(db, result.user.id);
-      reply.setCookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOpts(session.expiresAt.getTime() - Date.now()));
-      return reply.send({ accessToken: result.accessToken, user: result.user });
-    });
-
-    // Item 9 step 1 — code check WITHOUT consumption. One generic answer for
-    // wrong/used/expired/revoked, per-IP attempt throttle like register itself;
-    // email never touches this endpoint, so no account enumeration here.
-    app.post('/api/auth/check-code', async (req, reply) => {
-      const parsed = checkCodeSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send(errorBody(req.id, 'invalidCode'));
-      const key = credKey('cc', req.ip, parsed.data.code);
-      const fails = ipFailKey(req.ip);
-      const ipMax = effectiveIpFailMax(env.NODE_ENV, env.RATE_IP_FAIL_MAX);
-      const gate = throttleCheck(key);
-      const gateIp = throttleCheck(fails);
-      if (!gate.allowed || !gateIp.allowed) {
-        return reply.code(429)
-          .header('retry-after', String(Math.max(gate.retryAfterSec, gateIp.retryAfterSec)))
-          .send(errorBody(req.id, 'codeRateLimited'));
-      }
-      const okCode = await peekInviteCode(db, normalizeInviteCode(parsed.data.code));
-      if (!okCode) {
-        // failures count toward the probe budget (like login), successes don't
-        throttleRecordAttempt(key, Date.now(), effectiveCodeMax(env.NODE_ENV, env.RATE_CODE_MAX));
-        throttleRecordAttempt(fails, Date.now(), ipMax);
-        req.log.warn('check-code refused: reason=invalidCode');
-        return reply.code(400).send(errorBody(req.id, 'invalidCode'));
-      }
-      return { ok: true };
-    });
+    /*
+     * POST /api/auth/register и POST /api/auth/check-code — приём в класс по восьмизначному коду
+     * (2026-10-27). Оба маршрута выведены из продукта и оставлены одной строкой каждый, чтобы
+     * ответить 410 переводимым предложением, а не служебным «Route not found»: у человека остаётся
+     * закладочка `/register`, у школы — прежняя сборка SPA, у владельца — старый скрипт.
+     *
+     * Ничего другого эти маршруты не делают и сделать не могут: функции, которые проверяли или
+     * расходовали код класса (`registerStudentByCode`, `peekInviteCode`, `redeemInviteCode`,
+     * `createInviteCode`), из кодовой базы удалены, а `invite_codes.kind = 'code'` больше нигде не
+     * читается как право на вход. Ученик заводится теперь двумя способами — по одноразовой ссылке
+     * (`/api/invitations/register`) или аккаунтом, который создаёт учитель
+     * (`POST /api/classes/:id/students`).
+     */
+    app.post('/api/auth/register', retiredEnrollment);
+    app.post('/api/auth/check-code', retiredEnrollment);
 
     app.post('/api/auth/login', async (req, reply) => {
       const parsed = loginSchema.safeParse(req.body);

@@ -1,9 +1,11 @@
-/** Cryptographically safe alphabet: no 0/O, 1/I/L to avoid confusion when read aloud. */
-export const INVITE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-export const INVITE_CODE_LENGTH = 8;
-export const INVITE_DEFAULT_TTL_DAYS = 7;
-export const INVITE_MIN_TTL_DAYS = 1;
-export const INVITE_MAX_TTL_DAYS = 30;
+/*
+ * 2026-10-27: алфавит, длина и сроки ВОСЬМИЗНАЧНОГО кода класса (INVITE_ALPHABET,
+ * INVITE_CODE_LENGTH, INVITE_DEFAULT/MIN/MAX_TTL_DAYS) удалены вместе с самим способом приёма в
+ * класс. Одноразовые ссылки-приглашения живут в `inviteLinks.ts` и своими числами
+ * (`INVITE_LINK_TTL_DAYS`, `INVITE_LABEL_MAX`); `CODE_ATTEMPTS_PER_MIN` / `CODE_BLOCK_MINUTES`
+ * остались, потому что это свойства привратника (`lib/throttle.ts`), а не кода: тем же числом
+ * попыток мерится и перебор токена приглашения.
+ */
 
 /** Code entry: max 5 attempts per minute per account+IP, then block 15 minutes. */
 export const CODE_ATTEMPTS_PER_MIN = 5;

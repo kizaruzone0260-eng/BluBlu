@@ -99,7 +99,7 @@ export default function Home({ me }: { me: Me }) {
             </>
           ) : (
             <>
-              <Link to="/classes"><button className="secondary" style={{ marginTop: 0 }} data-testid="qa-join-code">{t('home.joinByCode')}</button></Link>
+              <Link to="/classes"><button className="secondary" style={{ marginTop: 0 }} data-testid="qa-my-classes">{t('classes.title')}</button></Link>
               <Link to="/sheets?new=1"><button className="secondary" style={{ marginTop: 0 }} data-testid="qa-new-note">{t('home.newNote')}</button></Link>
             </>
           )}
@@ -138,7 +138,7 @@ export default function Home({ me }: { me: Me }) {
               <p className="muted">{isTeacher ? t('home.noClassesHint') : t('home.noClassesStudent')}</p>
               {isTeacher
                 ? <Link to="/classes?new=1"><button style={{ marginTop: 0 }}>{t('home.newClass')}</button></Link>
-                : <Link to="/register"><button style={{ marginTop: 0 }}>{t('home.joinByCode')}</button></Link>}
+                : <Link to="/register"><button style={{ marginTop: 0 }}>{t('auth.howToJoin')}</button></Link>}
             </div>
           )}
           <div>

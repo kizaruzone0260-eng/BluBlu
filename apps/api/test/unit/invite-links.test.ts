@@ -10,7 +10,6 @@ import { describe, it, expect } from 'vitest';
 import {
   generateInviteToken, hashInviteToken, looksLikeInviteToken,
 } from '../../src/lib/inviteLink.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
 import { tempPassword } from '../../src/lib/password.js';
 import {
   INVITE_TOKEN_BYTES, INVITE_TOKEN_LENGTH, isInviteToken, parseInviteToken, inviteUrlFor,
@@ -59,13 +58,21 @@ describe('токен приглашения: хеширование', () => {
     expect(hashInviteToken(token, 'a')).not.toBe(hashInviteToken(token, 'b'));
   });
 
-  /** Доменная разметка — то, из-за чего ссылка и код живут в ОДНОЙ таблице. */
-  it('ветка `link.` никогда не совпадает с веткой `code.` на одном входе', () => {
-    const value = 'AbCdEf1234567890AbCdEf1234567890';
-    expect(hashInviteToken(value, PEPPER)).not.toBe(hashInviteCode(value, PEPPER));
-    // и наоборот: код класса не читается как токен ссылки
-    const code = 'ABCDEF12';
-    expect(hashInviteCode(code, PEPPER)).not.toBe(hashInviteToken(code, PEPPER));
+  /*
+   * Раньше здесь стояла пара «хеш `link.` не совпадает с хешем `code.`» — доменный префикс,
+   * из-за которого ссылка и восьмизначный код могли жить в одной таблице и не подменять друг
+   * друга. Кода класса в продукте больше нет (2026-10-27), функции его хеша — тоже, и проверять
+   * нечего. Что осталось и обязательно: токен ссылки не обязан быть угадываемым, поэтому в
+   * таблице он опознаётся по своему префиксу, а строка, похожая на прежний код, токеном не
+   * считается — её отсекает `isInviteToken` до всякого хеша.
+   */
+  it('строка вида прежнего восьмизначного кода не проходит как токен ссылки', () => {
+    const legacyCode = 'ABCDEF12';
+    expect(isInviteToken(legacyCode)).toBe(false);
+    expect(looksLikeInviteToken(legacyCode)).toBe(false);
+    // и хеш от неё другой, чем от настоящего токена: переписать «код» в «ссылку» нельзя
+    const token = generateInviteToken();
+    expect(hashInviteToken(legacyCode, PEPPER)).not.toBe(hashInviteToken(token, PEPPER));
   });
 });
 
@@ -117,15 +124,31 @@ describe('схемы приглашения', () => {
     expect(isInviteToken(token)).toBe(true);
   });
 
-  it('регистрация по ссылке собирает имя, фамилию, почту и пароль — и НИКОГДА не код из письма', () => {
+  it('регистрация по ссылке собирает имя, фамилию, почту и пароль — и код класса никогда', () => {
     const token = generateInviteToken();
     const ok = inviteRegisterSchema.safeParse({
       token, firstName: 'Aziza', lastName: 'Karimova', email: 'a@b.io', password: 'PupilPass2026', locale: 'uz',
     });
     expect(ok.success, JSON.stringify(ok.error?.issues)).toBe(true);
     // поля класса в запросе ученика нет: класс знает сервер по токену
-    expect(Object.keys(inviteRegisterSchema.shape)).toEqual(['token', 'firstName', 'lastName', 'email', 'password', 'locale']);
-    expect('emailCode' in inviteRegisterSchema.shape, 'подтверждение почты не включено и не должно всплыть здесь').toBe(false);
+    expect(Object.keys(inviteRegisterSchema.shape)).toEqual(['token', 'firstName', 'lastName', 'email', 'password', 'emailCode', 'locale']);
+    /*
+     * `emailCode` здесь ПОЯВИЛСЯ 2026-10-27, и это не оплошность, а переезд: пока существовал
+     * вход по коду класса, подтверждение почты умела только та регистрация. После вывода кода
+     * ссылка осталась единственным публичным способом завести аккаунт, и включатель
+     * `EMAIL_PROVIDER` обязан действовать именно на ней — иначе письмо приходит, а спросить его
+     * не у чего. Обязательность поля решает маршрут (при `none` его не существует), поэтому
+     * запрос без него по-прежнему валиден.
+     */
+    expect('emailCode' in inviteRegisterSchema.shape, 'поле есть, но оно факультативное').toBe(true);
+    expect(inviteRegisterSchema.safeParse({
+      token, firstName: 'Aziza', lastName: 'Karimova', email: 'a@b.io', password: 'PupilPass2026',
+    }).success, 'без кода из письма регистрация по-прежнему проходит').toBe(true);
+    expect(inviteRegisterSchema.safeParse({
+      token, firstName: 'Aziza', lastName: 'Karimova', email: 'a@b.io', password: 'PupilPass2026', emailCode: '12345',
+    }).success, 'пять цифр — не код').toBe(false);
+    // прежнего поля `code` в схеме нет и быть не может: приём по коду выведен
+    expect('code' in inviteRegisterSchema.shape).toBe(false);
     for (const body of [
       { token, firstName: 'A', lastName: 'Karimova', email: 'a@b.io', password: 'PupilPass2026' },
       { token, firstName: 'Aziza', lastName: 'K', email: 'a@b.io', password: 'PupilPass2026' },

@@ -85,15 +85,19 @@ try {
   const classes = (await api(TT, 'GET', '/api/classes')).json ?? [];
   let cls = classes.find((c) => c.name === '7B — camera shots');
   if (!cls) cls = (await api(TT, 'POST', '/api/classes', { name: '7B — camera shots', description: '', color: '#0ea5a5' })).json;
-  const inv = (await api(TT, 'POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 })).json;
-
   const stuEmail = 'shotslesson-bar@x.io';
   const sPass = 'ShotPass123';
   let ST = await tok(stuEmail, sPass);
   if (!ST) {
-    const reg = await fetch(`${BASE}/api/auth/register`, {
+    // аккаунт ученика заводится ОДНОРАЗОВОЙ ССЫЛКОЙ: приём по коду класса выведен из продукта
+    // 2026-10-27, и `POST /api/classes/:id/invites` вместе с `/api/auth/register` отвечают 410
+    const link = (await api(TT, 'POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 30 })).json;
+    const reg = await fetch(`${BASE}/api/invitations/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ firstName: 'Азиза', lastName: 'Каримова', email: stuEmail, password: sPass, code: inv.code }),
+      body: JSON.stringify({
+        token: String(link?.url ?? '').split('#')[1] ?? '',
+        firstName: 'Азиза', lastName: 'Каримова', email: stuEmail, password: sPass,
+      }),
     });
     ST = (await reg.json().catch(() => ({})))?.accessToken ?? '';
   }

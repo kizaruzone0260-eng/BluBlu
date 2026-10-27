@@ -264,8 +264,8 @@ Excalidraw, FullCalendar, LiveKit, Tiptap и рисование вынесены
 | Форма | Клиент | Сервер (zod) | Двойная отправка | Сообщения 3 языка |
 | --- | --- | --- | --- | --- |
 | Вход | required email/password | loginSchema (пароль слабая строка) | `busy` guard (добавлен в фазе 5) | auth.* + коды пароля |
-| Регистрация шаг 1 | код min4 | checkCodeSchema (без enumeration) | — (не пишет) | auth.invalidCode/codeRateLimited |
-| Регистрация шаг 2 | имя/фамилия min2 + **чекбокс согласия** | registerByCodeSchema (пароль ≥10 + denylist) | `busy` + согласие обязательно | auth.* / consent.* |
+| Регистрация по ссылке (`/join`) | имя/фамилия min2, почта, пароль ≥10, **чекбокс согласия** | inviteRegisterSchema (та же `passwordPolicy` + denylist; `emailCode` опционален и обязателен только при включённом транспорте) | `busy` + согласие обязательно | auth.* / consent.* / join.* |
+| Аккаунт создаёт учитель | то же + «повторите временный пароль» (клиент) | studentCreateSchema (та же `passwordPolicy`) | `createStudent.isPending` | classes.* / auth.* |
 | Экран имени | оба min2 | profileUpdateSchema | `!ok||busy` | auth.* |
 | Профиль | имя | profileUpdateSchema | `saving` guard (добавлен в фазе 5) | common.* |
 | Класс (создать/вступить) | имя min2, код ≥8 | classCreateSchema | isPending | classes.* |

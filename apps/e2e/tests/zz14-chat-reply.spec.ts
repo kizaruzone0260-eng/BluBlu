@@ -15,8 +15,8 @@ import { BASE, loginUi, m, stack, type Ctx } from './boardFixtures';
 
 /**
  * POLICY_VERSION lives in @klass/shared, which this package does not depend on — so the fixture
- * reads the constant from its source instead of hard-coding a date that would rot. The register
- * PAGE accepts the policies in a second call (Register.tsx → acceptPolicy), and an account that
+ * reads the constant from its source instead of hard-coding a date that would rot. The registration
+ * screen accepts the policies in a second call (Join.tsx → acceptPolicy), and an account that
  * never accepted them is held at the consent gate: without this the student login below would
  * sit on that gate and never show Home.
  */
@@ -39,19 +39,29 @@ test.describe('chat replies (task 2)', () => {
   });
   test.afterAll(async () => { await api?.dispose(); });
 
-  /** class + invite + a registered student, all through the API where possible */
+  /**
+   * Класс + ссылка-приглашение + зарегистрированный по ней ученик — всё через API, где возможно.
+   *
+   * Приём в класс по восьмизначному коду выведен из продукта 2026-10-27 (`POST
+   * /api/classes/:id/invites` и `/api/auth/register` отвечают 410), поэтому аккаунт заводится
+   * одноразовой ссылкой: `POST /api/classes/:id/invites/link` отдаёт адрес, токен — во фрагменте,
+   * а `POST /api/invitations/register` создаёт аккаунт, добавляет в класс и расходует ссылку
+   * одним ходом. Ответ даёт тот же `accessToken`, что давала прежняя регистрация.
+   */
   async function room(name: string, studentFirst: string) {
     const cls = await (await api.post('/api/classes', {
       headers: { authorization: `Bearer ${token}` },
       data: { name: `${name} ${Date.now()}`, description: '', color: '#0ea5a5' },
     })).json();
     const classId = String((cls as { id: string }).id);
-    const inv = await (await api.post(`/api/classes/${classId}/invites`, {
+    const inv = await (await api.post(`/api/classes/${classId}/invites/link`, {
       headers: { authorization: `Bearer ${token}` }, data: {},
     })).json();
+    const linkToken = new URL(String((inv as { url: string }).url), BASE).hash.slice(1);
+    expect(linkToken, 'ссылка обязана нести токен во фрагменте').not.toBe('');
     const email = `e2rep${Date.now()}@x.io`;
-    const reg = await api.post('/api/auth/register', {
-      data: { firstName: studentFirst, lastName: 'Тест', email, password: 'Secret1234', code: (inv as { code: string }).code },
+    const reg = await api.post('/api/invitations/register', {
+      data: { token: linkToken, firstName: studentFirst, lastName: 'Тест', email, password: 'Secret1234' },
     });
     expect(reg.ok(), 'the student registered').toBe(true);
     const studentToken = String((await reg.json()).accessToken as string);

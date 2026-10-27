@@ -23,14 +23,27 @@ async function apiLogin(): Promise<string> {
   return (await r.json()).accessToken as string;
 }
 
-/** Register a student through the API only (no policy accept) → returns creds. */
+/** токен из фрагмента ссылки-приглашения (сервер кладёт его только в адрес, наружу больше nowhere) */
+const tokenOf = (url: string) => new URL(url, BASE).hash.slice(1);
+
+/**
+ * Аккаунт ученика ТОЛЬКО через API (без принятия документов) → creds остаются в closure.
+ *
+ * С 2026-10-27 это `POST /api/invitations/register` по одноразовой ссылке: прежний
+ * `/api/auth/register` с кодом класса отвечает 410. Свойство, ради которого существует хелпер,
+ * то же и то же по причине — отметку о согласии ставит ВТОРОЙ вызов экрана (`acceptPolicy`),
+ * а не регистрация, поэтому аккаунт, заведённый этим хелпером, строки принятия не имеет и
+ * попадает на калитку документов.
+ */
 async function apiRegisterNoAccept(tok: string, classId: string, email: string): Promise<void> {
-  const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites`, {
+  const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites/link`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` }, body: '{}',
   })).json();
-  const r = await fetch(`${BASE}/api/auth/register`, {
+  const r = await fetch(`${BASE}/api/invitations/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ firstName: 'Policy', lastName: 'Test', email, password: 'Secret1234', code: inv.code }),
+    body: JSON.stringify({
+      token: tokenOf(inv.url), firstName: 'Policy', lastName: 'Test', email, password: 'Secret1234',
+    }),
   });
   if (!r.ok) throw new Error(`api register ${r.status}`);
 }
@@ -38,40 +51,43 @@ async function apiRegisterNoAccept(tok: string, classId: string, email: string):
 test.describe.serial('legal consent (Phase 2)', () => {
   const stamp = Date.now();
   let classId = '';
-  let code = '';
+  let link = '';
 
-  test('setup: class + invite', async () => {
+  test('setup: class + invitation link', async () => {
     const tok = await apiLogin();
     const cls = await (await fetch(`${BASE}/api/classes`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` },
       body: JSON.stringify({ name: `E2E Политика ${stamp}`, description: '', color: '#0ea5a5' }),
     })).json();
     classId = cls.id as string;
-    const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites`, {
+    const inv = await (await fetch(`${BASE}/api/classes/${classId}/invites/link`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` }, body: '{}',
     })).json();
-    code = inv.code as string;
-    expect(classId && code).toBeTruthy();
+    link = String(inv.url as string);
+    expect(classId && link && tokenOf(link)).toBeTruthy();
   });
 
-  test('registration step 2 requires the consent checkbox', async ({ browser }) => {
+  test('registration requires the consent checkbox', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto('/register');
-    await page.getByTestId('reg-code').fill(code);
-    await page.getByTestId('reg-email').fill(`polA${stamp}@x.io`);
-    await page.getByTestId('reg-password').fill('Secret1234');
-    await page.getByTestId('register-step1').click();
-    await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('reg-first').fill('Политика');
-    await page.getByTestId('reg-last').fill('Тест');
+    await page.goto(`/join#${tokenOf(link)}`);
+    await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('join-first').fill('Политика');
+    await page.getByTestId('join-last').fill('Тест');
+    await page.getByTestId('join-email').fill(`polA${stamp}@x.io`);
+    await page.getByTestId('join-password').fill('Secret1234');
     // submit WITHOUT consent → blocked with a localized message, no login
-    await page.getByTestId('register-submit').click();
-    await expect(page.getByTestId('reg-error')).toBeVisible({ timeout: 5_000 });
+    await page.getByTestId('join-register').click();
+    await expect(page.getByTestId('join-error')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('join-error')).toContainText(/примите.*соглашение|accept.*(policy|terms)|qabul/i, { timeout: 5_000 });
     await expect(page.getByTestId('home-title')).toHaveCount(0);
+    await expect(page.getByTestId('join-done-text')).toHaveCount(0);
     // now accept the checkbox → the account is created and the app opens
-    await page.getByTestId('reg-consent').check();
-    await page.getByTestId('register-submit').click();
+    await page.getByTestId('join-consent').check();
+    await page.getByTestId('join-register').click();
+    await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+    // отказ не израсходовал ссылку: членство появилось с первой же успешной отправки
+    await page.goto('/');
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
     await ctx.close();
   });

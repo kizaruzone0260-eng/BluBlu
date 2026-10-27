@@ -4,7 +4,7 @@
  *   pnpm demo:check -- --base https://xxxx.trycloudflare.com [--livekit wss://…livekit.cloud]
  *
  * C.3 — the check builds ALL of its own fixtures through the public API
- * (class → invite code → student → lesson → notes) and cleans up after
+ * (class → invitation link → student → lesson → notes) and cleans up after
  * itself (end lesson, archive class, delete the test note). It does NOT
  * depend on seeded demo data beyond the single teacher login.
  *
@@ -85,15 +85,20 @@ async function main() {
   const noteDel = await req(teacher, 'DELETE', `/api/notes/${note.id}`);
   ok('delete note', noteDel.status === 200);
 
-  // student via fresh one-time invite code
-  const invite = await json(await req(teacher, 'POST', `/api/classes/${cls.id}/invites`, { ttlDays: 1 }));
-  ok('create invite code', Boolean(invite?.code), invite?.code);
+  // student via a fresh one-time INVITATION LINK (приём по коду класса выведен 2026-10-27:
+  // POST /api/classes/:id/invites и /api/auth/register отвечают 410; токен живёт во фрагменте
+  // ссылки, а `/api/invitations/register` создаёт аккаунт, добавляет в класс и выдаёт сессию)
+  const invite = await json(await req(teacher, 'POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 1 }));
+  const inviteToken = (invite?.url ?? '').split('#')[1] ?? '';
+  ok('create invite link', Boolean(inviteToken), `${(invite?.id ?? '').slice(0, 8)}`);
   const stuEmail = `check${stamp}@demo.invalid`;
-  const reg = await fetch(`${base}/api/auth/register`, {
+  const reg = await fetch(`${base}/api/invitations/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ firstName: 'Проверочный', lastName: 'Демо', email: stuEmail, password: 'Check12345', code: invite.code }),
+    body: JSON.stringify({
+      token: inviteToken, firstName: 'Проверочный', lastName: 'Демо', email: stuEmail, password: 'Check12345',
+    }),
   });
-  ok('student registers with the code', reg.status === 200 || reg.status === 201, `status ${reg.status}`);
+  ok('student registers with the link', reg.status === 200 || reg.status === 201, `status ${reg.status}`);
   const student = (await json(reg))?.accessToken;
 
   // ── lesson ─────────────────────────────────────────────────────────────────

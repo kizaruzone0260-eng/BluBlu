@@ -7,8 +7,9 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeInviteLink, registerViaLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
+import { env } from '../../src/env.js';
 import { classes, users } from '../../src/db/schema.js';
 import { hashPassword } from '../../src/lib/password.js';
 import { DEFAULT_LOCALE } from '@klass/shared';
@@ -20,6 +21,7 @@ suite('language storage and migration 0024 (task 1)', () => {
   let t: TestDB;
   let app: FastifyInstance;
   let teacherTok = '';
+  let teacherAccess = '';
   let teacherId = '';
   let classId = '';
   const PW = 'Passw0rd123';
@@ -35,26 +37,35 @@ suite('language storage and migration 0024 (task 1)', () => {
     const [cls] = await t.db.insert(classes).values({ teacherId, name: 'Класс языка' }).returning();
     classId = cls!.id;
     const r = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email: 'langt@x.io', password: PW } });
-    teacherTok = `Bearer ${r.json().accessToken}`;
+    teacherAccess = r.json().accessToken as string;
+    teacherTok = `Bearer ${teacherAccess}`;
+    // маршрут ссылки не собирает URL без публичного адреса (503) — фикстуре нужен настоящий адрес
+    env.PUBLIC_URL = 'http://127.0.0.1:3123';
   });
   afterAll(async () => { await app?.close(); await t?.sql.end(); });
 
-  /** a fresh invite code, through the real endpoint (the table stores only its hash) */
-  async function code(): Promise<string> {
-    const r = await app.inject({ method: 'POST', url: `/api/classes/${classId}/invites`, headers: { authorization: teacherTok }, payload: {} });
-    expect(r.statusCode, `invite ${r.statusCode}`).toBe(201);
-    return String(((await r.json()) as { code: string }).code);
-  }
-  async function register(payload: Record<string, unknown>) {
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: payload as object });
-    expect(r.statusCode, `register ${JSON.stringify(await r.json())}`).toBe(200);
-    return r.json() as { accessToken: string; user: { locale: string; localeExplicit?: boolean } };
+  /*
+   * 2026-10-27: способ регистрации ученика — прежний восьмизначный код класса — выведен из продукта, и
+   * фикстура переехала на живую регистрацию по одноразовой ссылке. Проверяется здесь ровно то же,
+   * что и раньше: язык, которого никто не выбирал, остаётся продуктовким default с
+   * `localeExplicit: false`, а клик по языку ДО создания аккаунта — это выбор, и он должен дойти
+   * до строки. Тот баг, из-за которого этот тест вообще появился, жил в `registerStudentByCode`;
+   * теперь его сторожит `registerStudentByInviteLink` — единственная живая ветка, где язык выбирает
+   * сам человек. Аккаунт, который создаёт учитель, языка не спрашивает вовсе (его нет даже в схеме
+   * `studentCreateSchema`), поэтому здесь он не проверяется: проверять было бы нечего.
+   */
+  /** свежая ссылка на каждого ученика: она одноразовая, как и был код */
+  const linkToken = () => makeInviteLink(app, teacherAccess, classId).then((l) => l.token);
+  async function register(payload: { firstName: string; lastName: string; email: string; password: string; locale?: string }) {
+    const r = await registerViaLink(app, await linkToken(), payload);
+    expect(r.statusCode, `register ${r.body}`).toBe(200);
+    return r.json as unknown as { accessToken: string; user: { locale: string; localeExplicit?: boolean } };
   }
   const email = () => `stu${Math.random().toString(36).slice(2, 10)}@x.io`;
 
   it('an account created without a language gets the product default, marked as not chosen', async () => {
     const mail = email();
-    const j = await register({ firstName: 'Без', lastName: 'Выбора', email: mail, password: PW, code: await code() });
+    const j = await register({ firstName: 'Без', lastName: 'Выбора', email: mail, password: PW });
     expect(j.user.locale, 'registration no longer takes the old Russian default').toBe(DEFAULT_LOCALE);
     expect(j.user.localeExplicit, 'nobody chose anything here').toBe(false);
     const [row] = await t.db.select({ locale: users.locale, explicit: users.localeExplicit })
@@ -63,13 +74,13 @@ suite('language storage and migration 0024 (task 1)', () => {
   });
 
   it('a language picked on the register screen lands in the account and counts as chosen', async () => {
-    const j = await register({ firstName: 'Узбек', lastName: 'Тил', email: email(), password: PW, code: await code(), locale: 'uz' });
+    const j = await register({ firstName: 'Узбек', lastName: 'Тил', email: email(), password: PW, locale: 'uz' });
     expect(j.user.locale).toBe('uz');
     expect(j.user.localeExplicit, 'a click on a language IS a choice').toBe(true);
   });
 
   it('PATCH /api/me/profile marks the language chosen only when it actually changes', async () => {
-    const j = await register({ firstName: 'Смена', lastName: 'Теста', email: email(), password: PW, code: await code() });
+    const j = await register({ firstName: 'Смена', lastName: 'Теста', email: email(), password: PW });
     const tok = `Bearer ${j.accessToken}`;
     const a = { authorization: tok };
     const meRes = await app.inject({ method: 'GET', url: '/api/me', headers: a });
@@ -100,7 +111,7 @@ suite('language storage and migration 0024 (task 1)', () => {
    * body and absent means "leave the column alone".
    */
   it('a profile PATCH without a locale changes the rest of the profile and nothing else', async () => {
-    const j = await register({ firstName: 'Час', lastName: 'Пояс', email: email(), password: PW, code: await code() });
+    const j = await register({ firstName: 'Час', lastName: 'Пояс', email: email(), password: PW });
     const a = { authorization: `Bearer ${j.accessToken}` };
     // step 1 — the person's choice arrives (this is the carry-over the app does on login)
     const pick = await app.inject({ method: 'PATCH', url: '/api/me/profile', headers: a, payload: { name: 'Час', locale: 'uz', tz: 'Asia/Tashkent' } });

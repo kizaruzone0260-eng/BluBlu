@@ -75,7 +75,14 @@ export async function teacherToken(api: Ctx): Promise<string> {
   throw new Error('teacher login failed');
 }
 
-/** class + live lesson + a fresh invite code, all through the API */
+/**
+ * Класс + живой урок + ОДНА одноразовая ссылка-приглашение — всё через API.
+ *
+ * Прежний вариант выпускал восьмизначный код (`POST /api/classes/:id/invites`); способ выведен из
+ * продукта 2026-10-27, и маршрут отвечает 410. Ссылка — то, что осталось: сервер отдаёт URL, где
+ * токен живёт в фрагменте (`/join#<токен>`), и расходует его на первом удачном входе. Поэтому
+ * на ВТОРОГО ученика нужна ВТОРАЯ ссылка — см. `makeLink`.
+ */
 export async function makeLesson(api: Ctx, token: string, name: string) {
   const cls = await (await api.post('/api/classes', {
     headers: { authorization: `Bearer ${token}` },
@@ -87,10 +94,20 @@ export async function makeLesson(api: Ctx, token: string, name: string) {
   });
   expect(start.status()).toBe(201);
   const sessionId = String((await start.json()).id as string);
-  const inv = await (await api.post(`/api/classes/${classId}/invites`, {
+  const link = await makeLink(api, token, classId);
+  return { classId, className: String((cls as { name: string }).name), sessionId, linkUrl: link.url, inviteToken: link.token };
+}
+
+/** Выпустить ссылку для класса и вернуть её адрес плюс токен из фрагмента. */
+export async function makeLink(api: Ctx, token: string, classId: string): Promise<{ url: string; token: string }> {
+  const r = await api.post(`/api/classes/${classId}/invites/link`, {
     headers: { authorization: `Bearer ${token}` }, data: {},
-  })).json();
-  return { classId, className: String((cls as { name: string }).name), sessionId, inviteCode: String((inv as { code: string }).code) };
+  });
+  expect(r.status(), `учитель обязан уметь выпускать ссылку-приглашение: ${r.status()}`).toBe(201);
+  const url = String((await r.json()).url as string);
+  // ссылка абсолютная (её собирает `PUBLIC_URL` сервера), но база подставлена на всякий случай:
+  // токен обязан читаться и из относительного адреса, иначе хелпер молча отдаст пустой токен
+  return { url, token: new URL(url, BASE).hash.slice(1) };
 }
 
 /**
@@ -124,17 +141,36 @@ export async function loginUi(page: Page, email: string, password: string): Prom
   throw new Error('login failed after retries');
 }
 
-export async function registerStudent(page: Page, code: string, first: string, email: string): Promise<void> {
-  await page.goto('/register');
-  await page.getByTestId('reg-code').fill(code);
-  await page.getByTestId('reg-email').fill(email);
-  await page.getByTestId('reg-password').fill('Secret1234');
-  await page.getByTestId('register-step1').click();
-  await expect(page.getByTestId('reg-first')).toBeVisible({ timeout: 20_000 });
-  await page.getByTestId('reg-first').fill(first);
-  await page.getByTestId('reg-last').fill('Тест');
-  await page.getByTestId('reg-consent').check();
-  await page.getByTestId('register-submit').click();
+/**
+ * Ученик, который регистрируется САМ по одноразовой ссылке, и остаётся в приложении.
+ *
+ * Принимает и полный адрес ссылки (`/join#<токен>`, который отдаёт сервер), и голый токен — спеки
+ * держат и то, и другое. Переход строится от baseURL, а не склейкой хоста: адрес ссылки сервер
+ * собирает из `PUBLIC_URL`, и в стек он приходит абсолютным.
+ *
+ * Почему именно ссылка, а не аккаунт от учителя: такой ученик сам задаёт пароль, и сервер НЕ
+ * поднимает `must_change_password` — то есть вход сразу ведёт на «Главную», и ни один нижний
+ * тест не обязан проходить через экран смены пароля. Поля `join-send-code` / `join-email-code`
+ * здесь не трогаются: они рисуются только при включённом `EMAIL_PROVIDER`, а в e2e-стеке он
+ * выключен (см. `useFeatures`).
+ *
+ * Экран после удачной регистрации сам ведёт человека в приглашённый класс (`/classes/<id>`), а не
+ * на «Главную», поэтому Home открывается следующим шагом — иначе `home-title` не дождаться.
+ */
+export async function registerStudent(page: Page, linkUrlOrToken: string, first: string, email: string): Promise<void> {
+  const token = linkUrlOrToken.includes('#') ? linkUrlOrToken.split('#')[1] : linkUrlOrToken;
+  expect(token, 'ссылка-приглашение обязана нести токен во фрагменте').not.toBe('');
+  await page.goto(`/join#${token}`);
+  await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId('join-first').fill(first);
+  await page.getByTestId('join-last').fill('Тест');
+  await page.getByTestId('join-email').fill(email);
+  await page.getByTestId('join-password').fill('Secret1234');
+  await page.getByTestId('join-consent').check();
+  await page.getByTestId('join-register').click();
+  await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 25_000 });
+  await expect(page).toHaveURL(/\/classes\//, { timeout: 25_000 });
+  await page.goto('/');
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 25_000 });
 }
 

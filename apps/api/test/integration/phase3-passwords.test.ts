@@ -16,17 +16,14 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeInviteLink, registerViaLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
-import { users, classes, classMembers, inviteCodes, refreshTokens, auditLog } from '../../src/db/schema.js';
+import { users, classes, classMembers, refreshTokens, auditLog } from '../../src/db/schema.js';
 import { hashPassword, TEMP_ALPHABET, TEMP_PASSWORD_LENGTH } from '../../src/lib/password.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
 const PW = 'Passw0rd123';
 
 suite('Part 3: passwords & sessions', () => {
@@ -47,9 +44,11 @@ suite('Part 3: passwords & sessions', () => {
   beforeAll(async () => {
     t = await preparedDb(TEST_DATABASE_URL);
     env.RATE_LOGIN_MAX = 500; // many intentional logins in this file — relax the per-IP cap
+    // ссылка-приглашение обязана собираться из публичного адреса, иначе маршрут отвечает 503
+    env.PUBLIC_URL = 'https://p3.example';
     app = await buildApp(t.db);
   });
-  afterAll(async () => { await app?.close(); await t?.sql.end(); });
+  afterAll(async () => { env.PUBLIC_URL = ''; await app?.close(); await t?.sql.end(); });
 
   it('/api/me + login expose mustChangePassword=false for a normal account', async () => {
     const te = await makeTeacher(t.sql, `p3a${Date.now()}@x.io`);
@@ -175,20 +174,24 @@ suite('Part 3: passwords & sessions', () => {
     expect(cleared).toBe(true);
   });
 
-  it('a fresh invite-code registration is NOT flagged mustChangePassword (only resets are)', async () => {
+  it('a fresh self-registration (invitation link) is NOT flagged mustChangePassword (only resets are)', async () => {
     const te = await makeTeacher(t.sql, `p3reg${Date.now()}@x.io`);
+    const l = await loginAs(te.email, PW);
     const [cls] = await t.db.insert(classes).values({ teacherId: te.id, name: 'Reg' }).returning();
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({
-      classId: cls!.id, codeHash: hashInviteCode(code, process.env.JWT_SECRET!),
-      createdBy: te.id, expiresAt: new Date(Date.now() + 86400000),
-    });
-    const r = await app.inject({
-      method: 'POST', url: '/api/auth/register',
-      payload: { firstName: 'New', lastName: 'Pupil', email: `p3nu${Date.now()}@x.io`, password: 'Secret12345', code },
+    /*
+     * Прежняя фикстура выпускала восьмизначный код класса и регистрировалась через
+     * `POST /api/auth/register` — оба выведены из продукта (2026-10-27). Смысл проверки не изменился:
+     * аккаунт, который человек завёл сам и пароль для которого выбрал сам, НЕ обязан менять его при
+     * первом входе; флаг поднимается только после сброса учителем или скриптом владельца. Поэтому
+     * путь теперь тот же, что у браузера: ссылка класса (`makeInviteLink`) и публичная регистрация
+     * по ней (`registerViaLink`).
+     */
+    const link = await makeInviteLink(app, l.accessToken, cls!.id);
+    const r = await registerViaLink(app, link.token, {
+      firstName: 'New', lastName: 'Pupil', email: `p3nu${Date.now()}@x.io`, password: 'Secret12345',
     });
     expect(r.statusCode).toBe(200);
-    expect(r.json().user.mustChangePassword).toBe(false);
+    expect((r.json.user as { mustChangePassword: boolean }).mustChangePassword).toBe(false);
   });
 
   it('users table: must_change_password defaults false (column exists)', async () => {

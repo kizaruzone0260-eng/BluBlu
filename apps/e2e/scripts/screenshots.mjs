@@ -137,14 +137,20 @@ if (!showcase) {
 }
 
 // ── chat fixtures (item 8): a student + a few exchanged messages ─────────────
-const inv = await api('POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 });
+// Ученик заводится одноразовой ССЫЛКОЙ-приглашением: приём в класс по коду выведен из продукта
+// 2026-10-27 (`POST /api/classes/:id/invites` и `/api/auth/register` отвечают 410). Ссылку просим
+// только когда аккаунта ещё нет — она живёт до первого удачного входа и расходует себя сама.
 const chatStuEmail = `shots${cls.id.slice(0, 6)}@x.io`;
 let stuToken = null;
 const existing = await api('GET', '/api/classes/' + cls.id + '/members');
 if (!existing?.some?.((m) => m.email === chatStuEmail)) {
-  const reg = await (await fetch(`${BASE}/api/auth/register`, {
+  const inv = await api('POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 30 });
+  const reg = await (await fetch(`${BASE}/api/invitations/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ firstName: 'Азиза', lastName: 'Каримова', email: chatStuEmail, password: 'ShotPass123', code: inv.code }),
+    body: JSON.stringify({
+      token: (inv?.url ?? '').split('#')[1] ?? '',
+      firstName: 'Азиза', lastName: 'Каримова', email: chatStuEmail, password: 'ShotPass123',
+    }),
   })).json().catch(() => null);
   stuToken = reg?.accessToken ?? null;
 } else {
@@ -257,23 +263,30 @@ for (const locale of locales) {
         await lp.waitForTimeout(400);
         await lp.screenshot({ path: path.join(outDir, `login-${locale}-${width}-${theme}.png`) });
         count++;
-        // item 9 — registration step 1 (fresh code; check-code never burns it)
+        /*
+         * item 9 — регистрация. Приём в класс по восьмизначному коду выведен из продукта
+         * (2026-10-27), поэтому снимаются два ВЫЖИВШИХ экрана: объяснение «как попасть в класс»
+         * по прежнему адресу `/register` (закладочки школы живут) и настоящая форма регистрации
+         * по одноразовой ссылке `/join#<токен>` — это ровно та половинка, где ученик набирает
+         * имя, почту и пароль. Предпросмотр ссылки её не расходует: класс показывается до
+         * любого расхода токена, поэтому один и тот же адрес можно снять в трёх языках.
+         */
         if (!only || only.includes('register') || only.includes('register2')) {
-          const regInvite = await api('POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 });
-          await lp.goto(`${BASE}/register`);
-          await lp.waitForTimeout(300);
-          await lp.getByTestId('reg-code').fill(regInvite.code);
-          await lp.getByTestId('reg-email').fill('demo.student@example.com');
-          await lp.getByTestId('reg-password').fill('DemoPass123');
+          const regInvite = await api('POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 30 });
+          const regToken = (regInvite?.url ?? '').split('#')[1] ?? '';
           if (!only || only.includes('register')) {
+            await lp.goto(`${BASE}/register`);
+            await lp.waitForTimeout(300);
             await lp.screenshot({ path: path.join(outDir, `register-${locale}-${width}-${theme}.png`) });
             count++;
           }
           if (!only || only.includes('register2')) {
-            await lp.getByTestId('register-step1').click();
-            await lp.getByTestId('reg-first').waitFor({ timeout: 8000 }).catch(() => undefined);
-            await lp.getByTestId('reg-first').fill('Азиза');
-            await lp.getByTestId('reg-last').fill('Каримова');
+            await lp.goto(`${BASE}/join#${regToken}`);
+            await lp.getByTestId('join-first').waitFor({ timeout: 8000 }).catch(() => undefined);
+            await lp.getByTestId('join-first').fill('Азиза');
+            await lp.getByTestId('join-last').fill('Каримова');
+            await lp.getByTestId('join-email').fill('demo.student@example.com');
+            await lp.getByTestId('join-password').fill('DemoPass123');
             await lp.waitForTimeout(300);
             await lp.screenshot({ path: path.join(outDir, `register2-${locale}-${width}-${theme}.png`) });
             count++;

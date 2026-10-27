@@ -7,17 +7,13 @@
  * gate. Two tenants: A (victim) / B (attacker).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { and, eq } from 'drizzle-orm';
 import { WebSocket } from 'ws';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes } from '../../src/db/schema.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
 
 /** minimal multipart/form-data body builder (text fields only, optional one file) */
 function mp(fields: Record<string, string>, file?: { name: string; filename: string; type: string; data: Buffer }): { ct: string; body: Buffer } {
@@ -40,11 +36,17 @@ suite('Phase 1 adversarial (topics / ics / xss / ws-origin)', () => {
   let classA = '', classB = '', teacherAId = '', studentAId = '';
   let topicA = '', eventA = '';
 
+  /**
+   * Ученик в классе (2026-10-27). Прежняя фикстура выпускала код класса и регистрировалась через
+   * `POST /api/auth/register`; приём по коду выведен из продукта, а этому файлу от ученика нужно
+   * только «аккаунт вошёл и состоит вот в этом классе» — сам тест про чужие темы, чужой ICS, XSS в
+   * текстах и Origin у WebSocket. Поэтому `makeStudent` (аккаунт + членство) и `loginToken` (вход
+   * тем же маршрутом, что у браузера).
+   */
   async function enroll(email: string, classId: string, who: string): Promise<string> {
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({ classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacherAId, expiresAt: new Date(Date.now() + 86400000) });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email, password: 'Secret1234', code } });
-    tok[who] = r.json().accessToken; return r.json().user.id as string;
+    const stu = await makeStudent(t.sql, { classId, email });
+    tok[who] = await loginToken(app, stu.email, stu.password);
+    return stu.id;
   }
   const a = (who: string) => ({ authorization: `Bearer ${tok[who]}` });
 

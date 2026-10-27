@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
-  classCreateSchema, classUpdateSchema, joinByCodeSchema, memberAddSchema, memberLookupSchema,
-  memberMoveSchema, memberResetPasswordSchema, passwordIssueCode,
+  classCreateSchema, classUpdateSchema, memberAddSchema, memberLookupSchema,
+  memberMoveSchema, memberResetPasswordSchema, passwordIssueCode, studentCreateSchema,
 } from '@klass/shared';
 import { errorBody } from '../lib/requestId.js';
 import type { DB } from '../db/index.js';
@@ -11,9 +11,8 @@ import {
   listMembers, removeMember, addStudentDirectly, addStudentByEmail, findStudentByEmail, moveMember,
 } from '../services/classes.js';
 import { registerInviteRoutes } from './invites.js';
-import { redeemInviteCode } from '../services/invites.js';
-import { normalizeInviteCode } from '../lib/invite.js';
-import { throttleCheck, throttleRecordAttempt, throttleReset } from '../lib/throttle.js';
+import { retiredEnrollment } from '../lib/retired.js';
+import { createStudentByTeacher } from '../services/auth.js';
 import { classMembers } from '../db/schema.js';
 import { and, eq } from 'drizzle-orm';
 import { audit } from '../services/audit.js';
@@ -73,28 +72,14 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     return { ok: true };
   });
 
-  // Students: join an additional class with a fresh code (already logged in)
-  app.post('/api/join-by-code', { preHandler: app.authenticate }, async (req, reply) => {
-    if (req.user!.role !== 'student') return reply.code(403).send({ error: 'forbidden' });
-    const parsed = joinByCodeSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'invalidInput' });
-    const key = `code:${req.user!.id}:${req.ip}`;
-    const gate = throttleCheck(key);
-    if (!gate.allowed) {
-      return reply.code(429).header('retry-after', String(gate.retryAfterSec)).send({ error: 'codeRateLimited' });
-    }
-    throttleRecordAttempt(key);
-    const code = normalizeInviteCode(parsed.data.code);
-    const redeem = await redeemInviteCode(db, code, req.user!.id);
-    if (!redeem.ok || !redeem.classId) {
-      return reply.code(400).send({ error: 'invalidCode' });
-    }
-    throttleReset(key);
-    await db.insert(classMembers)
-      .values({ classId: redeem.classId, userId: req.user!.id })
-      .onConflictDoNothing();
-    return { classId: redeem.classId };
-  });
+  /*
+   * POST /api/join-by-code — «у меня уже есть аккаунт, вот код моего второго класса»
+   * (выведен 2026-10-27). Маршрут оставлен одной строкой ради ответа 410: ученик, который
+   * когда-то так присоединялся, имеет право на предложение «попросите ссылку-приглашение у
+   * учителя или попросите добавить вас в класс», а не на пустоту. Расходовать коды больше
+   * нечем: `redeemInviteCode` из кодовой базы удалён.
+   */
+  app.post('/api/join-by-code', retiredEnrollment);
 
   // Members management (teacher of the class)
   app.get('/api/classes/:id/members', { preHandler: app.authenticateTeacher }, async (req, reply) => {
@@ -103,6 +88,55 @@ export async function classRoutes(app: FastifyInstance, opts: { db: DB }) {
     const cls = await needClass(db, req, reply, p.data.id);
     if (!cls) return;
     return listMembers(db, cls.id);
+  });
+
+  /**
+   * Аккаунт ученика, который создаёт учитель (2026-10-27, «упростить приём в класс»).
+   *
+   * Зачем он появился. Прежний экран умел только найти УЖЕ существующий аккаунт по почте, и на
+   * адрес новичка отвечал «аккаунт не найден, пусть создаст сам» — тупик, в котором ребёнок
+   * застревает без ссылки и без терпения, а у учителя в руках уже есть имя, фамилия и почта.
+   * Теперь тот же экран делает и второе: заводит аккаунт и добавляет его в класс одним вызовом.
+   *
+   * Порядок проверок — владение ДО разбора тела. Не педантизм, а два разных свойства сразу:
+   * чужой класс обязан оставаться 404 при любом теле (§7, и иначе маршрут становится
+   * «есть ли такой класс» оракулом), и argon2 не должен оплачиваться запросом, который всё равно
+   * ни на что не имел права.
+   *
+   * Чего здесь сознательно нет:
+   *  • сессии. Сервис не выдаёт токен, и ответ его не содержит: учитель заводит аккаунт, а не
+   *    становится учеником — вход от его имени чужим аккаунтом был бы дырой, а не удобством;
+   *  • пароля в ответе и в журнале. Его набрал учитель, он его и помнит; копия в JSON осела бы в
+   *    истории запросов браузера и в логах, а в `audit_log` от неё был бы только вред;
+   *  • `classId` в теле. Класс берётся из пути, и полномочия на него проверяет `needClass`.
+   *
+   * Занятая почта — 409 `emailTaken`, а не 400: это не «неверно заполнена форма», а «аккаунт уже
+   * есть», и у экрана есть отдельный честный путь для него — показать найденного ученика и
+   * предложить ДОБАВИТЬ его прежним подтверждением, не обнуляя введённое и не трогая чужой пароль.
+   */
+  app.post('/api/classes/:id/students', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const p = uuidParam.safeParse(req.params);
+    if (!p.success) return reply.code(404).send({ error: 'notFound' });
+    const cls = await needClass(db, req, reply, p.data.id);
+    if (!cls) return;
+    const parsed = studentCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      // та же общая расшифровка отказа пароля, что у регистрации по ссылке и у сброса:
+      // «короткий», «слишком простой» и «из списка распространённых» — разные советы человеку
+      const pw = passwordIssueCode(parsed.error.issues.find((i) => i.path[0] === 'password'));
+      if (pw) return reply.code(400).send(errorBody(req.id, pw));
+      return reply.code(400).send(errorBody(req.id, 'invalidInput'));
+    }
+    const res = await createStudentByTeacher(db, cls.id, parsed.data);
+    if (!res.ok) return reply.code(409).send(errorBody(req.id, 'emailTaken'));
+    audit(db, req.user!.id, 'student_create', { classId: cls.id, userId: res.user.id, source: 'teacher' });
+    return reply.code(201).send({
+      ok: true,
+      userId: res.user.id,
+      name: `${res.user.name} ${res.user.lastName}`.trim(),
+      email: res.user.email,
+      mustChangePassword: res.user.mustChangePassword,
+    });
   });
 
   /**

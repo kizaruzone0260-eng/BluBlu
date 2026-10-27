@@ -78,7 +78,9 @@ test('lesson layout B: board as the main stage with a floating camera (real RTC)
     test.skip(true, 'LiveKit not reachable — layout RTC test needs LIVEKIT_* env');
     return;
   }
-  const inv = await (await api.post(`/api/classes/${cls.id}/invites`, { headers: H, data: {} })).json();
+  const inv = await (await api.post(`/api/classes/${cls.id}/invites/link`, { headers: H, data: {} })).json();
+  // токен живёт во фрагменте ссылки; приём по коду класса выведен из продукта 2026-10-27
+  const joinToken = String((inv as { url: string }).url).split('#')[1];
 
   const ctxT = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 800 } });
   const pT = await ctxT.newPage();
@@ -87,15 +89,17 @@ test('lesson layout B: board as the main stage with a floating camera (real RTC)
 
   const ctxS = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 800 } });
   const pS = await ctxS.newPage();
-  await pS.goto('/register');
-  await pS.getByTestId('reg-code').fill(inv.code as string);
-  await pS.getByTestId('reg-email').fill(`e2elay${Date.now()}@x.io`);
-  await pS.getByTestId('reg-password').fill('Secret1234');
-  await pS.getByTestId('register-step1').click();
-  await pS.getByTestId('reg-first').fill('Раскладка');
-  await pS.getByTestId('reg-last').fill('Тест');
-  await pS.getByTestId('reg-consent').check();
-  await pS.getByTestId('register-submit').click();
+  await pS.goto(`/join#${joinToken}`);
+  await expect(pS.getByTestId('join-first')).toBeVisible({ timeout: 20_000 });
+  await pS.getByTestId('join-first').fill('Раскладка');
+  await pS.getByTestId('join-last').fill('Тест');
+  await pS.getByTestId('join-email').fill(`e2elay${Date.now()}@x.io`);
+  await pS.getByTestId('join-password').fill('Secret1234');
+  await pS.getByTestId('join-consent').check();
+  await pS.getByTestId('join-register').click();
+  await expect(pS.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+  await expect(pS).toHaveURL(/\/classes\//, { timeout: 20_000 });
+  await pS.goto('/');
   await expect(pS.getByTestId('home-title')).toBeVisible({ timeout: 20_000 }); // logged in + token set
   await joinWithCam(pS, cls.id);
   // grid first: both cameras visible as tiles

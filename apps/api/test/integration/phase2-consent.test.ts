@@ -6,26 +6,29 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { classes, inviteCodes, policyAcceptances } from '../../src/db/schema.js';
-import { hashInviteCode } from '../../src/lib/invite.js';
+import { classes, policyAcceptances } from '../../src/db/schema.js';
 import { POLICY_VERSION } from '@klass/shared';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
-const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const genCode = () => Array.from({ length: 8 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('');
 
 suite('Phase 2 consent', () => {
   let t: TestDB; let app: FastifyInstance;
   let teacherId = ''; let classId = '';
 
+  /*
+   * Ученик фикстуры — `makeStudent` + `loginToken` (2026-10-27), после вывода приёма по
+   * восьмизначному коду класса. Выбор осознанный, и его надо беречь: `/api/me` считает
+   * `policyAccepted` по строке в `policy_acceptances`, а её у вставленного аккаунта нет — значит
+   * согласие ещё НЕ дано, ровно то и проверяет первый тест. При этом `makeStudent` проставляет
+   * `profile_completed_at`, и здесь это тоже правильно: экран согласия не про имя, тесту нужен
+   * свежий аккаунт без принятой политики, а не аккаунт, у которого профиль ещё не собран.
+   */
   async function newStudent(email: string): Promise<string> {
-    const code = genCode();
-    await t.db.insert(inviteCodes).values({ classId, codeHash: hashInviteCode(code, process.env.JWT_SECRET!), createdBy: teacherId, expiresAt: new Date(Date.now() + 86400000) });
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { firstName: 'Pupil', lastName: 'Test', email, password: 'Secret1234', code } });
-    return r.json().accessToken as string;
+    const stu = await makeStudent(t.sql, { classId, email });
+    return loginToken(app, stu.email, stu.password);
   }
   const bearer = (tok: string) => ({ authorization: `Bearer ${tok}` });
 

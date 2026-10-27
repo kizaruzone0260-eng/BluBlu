@@ -22,7 +22,7 @@
  */
 import { test, expect, request as pw, type Browser, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { loginUi, makeLesson, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
+import { loginUi, makeLink, makeLesson, registerStudent, stack, teacherToken, type Ctx } from './boardFixtures';
 import { openMore } from './controlBar';
 
 const BASE = `http://127.0.0.1:${stack.port}`;
@@ -64,19 +64,19 @@ test.describe('after lecture mode: devices come back (part 1)', () => {
     const stamp = Date.now();
     aEmail = `lrA${stamp}@x.io`; bEmail = `lrB${stamp}@x.io`; cEmail = `lrC${stamp}@x.io`;
     /*
-     * Код приглашения одноразовый (задача 9: он списывается на шаге имени), поэтому на каждого
-     * ученика — свой. Первая версия файла регистрировала троих по одному коду и падала на втором:
-     * шаг 1 честно отвечал `invalidCode`, а форма не переходила дальше.
+     * Ссылка-приглашение одноразовая (она списывается первым удачным входом), поэтому на каждого
+     * ученика — своя. Прежняя версия файла регистрировала троих по одному ВОСЬМИЗНАЧНОМУ КОДУ
+     * класса и падала на втором — тот же закон одноразовости, только код с 2026-10-27 выведен из
+     * продукта, и выпускать приходится ссылки (`POST /api/classes/:id/invites` теперь 410).
      */
-    const codes = [lesson.inviteCode];
+    const links = [lesson.linkUrl];
     for (let i = 0; i < 2; i++) {
-      const r = await api.post(`/api/classes/${classId}/invites`, { headers: { authorization: `Bearer ${token}` }, data: {} });
-      expect(r.status(), 'учитель обязан уметь выпускать новый одноразовый код').toBe(201);
-      codes.push(String((await r.json()).code as string));
+      const r = await makeLink(api, token, classId);
+      links.push(r.url);
     }
-    for (const [[email, name], code] of [[[aEmail, 'Анна'], codes[0]], [[bEmail, 'Борис'], codes[1]], [[cEmail, 'Вера'], codes[2]]] as const) {
+    for (const [[email, name], link] of [[[aEmail, 'Анна'], links[0]], [[bEmail, 'Борис'], links[1]], [[cEmail, 'Вера'], links[2]]] as const) {
       const p = await (await browser.newContext()).newPage();
-      await registerStudent(p, code, name, email);
+      await registerStudent(p, link, name, email);
       await p.context().close();
     }
   });

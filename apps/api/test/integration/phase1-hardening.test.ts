@@ -6,9 +6,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, loginToken, makeInviteLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
+import { classes } from '../../src/db/schema.js';
 import { signCb, verifyCb } from '../../src/services/botApi.js';
 import { createHmac } from 'node:crypto';
 import { hashPassword } from '../../src/lib/password.js';
@@ -114,19 +115,48 @@ suite('Phase 1в: refresh CSRF must trust the configured Origin, not Host', () =
 
 suite('Phase 1д: password policy on set, lax on login', () => {
   let t: TestDB; let app: FastifyInstance;
-  beforeAll(async () => { t = await preparedDb(TEST_DATABASE_URL); app = await buildApp(t.db); });
+  let teacherTok = ''; let classId = ''; let linkToken = '';
+  beforeAll(async () => {
+    t = await preparedDb(TEST_DATABASE_URL);
+    app = await buildApp(t.db);
+    /*
+     * 2026-10-27: регистрация по восьмизначному коду класса выведена, и «момент, когда пароль
+     * устанавливают» переехал на два живых входа — публичную регистрацию по одноразовой ссылке и
+     * аккаунт, который создаёт учитель. Проверяются ОБА: политика одна (`passwordPolicy` из
+     * shared), а мест, где её можно случайно ослабить, теперь два. Ссылке нужен PUBLIC_URL —
+     * маршрут без него не собирает URL и отвечает 503, это проверка контракта, а не придирка.
+     */
+    const te = await makeTeacher(t.sql, `pw-pol-${Date.now()}@x.io`);
+    teacherTok = await loginToken(app, te.email, te.password);
+    const [cls] = await t.db.insert(classes).values({ teacherId: te.id, name: 'Policy class' }).returning();
+    classId = cls!.id;
+    env.PUBLIC_URL = 'http://127.0.0.1:3123';
+    linkToken = (await makeInviteLink(app, teacherTok, classId)).token;
+  });
   afterAll(async () => { await app?.close(); await t?.sql.end(); });
 
+  const registerByLink = (email: string, password: string) => app.inject({
+    method: 'POST', url: '/api/invitations/register',
+    payload: { token: linkToken, firstName: 'A', lastName: 'B', email, password },
+  });
+  const createByTeacher = (email: string, password: string) => app.inject({
+    method: 'POST', url: `/api/classes/${classId}/students`, headers: { authorization: `Bearer ${teacherTok}` },
+    payload: { firstName: 'A', lastName: 'B', email, password },
+  });
+
   it('register rejects <10 with a translated code', async () => {
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register',
-      payload: { firstName: 'A', lastName: 'B', email: 'pw1@x.io', password: 'Short12', code: 'ABCDEFGH' } });
-    expect(r.statusCode).toBe(400);
-    expect(r.json().error).toBe('passwordTooShort');
+    for (const attempt of [registerByLink, createByTeacher]) {
+      const r = await attempt(`pw1-${Date.now()}@x.io`, 'Short12');
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error).toBe('passwordTooShort');
+    }
   });
   it('register rejects a common password', async () => {
-    const r = await app.inject({ method: 'POST', url: '/api/auth/register',
-      payload: { firstName: 'A', lastName: 'B', email: 'pw2@x.io', password: 'Password123', code: 'ABCDEFGH' } });
-    expect(r.json().error).toBe('passwordTooCommon');
+    for (const attempt of [registerByLink, createByTeacher]) {
+      const r = await attempt(`pw2-${Date.now()}@x.io`, 'Password123');
+      expect(r.statusCode).toBe(400);
+      expect(r.json().error).toBe('passwordTooCommon');
+    }
   });
   it('a legacy 8-char password can still LOG IN (login schema is lax)', async () => {
     const id = crypto.randomUUID();

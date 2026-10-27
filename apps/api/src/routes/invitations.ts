@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { invitePreviewSchema, inviteRegisterSchema, inviteJoinSchema, passwordIssueCode } from '@klass/shared';
+import { invitePreviewSchema, inviteRegisterSchema, inviteJoinSchema, passwordIssueCode, normalizeEmailCode } from '@klass/shared';
 import type { DB } from '../db/index.js';
+import type { EmailTransport } from '../services/email.js';
 import { errorBody } from '../lib/requestId.js';
 import { inviteJunkGate, noteInviteTokenHit, noteInviteTokenMiss } from '../lib/inviteThrottle.js';
 import { peekInviteLink, joinClassByInviteLink, inviteStateCode } from '../services/invites.js';
@@ -50,8 +51,18 @@ function touchesField(issues: readonly { path: readonly PropertyKey[] }[], field
   return issues.some((i) => i.path[0] === field);
 }
 
-export function invitationRoutes(db: DB): (app: FastifyInstance) => Promise<void> {
+export function invitationRoutes(db: DB, email: EmailTransport): (app: FastifyInstance) => Promise<void> {
   return async function routes(app) {
+    /*
+     * Требовать ли код из письма — СВОЙСТВО внедрённого транспорта, а не строка из env (тот же
+     * приём, что у `authRoutes` с 2026-10-16): тест получает настоящий тракт без подмены
+     * `process.env`, а живой процесс — ровно то, что настроил владелец. 2026-10-27 это переехало
+     * сюда вместе с самим подтверждением: после вывода регистрации по коду ссылка осталась
+     * единственным публичным способом завести аккаунт, и включатель почты обязан действовать
+     * именно на ней.
+     */
+    const requireEmailCode = email.provider !== 'none';
+
     /**
      * POST /api/invitations/preview — только показать класс и срок. НЕ расходывает: открытие
      * ссылки, перезагрузка страницы и предпросмотр в мессенджере обязаны оставлять приглашение
@@ -102,9 +113,15 @@ export function invitationRoutes(db: DB): (app: FastifyInstance) => Promise<void
       const gate = inviteJunkGate(req.ip);
       if (!gate.allowed) return blocked(reply, req.id, gate.retryAfterSec);
       const d = parsed.data;
+      // Часть F: при включённом подтверждении без кода из письма регистрация не случается — и это
+      // отдельный переводимый ответ, а не «неверные поля»: человеку важно понять, что письмо
+      // не пришло, а не что он ошибся в фамилии.
+      const emailCode = d.emailCode ? normalizeEmailCode(d.emailCode) : undefined;
+      if (requireEmailCode && !emailCode) return reply.code(400).send(errorBody(req.id, 'emailCodeRequired'));
       const result = await registerStudentByInviteLink(db, {
         token: d.token, firstName: d.firstName, lastName: d.lastName, email: d.email,
         password: d.password, locale: d.locale,
+        emailCode: requireEmailCode ? emailCode : undefined,
       });
       if (!result.ok) {
         req.log.warn(`invite register refused: reason=${result.error}`);
@@ -114,6 +131,11 @@ export function invitationRoutes(db: DB): (app: FastifyInstance) => Promise<void
         if (result.error === 'emailTaken') {
           noteInviteTokenHit(req.ip);
           return reply.code(409).send(errorBody(req.id, 'emailTaken'));
+        }
+        // «не тот код из письма» — одна формулировка на «не угадал», «истёк», «потолок попыток» и
+        // «уже списан»: различать их наружу незачем, а перебор по ответу становится заметным
+        if (result.error === 'emailCodeInvalid') {
+          return reply.code(400).send(errorBody(req.id, 'emailCodeInvalid'));
         }
         if (result.error.startsWith('invite')) {
           return refusedToken(req.ip, reply, req.id, result.error);

@@ -56,7 +56,7 @@ test.describe('raise hand and the floor (task 2Б)', () => {
     classId = lesson.classId; sessionId = lesson.sessionId;
     s1 = `hand1${Date.now()}@x.io`;
     const p1 = await (await browser.newContext()).newPage();
-    await registerStudent(p1, lesson.inviteCode, 'Ручной', s1);
+    await registerStudent(p1, lesson.linkUrl, 'Ручной', s1);
     await p1.context().close();
   });
 

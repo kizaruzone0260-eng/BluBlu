@@ -86,7 +86,6 @@ try {
   await bye(1);
 }
 
-const inv = (await api(TT, 'POST', `/api/classes/${cls.id}/invites`, { ttlDays: 30 })).json;
 const stuEmail = 'screenshots@x.io';
 const stuPass = 'ShotPass123';
 let ST = (await (await fetch(`${BASE}/api/auth/login`, {
@@ -94,10 +93,16 @@ let ST = (await (await fetch(`${BASE}/api/auth/login`, {
   body: JSON.stringify({ email: stuEmail, password: stuPass }),
 })).json().catch(() => ({})))?.accessToken;
 if (!ST) {
-  ST = (await (await fetch(`${BASE}/api/auth/register`, {
+  // аккаунт ученика заводится ОДНОРАЗОВОЙ ССЫЛКОЙ: приём по коду класса выведен из продукта
+  // 2026-10-27, и `POST /api/classes/:id/invites` с `/api/auth/register` отвечают 410
+  const link = (await api(TT, 'POST', `/api/classes/${cls.id}/invites/link`, { ttlDays: 30 })).json;
+  ST = (await (await fetch(`${BASE}/api/invitations/register`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ firstName: 'Демонстрация', lastName: 'Тест', email: stuEmail, password: stuPass, code: inv.code }),
-  })).json()).accessToken;
+    body: JSON.stringify({
+      token: String(link?.url ?? '').split('#')[1] ?? '',
+      firstName: 'Демонстрация', lastName: 'Тест', email: stuEmail, password: stuPass,
+    }),
+  })).json().catch(() => ({})))?.accessToken;
 }
 
 const browser = await chromium.launch({

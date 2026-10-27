@@ -79,16 +79,24 @@ async function loginUi(page: Page, email: string, password: string) {
   throw new Error('login failed after retries (rate limit?)');
 }
 
-async function registerStudent(page: Page, code: string, email: string) {
-  await page.goto('/register');
-  await page.getByTestId('reg-code').fill(code);
-  await page.getByTestId('reg-email').fill(email);
-  await page.getByTestId('reg-password').fill(STUDENT_PW);
-  await page.getByTestId('register-step1').click();
-  await page.getByTestId('reg-first').fill('Панель');
-  await page.getByTestId('reg-last').fill('Тест');
-  await page.getByTestId('reg-consent').check();
-  await page.getByTestId('register-submit').click();
+/**
+ * Ученик регистрируется сам по одноразовой ссылке. Экран `/register` с полем кода класса выведен
+ * из продукта 2026-10-27 (`POST /api/classes/:id/invites` отвечает 410), и это тот путь, который
+ * даёт ученика БЕЗ калитки смены пароля: пароль он выбрал сам.
+ */
+async function registerStudent(page: Page, linkUrl: string, email: string) {
+  const token = linkUrl.split('#')[1] ?? '';
+  await page.goto(`/join#${token}`);
+  await expect(page.getByTestId('join-first')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('join-first').fill('Панель');
+  await page.getByTestId('join-last').fill('Тест');
+  await page.getByTestId('join-email').fill(email);
+  await page.getByTestId('join-password').fill(STUDENT_PW);
+  await page.getByTestId('join-consent').check();
+  await page.getByTestId('join-register').click();
+  await expect(page.getByTestId('join-done-text')).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(/\/classes\//, { timeout: 20_000 });
+  await page.goto('/');
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 }
 
@@ -96,7 +104,7 @@ let api: Awaited<ReturnType<typeof pw.newContext>> | null = null;
 let token = '';
 let classId = '';
 let sessionId = '';
-let inviteCode = '';
+let studentLink = '';
 const studentEmail = `bar${Date.now()}@x.io`;
 let studentReady: Promise<void> | null = null;
 
@@ -109,7 +117,9 @@ test.beforeAll(async () => {
   classId = cls.id as string;
   const s = await (await api.post('/api/lessons/start', { headers: H, data: { classId } })).json();
   sessionId = s.id as string;
-  inviteCode = (await (await api.post(`/api/classes/${classId}/invites`, { headers: H, data: {} })).json()).code as string;
+  const link = await api.post(`/api/classes/${classId}/invites/link`, { headers: H, data: {} });
+  expect(link.status(), `учитель обязан уметь выпускать ссылку: ${link.status()}`).toBe(201);
+  studentLink = String((await link.json()).url as string);
 });
 
 test.afterAll(async () => {
@@ -125,7 +135,7 @@ async function ensureStudent(browser: Browser) {
     studentReady = (async () => {
       const ctx = await browser.newContext({ baseURL: BASE });
       const page = await ctx.newPage();
-      await registerStudent(page, inviteCode, studentEmail);
+      await registerStudent(page, studentLink, studentEmail);
       await ctx.close();
     })();
   }

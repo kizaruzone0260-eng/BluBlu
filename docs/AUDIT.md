@@ -88,8 +88,10 @@ session-scoped билет → 4401, выдача чужому классу → 4
 | --- | --- | --- |
 | /api/classes (+/:id PATCH, archive) | teacher=владелец, иначе 404 | rights: attack-loop 404 |
 | /api/classes/:id/members (+lookup/add/remove/move/reset-password) | teacher-владелец; move: оба класса его; lookup — только чтение (2026-10-27, см. DECISIONS) | rights + stage1 + member-add-email |
-| /api/classes/:id/invites (+revoke) | teacher-владелец | rights (14 атак 404) |
-| /api/join-by-code, /classes/:id/leave | student-член | rights 403 teacher |
+| /api/classes/:id/students | teacher-владелец; роль `student` и временный пароль задаёт сервер; владение проверяется ДО разбора тела | rights + student-create |
+| /api/classes/:id/invites/link, /invitations, /invites/:id/revoke | teacher-владелец (ссылка — единственный живой вид приглашения) | rights + invite-links |
+| /api/classes/:id/invites (POST/GET — выпуск и список КОДОВ), /api/join-by-code, /api/auth/register, /api/auth/check-code | выведены 2026-10-27: 410 `enrollmentRetired`, ничего не читают и не пишут | rights + student-create («мёртвые маршруты») |
+| /api/classes/:id/leave | student-член | rights 403 teacher |
 | /api/classes/:id/feed, materials, announcements, /api/posts/:id | членство/владение | rights + stage2 |
 | /api/files/:id[/inline] | членство класса поста; outsider 404 | rights + stage2 |
 | /api/notes[/id][/publish] | только автор, класс его | rights (B-атаки 404) |
