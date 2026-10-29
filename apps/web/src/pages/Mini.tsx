@@ -24,7 +24,7 @@ import {
   type MiniPublication, type MiniPublishResponse, type MiniUploadResponse, type TelegramWebApp,
 } from '../lib/miniApp';
 import {
-  GroupHealthBadge, MiniConnectCard, MiniFrame, MiniLegalGate, MiniSettings, MiniUploader,
+  GroupHealthBadge, MiniConnectCard, MiniFrame, MiniLegalGate, MiniSettingsMenu, MiniUploader,
   errorText,
 } from './mini/controls';
 
@@ -426,6 +426,11 @@ function MiniHome({
   const { t } = useTranslation();
   const active = bootstrap.groups.filter((g) => g.status === 'active');
   const drafts = bootstrap.drafts.filter((d) => d.status !== 'cancelled');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // Task G.1: while the drawer is open the native BackButton closes it. On this screen it is
+  // hidden the rest of the time, so Telegram never shows a «back» that would do nothing.
+  useTelegramBack(wa, closeSettings, settingsOpen);
   return (
     <MiniFrame testid="mini-home">
       <header className="mini-head">
@@ -433,9 +438,14 @@ function MiniHome({
           <h1>{t('mini.homeTitle')}</h1>
           <p className="muted">{t('mini.greeting', { name: bootstrap.teacher.name })}</p>
         </div>
-        <button type="button" className="ghost mini-refresh" onClick={onRefresh} aria-label={t('mini.refresh')}>
-          ↻
-        </button>
+        <div className="mini-head-actions">
+          <MiniSettingsMenu wa={wa} open={settingsOpen}
+            onToggle={() => setSettingsOpen((v) => !v)} onClose={closeSettings}
+            onLocaleChanged={onRefresh} />
+          <button type="button" className="ghost mini-refresh" onClick={onRefresh} aria-label={t('mini.refresh')}>
+            ↻
+          </button>
+        </div>
       </header>
 
       {error && <p className="error" role="alert">{errorText(error, t, bootstrap)}</p>}
@@ -473,8 +483,6 @@ function MiniHome({
       {active.length === 0 && (
         <p className="card mini-note" role="status">{t('mini.noGroups')}</p>
       )}
-
-      <MiniSettings wa={wa} onLocaleChanged={onRefresh} />
 
       {drafts.length > 0 && (
         <section aria-labelledby="mini-drafts-title">
@@ -817,6 +825,10 @@ function MiniWizard({
   const [aiOff, setAiOff] = useState(!bootstrap.ai.remote);
   const [aiBackup, setAiBackup] = useState<string | null>(null);
   const [aiFallback, setAiFallback] = useState<string | null>(null);
+  // Task G.1: the settings drawer can be opened mid-draft. It must not advance the step, and
+  // the native primary action is hidden while it is open, so a tap cannot publish behind it.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const hasMainButton = Boolean(wa?.MainButton);
 
   const activeGroups = bootstrap.groups.filter((g) => g.status === 'active');
@@ -824,13 +836,16 @@ function MiniWizard({
   const explain = useCallback((code: string): string => errorText(code, t, bootstrap), [t, bootstrap]);
 
   const goBack = useCallback(() => {
+    // Telegram's BackButton and the in-page Back are one gesture: while settings are open they
+    // close the drawer, not the step. Otherwise a Back tap would change two things at once.
+    if (settingsOpen) { setSettingsOpen(false); return; }
     setError('');
     setNotice('');
     setStep((s) => {
       if (s === 1) { onExit(); return s; }
       return (s - 1) as Step;
     });
-  }, [onExit]);
+  }, [onExit, settingsOpen]);
 
   useTelegramBack(wa, goBack);
   /*
@@ -838,8 +853,11 @@ function MiniWizard({
    * page does NOT draw another Next/Publish at the bottom — that duplicate was exactly the
    * defect the brief names. The in-page bar then keeps only Back; without MainButton (old
    * clients) the page shows its own primary button instead.
+   *
+   * Task G.1: `null` while the settings drawer is open hides the native button instead of
+   * letting it publish/advance underneath the sheet; closing the drawer brings it back.
    */
-  useTelegramMain(wa, step === 5
+  useTelegramMain(wa, settingsOpen ? null : step === 5
     ? {
         text: busy ? t('mini.publishing') : t('mini.publishCount', { n: groupIds.length }),
         enabled: confirmChecked && !busy,
@@ -1066,6 +1084,11 @@ function MiniWizard({
         <div>
           <p className="mini-step">{t('mini.stepOf', { n: step, total: 5 })}</p>
           <h1>{t(`mini.step.${step}`)}</h1>
+        </div>
+        <div className="mini-head-actions">
+          <MiniSettingsMenu wa={wa} open={settingsOpen}
+            onToggle={() => setSettingsOpen((v) => !v)} onClose={closeSettings}
+            onLocaleChanged={onLibraryChanged} />
         </div>
       </header>
 

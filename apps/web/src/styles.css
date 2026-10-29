@@ -1308,7 +1308,12 @@ a.invite-tg:hover { border-color: var(--accent); }
   gap: var(--sp-2); padding-bottom: var(--sp-1);
 }
 .mini-head--sticky {
-  position: sticky; top: calc(env(safe-area-inset-top, 0px) - 10px); z-index: 3;
+  /*
+   * Task G.1: the settings drawer lives inside this header, and a stacking context cannot paint
+   * its child above a sibling context. 20 keeps the sticky header (and its drawer) above
+   * `.mini-nav` (z-index 3), so a bottom sheet never slides under the page's action bar.
+   */
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) - 10px); z-index: 20;
   background: var(--mini-bg);
   padding: 10px 0 var(--sp-2);
   margin-top: -10px;
@@ -1322,6 +1327,15 @@ a.invite-tg:hover { border-color: var(--accent); }
   flex: none; width: var(--tap); min-width: var(--tap); height: var(--tap);
   padding: 0; margin: 0; font-size: 1.15rem; border-radius: var(--r-full);
 }
+/* Task G.1: two compact icon buttons share the home header; the gear also stays above the
+   backdrop (z-index 81 against the drawer's 80), so a second tap closes the panel. */
+.mini-head-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.mini-icon-btn {
+  flex: none; width: var(--tap); min-width: var(--tap); height: var(--tap);
+  padding: 0; margin: 0; border-radius: var(--r-full);
+}
+.mini-settings-btn { position: relative; z-index: 81; }
+.mini-settings-btn[aria-expanded="true"] { background: var(--accent-soft); }
 .mini-screen .muted { color: var(--mini-muted); }
 .mini-screen .card {
   background: var(--mini-surface); color: var(--mini-text);
@@ -1481,6 +1495,54 @@ a.invite-tg:hover { border-color: var(--accent); }
 }
 .mini-seg-btn:hover:not(:disabled):not(.is-on) { background: color-mix(in srgb, var(--accent) 8%, var(--mini-surface)); }
 .mini-settings-row .error { margin: 0; }
+
+/*
+ * Task G.1 (2026-10-29): the settings drawer.
+ *
+ * Same geometry as the existing BluBlu drawer for lesson notes (`.sheet-panel`): a bottom
+ * sheet on a phone, a right-hand panel from 720 px. The panel is fixed and appears only while
+ * open — it never adds height to the page or duplicates itself when closed. Colours come from
+ * the inherited --mini-* pair, so System (Telegram), Light and Dark all repaint together.
+ */
+.mini-drawer-layer { position: fixed; inset: 0; z-index: 80; }
+.mini-drawer-backdrop {
+  position: absolute; inset: 0; background: rgb(10 15 20 / .48);
+  animation: mini-fade-in 160ms ease both;
+}
+.mini-drawer {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  max-height: min(80dvh, 640px);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-3) calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+  background: var(--mini-surface); color: var(--mini-text);
+  border-top: 1px solid var(--border);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  box-shadow: var(--shadow-lg);
+  animation: mini-sheet-up 180ms ease both;
+  overscroll-behavior: contain;
+}
+.mini-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.mini-drawer-head h2 { margin: 0; font-size: 1.06rem; }
+.mini-drawer-body { display: flex; flex-direction: column; gap: var(--sp-3); min-height: 0; overflow-y: auto; }
+.mini-drawer .mini-settings-row { gap: 8px; }
+.mini-drawer-layer.is-closing { pointer-events: none; }
+.mini-drawer-layer.is-closing .mini-drawer { animation: mini-sheet-down 160ms ease both; }
+.mini-drawer-layer.is-closing .mini-drawer-backdrop { animation: mini-fade-out 160ms ease both; }
+@keyframes mini-fade-in { from { opacity: 0; } }
+@keyframes mini-fade-out { to { opacity: 0; } }
+@keyframes mini-sheet-up { from { transform: translateY(18px); opacity: .55; } }
+@keyframes mini-sheet-down { to { transform: translateY(18px); opacity: 0; } }
+@media (min-width: 720px) {
+  .mini-drawer {
+    left: auto; top: 64px; bottom: 0; width: min(380px, 100vw);
+    max-height: none; border-top: 0; border-left: 1px solid var(--border);
+    border-radius: var(--r-lg) 0 0 var(--r-lg); padding-top: var(--sp-4);
+    animation: mini-drawer-in 180ms ease both;
+  }
+  .mini-drawer-layer.is-closing .mini-drawer { animation: mini-drawer-out 160ms ease both; }
+  @keyframes mini-drawer-in { from { transform: translateX(24px); opacity: .55; } }
+  @keyframes mini-drawer-out { to { transform: translateX(24px); opacity: 0; } }
+}
 
 /* гейт: ссылки на документы — настоящие цели нажатия, а не строка текста */
 .mini-legal-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }

@@ -298,6 +298,9 @@ test.describe('Mini App Task G surfaces', () => {
     expect(await themeState(page)).toEqual({ theme: 'dark', source: 'telegram', stored: null });
     expect(await cssVar(page, '--tg-bg')).toBe('#101010');
 
+    // Task G.1: the pickers live in the settings drawer now, not in a card on the home screen.
+    await page.getByTestId('mini-settings-open').click();
+    await expect(page.getByTestId('mini-settings')).toBeVisible();
     await page.getByTestId('mini-theme-light').click();
     expect(await themeState(page)).toEqual({ theme: 'light', source: '', stored: 'light' });
     // The Telegram inline colours are removed, so they cannot leak into an explicit theme.
@@ -307,6 +310,8 @@ test.describe('Mini App Task G surfaces', () => {
     await expect(page.getByTestId('mini-home')).toBeVisible();
     expect(await themeState(page)).toEqual({ theme: 'light', source: '', stored: 'light' });
 
+    // A reload starts with the drawer closed; the same drawer offers «System» again.
+    await page.getByTestId('mini-settings-open').click();
     await page.getByTestId('mini-theme-system').click();
     expect(await themeState(page)).toEqual({ theme: 'dark', source: 'telegram', stored: 'system' });
 

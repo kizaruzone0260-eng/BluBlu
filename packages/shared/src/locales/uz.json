@@ -1135,6 +1135,7 @@
     "appearance": "Ko‘rinish",
     "language": "Til",
     "settings": "Ko‘rinish va til",
+    "settingsTitle": "Sozlamalar",
     "legalGateTitle": "Avval hujjatlarni qabul qiling",
     "legalGateBody": "Mini ilova funksiyalari Maxfiylik siyosati va Shartlar qabul qilingandan keyin ochiladi. Server buni har bir amalda tekshiradi, shuning uchun ekranni aylanib o‘tib bo‘lmaydi.",
     "legalGateVersions": "Siyosat: {{privacy}} · Shartlar: {{terms}}",

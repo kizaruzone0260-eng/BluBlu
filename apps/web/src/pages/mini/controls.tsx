@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next';
 import { LANGUAGE_CHOICES } from '@klass/shared';
 import { chooseLocale } from '../../i18n';
+import { useFocusTrap } from '../../lib/focusTrap';
 import { getThemeChoice, setTheme, type ThemeChoice } from '../../lib/theme';
 import {
   applyMiniTheme, haptic, miniApi, uploadMiniFile,
@@ -154,16 +155,120 @@ export function MiniLanguagePicker({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
+/**
+ * The inline card is kept only for the legal gate: language must be discoverable BEFORE the
+ * app opens, and a drawer there would hide the very control a non-English reader needs.
+ * Home and the wizard use `MiniSettingsMenu` instead.
+ */
 export function MiniSettings({ wa, onLocaleChanged }: {
   wa: TelegramWebApp | null;
   onLocaleChanged?: () => void;
 }) {
   const { t } = useTranslation();
   return (
-    <section className="card mini-settings" data-testid="mini-settings" aria-label={t('mini.settings')}>
+    <section className="card mini-settings" data-testid="mini-settings-inline" aria-label={t('mini.settings')}>
       <MiniThemePicker wa={wa} />
       <MiniLanguagePicker onChanged={onLocaleChanged} />
     </section>
+  );
+}
+
+/**
+ * Task G.1 (2026-10-29): Appearance and Language moved from a permanent home-screen card into a
+ * drawer. The button is the setting itself: it stays above the backdrop, so a second tap closes
+ * the drawer. Geometry follows the existing BluBlu drawer (`.sheet-panel` for lesson notes):
+ * a bottom sheet on a phone, a right-hand panel ≥720 px; it is fixed, so the page does not grow.
+ *
+ * The open state lives with the screen, because Telegram's native BackButton belongs to the
+ * screen's navigation: on the wizard a Back tap must close this drawer, not change the step.
+ */
+export function MiniSettingsMenu({
+  wa, open, onToggle, onClose, onLocaleChanged,
+}: {
+  wa: TelegramWebApp | null;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onLocaleChanged?: () => void;
+}) {
+  const { t } = useTranslation();
+  const panelRef = useRef<HTMLElement | null>(null);
+  const [closing, setClosing] = useState(false);
+  const wasOpen = useRef(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useFocusTrap(panelRef, open);
+
+  // A short exit beat: unmounting on the same frame would make the close look like a glitch.
+  // The panel is already out of the tab order (the trap is off) while it fades.
+  useEffect(() => {
+    if (open) { wasOpen.current = true; setClosing(false); return; }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    setClosing(true);
+    const timer = window.setTimeout(() => setClosing(false), 180);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+  const shown = open || closing;
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  // The page behind must not scroll under the sheet. Both elements are locked: Telegram's
+  // WebView on iOS ignores `overflow: hidden` on <body> alone in some versions.
+  useEffect(() => {
+    if (!shown) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, [shown]);
+
+  return (
+    <>
+      <button type="button" className="ghost mini-icon-btn mini-settings-btn"
+        data-testid="mini-settings-open" aria-label={t('mini.settingsTitle')}
+        title={t('mini.settingsTitle')} aria-expanded={open}
+        aria-controls="mini-settings-panel" onClick={onToggle}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+
+      {shown && (
+        <div className={`mini-drawer-layer${closing ? ' is-closing' : ''}`}>
+          <div className="mini-drawer-backdrop" data-testid="mini-settings-backdrop"
+            aria-hidden="true" onClick={onClose} />
+          <aside id="mini-settings-panel" ref={panelRef} className="mini-drawer"
+            role="dialog" aria-modal="true" aria-labelledby="mini-settings-title"
+            data-testid="mini-settings">
+            <div className="mini-drawer-head">
+              <h2 id="mini-settings-title" data-testid="mini-settings-title">{t('mini.settingsTitle')}</h2>
+              <button type="button" className="ghost mini-icon-btn" data-testid="mini-settings-close"
+                aria-label={t('common.close')} onClick={onClose}>✕</button>
+            </div>
+            <div className="mini-drawer-body">
+              <MiniThemePicker wa={wa} />
+              <MiniLanguagePicker onChanged={onLocaleChanged} />
+            </div>
+          </aside>
+        </div>
+      )}
+    </>
   );
 }
 

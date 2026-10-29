@@ -1135,6 +1135,7 @@
     "appearance": "Appearance",
     "language": "Language",
     "settings": "Appearance and language",
+    "settingsTitle": "Settings",
     "legalGateTitle": "Accept the documents first",
     "legalGateBody": "Mini App functions open after you accept the Privacy Policy and the Terms. The server checks this on every action, so the screen cannot be bypassed.",
     "legalGateVersions": "Policy: {{privacy}} · Terms: {{terms}}",
