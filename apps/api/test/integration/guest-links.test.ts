@@ -34,9 +34,12 @@ const PW = 'Passw0rd123';
 /**
  * Ключ гостя — то, что браузер генерирует сам и хранит в localStorage вкладки. Здесь он фиксирован:
  * тест должен отличать «мою» заявку от чужой, а не проверять случайность (она в юните).
+ *
+ * Префикс `fictitious-` обязателен: без него gitleaks принимает фикстуру с высокой энтропией
+ * за настоящий ключ (правило ^fictitious-… в .gitleaks.toml). Значение вымышленное.
  */
-const GUEST_KEY = 'guestkey-0123456789abcdef';
-const GUEST_KEY_B = 'guestkey-fedcba9876543210';
+const GUEST_KEY = 'fictitious-guestkey-0123456789abcdef';
+const GUEST_KEY_B = 'fictitious-guestkey-fedcba9876543210';
 
 suite('guest lesson links (part 3)', () => {
   let t: TestDB;
