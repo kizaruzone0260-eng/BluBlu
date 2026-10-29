@@ -182,13 +182,13 @@ describe('коды состояний токена', () => {
 });
 
 describe('политика пароля при сбросе учителем (часть C)', () => {
-  it('десять знаков, буквы, без пробелов и без ходовых паролей', () => {
+  it('десять знаков, два вида символов, без пробелов и без ходовых паролей', () => {
     expect(passwordPolicy.safeParse('12345678').success, 'самый популярный пароль запрещён').toBe(false);
     expect(passwordPolicy.safeParse('password').success).toBe(false);
     expect(passwordPolicy.safeParse('Ab1').success).toBe(false);
     expect(passwordPolicy.safeParse('short1234').success).toBe(false);
     expect(passwordPolicy.safeParse('PupilTemp2026').success).toBe(true);
-    expect(passwordPolicy.safeParse('пароль Ученика 2026').success, 'последнее слово без буквы — отказ').toBe(false);
+    expect(passwordPolicy.safeParse('пароль Ученика 2026').success, 'пробелы запрещены').toBe(false);
     // сгенерированный сервером пароль обязан проходить ту же проверку
     for (let i = 0; i < 20; i++) {
       expect(passwordPolicy.safeParse(tempPassword()).success, 'tempPassword не должен родить слабый пароль').toBe(true);
@@ -210,7 +210,8 @@ describe('политика пароля при сбросе учителем (ч
     expect(passwordIssueCode(issuesOf('Ab1'))).toBe('passwordTooShort');
     expect(passwordIssueCode(issuesOf('password123'))).toBe('passwordTooCommon');
     // «1234567890» есть в списке ходовых, но до списка схема не доходит: сначала форма
-    // (нет ни одной буквы), и это правильный порядок — про пароли человек слышит одну причину
+    // (только цифры — один вид символов), и это правильный порядок — про пароли человек
+    // слышит одну причину
     expect(passwordIssueCode(issuesOf('1234567890'))).toBe('passwordTooSimple');
     expect(passwordIssueCode(issuesOf('qwertyuiop 1'))).toBe('passwordTooSimple');
     expect(passwordIssueCode(issuesOf('x'.repeat(200)))).toBeNull();

@@ -228,6 +228,17 @@ suite('material form (task A)', () => {
   it('edit published: text+audience via PATCH, add link/file, remove file attachment drops storage row', async () => {
     const r = await up(teacherTok, classA, { title: 'Правим', audience: JSON.stringify([s1Id]) }, pdf);
     const pid = r.json().id as string;
+    // Stage 4: аудитория проверяется и на PATCH, а не только при создании. Чужой ученик —
+    // 400, и пост остаётся с прежней аудиторией: s2 по-прежнему его не видит.
+    const foreign = await app.inject({
+      method: 'PATCH', url: `/api/posts/${pid}`, headers: { ...a(teacherTok), 'content-type': 'application/json' },
+      payload: { title: 'Заголовок не должен примениться', audience: [outId] },
+    });
+    expect(foreign.statusCode, foreign.body).toBe(400);
+    expect(foreign.json().error).toBe('invalidAudience');
+    expect(((await feedOf(s2Tok, classA)).json() as { id: string }[]).some((p) => p.id === pid)).toBe(false);
+    const after = ((await feedOf(s1Tok, classA)).json() as { id: string; title: string }[]).find((p) => p.id === pid);
+    expect(after?.title, 'отказ аудитории откатывает и текст той же правки').toBe('Правим');
     const patch = await app.inject({
       method: 'PATCH', url: `/api/posts/${pid}`, headers: { ...a(teacherTok), 'content-type': 'application/json' },
       payload: { title: 'Правим v2', audience: [] },

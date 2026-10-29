@@ -186,8 +186,17 @@ suite('raise hand and the floor (task 2Б)', () => {
   });
 
   it('a finished lesson has no hands: the queue is live-lesson state', async () => {
+    /*
+     * SEC-11 (2026-10-28): у класса больше не может быть двух активных уроков (частичный
+     * уникальный индекс). Раньше этот тест добавлял второй урок прямо в тот же класс, где уже
+     * идёт основной, — состояние, которое продукт теперь запрещает. Отдельный класс сохраняет
+     * смысл проверки: сессия живая, учитель её завершает, руки исчезают, а ученик остаётся
+     * участником класса — значит, 404 ниже приходит именно из-за завершения урока.
+     */
+    const [ctrl] = await t.db.insert(classes).values({ teacherId, name: 'RH завершённый' }).returning();
+    await t.db.insert(classMembers).values({ classId: ctrl!.id, userId: studentAId });
     const [ended] = await t.db.insert(lessonSessions).values({
-      classId, roomName: `rh-ended-${Date.now()}`, createdBy: teacherId,
+      classId: ctrl!.id, roomName: `rh-ended-${Date.now()}`, createdBy: teacherId,
     }).returning({ id: lessonSessions.id });
     const sid = ended!.id;
     await t.db.insert(lessonHands).values({ sessionId: sid, userId: studentAId });

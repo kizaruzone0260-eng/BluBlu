@@ -1,9 +1,11 @@
 import { eq, and, isNull, lt } from 'drizzle-orm';
+import { randomBytes } from 'node:crypto';
 import type { Locale } from '@klass/shared';
 import { users, classMembers, refreshTokens, loginAttempts } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import { hashPassword, verifyPassword } from '../lib/password.js';
+import { isUniqueViolation } from '../lib/pgErrors.js';
 import {
   signAccessToken, generateRefreshToken, generateFamilyId, hashRefreshToken,
 } from '../lib/tokens.js';
@@ -66,7 +68,7 @@ function toPublic(u: typeof users.$inferSelect): PublicUser {
 class EmailCodeError extends Error {}
 class EmailTakenError extends Error {}
 
-/**
+/*
  * Task B (2026-10-23) — the reason a pupil saw «Something went wrong» on step 2.
  *
  * The unique index on `users.email` is the race guard for two registrations of one address, and
@@ -75,21 +77,10 @@ class EmailTakenError extends Error {}
  * `Failed query: …` error and the Postgres code lands on `err.cause.code` (proved by the
  * reproduction that became test/integration/auth-nat.test.ts — a second registration of a taken
  * address answered 500, not 409, and the screen had nothing better to say than the generic
- * sentence). So the walk goes down the cause chain, and the check is paired with an explicit
- * pre-read inside the same transaction so the ordinary case does not depend on error shapes at
- * all. Neither of them replaces the other: the pre-read is the common path, the constraint is the
- * concurrent path.
+ * sentence). The walk down the cause chain now lives in `lib/pgErrors.ts`, because the same check
+ * guards the lesson-start race (SEC-11); the pre-read below remains the common path, the
+ * constraint is the concurrent one.
  */
-function isUniqueViolation(err: unknown): boolean {
-  const seen = new Set<unknown>();
-  let cur: unknown = err;
-  while (cur && !seen.has(cur)) {
-    seen.add(cur);
-    if ((cur as { code?: string }).code === '23505') return true;
-    cur = (cur as { cause?: unknown }).cause;
-  }
-  return false;
-}
 
 /**
  * Аккаунт ученика, который создаёт учитель (2026-10-27, «упростить приём в класс»).
@@ -293,8 +284,28 @@ async function recordFailure(db: DB, email: string): Promise<void> {
     .onConflictDoUpdate({ target: loginAttempts.email, set: { failCount, lockedUntil, updatedAt: new Date() } });
 }
 
-/** Одна задержка на «нет такого аккаунта» и «не тот пароль» — и на смене пароля тоже. */
-const DUMMY_HASH = '$argon2id$v=19$m=19456,t=2,p=1$aaaaaaaaaaaaaaaa$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+/**
+ * Одна задержка на «нет такого аккаунта» и «не тот пароль» — и на смене пароля тоже.
+ *
+ * SEC-14 (аудит 2026-10-28): раньше здесь лежал литерал с параметрами `m=19456,t=2,p=1`, а
+ * настоящие хеши считаются с параметрами из env. `argon2.verify` читает параметры ИЗ СТРОКИ
+ * хеша, поэтому после перенастройки (`ARGON2_MEMORY_COST` выше, например) промах по аккаунту
+ * отвечал бы быстрее настоящей проверки — ровно тот признак, который маскировка обязана
+ * скрывать. Теперь фиктивный хеш считается тем же `hashPassword` (те же env-параметры), один
+ * раз и лениво: значение не секрет, но и не константа, чтобы «пустой» пароль нельзя было
+ * подобрать к нему.
+ */
+let dummyHash: Promise<string> | null = null;
+
+export function dummyPasswordHash(): Promise<string> {
+  if (!dummyHash) {
+    dummyHash = hashPassword(randomBytes(32).toString('base64url')).catch((e) => {
+      dummyHash = null; // следующий вызов попробует снова, а не запомнит отказ навсегда
+      throw e;
+    });
+  }
+  return dummyHash;
+}
 
 /**
  * B2 (2026-10-16): строка счётчика, у которой нет активной блокировки и которая не
@@ -312,13 +323,26 @@ export async function sweepLoginAttempts(db: DB, now = new Date(), maxAgeMs = LO
   return rows.length;
 }
 
+/**
+ * SEC-13 (аудит 2026-10-28): строки `refresh_tokens` не убирались по истечении — таблица
+ * росла каждым входом навсегда. Удаляются только ПРОСРОЧЕННЫЕ строки: заменённая, но ещё не
+ * истёкшая строка нужна ротации (окно grace) и обнаружению повторного использования семейства,
+ * поэтому её трогать нельзя — иначе «уборка» ослабила бы защиту.
+ */
+export async function sweepRefreshTokens(db: DB, now = new Date()): Promise<number> {
+  const rows = await db.delete(refreshTokens)
+    .where(lt(refreshTokens.expiresAt, now))
+    .returning({ id: refreshTokens.id });
+  return rows.length;
+}
+
 export async function login(db: DB, email: string, password: string): Promise<AuthResult> {
   // Locked out? Record the attempt anyway (so continued hammering GROWS the
   // window, up to the cap) but return the SAME generic failure as a bad
   // password — the response never reveals whether the account exists or is
   // merely throttled. A dummy verify keeps the timing uniform.
   if ((await lockState(db, email)).locked) {
-    await verifyPassword(DUMMY_HASH, password);
+    await verifyPassword(await dummyPasswordHash(), password);
     await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
@@ -326,7 +350,7 @@ export async function login(db: DB, email: string, password: string): Promise<Au
     .where(and(eq(users.email, email), isNull(users.deletedAt)))
     .limit(1);
   if (!user) {
-    await verifyPassword(DUMMY_HASH, password); // constant-ish time on missing user
+    await verifyPassword(await dummyPasswordHash(), password); // constant-ish time on missing user
     await recordFailure(db, email);
     return { ok: false, error: 'invalidCredentials' };
   }
@@ -463,7 +487,7 @@ export async function changePassword(
    * не различает «не угадал» и «заблокирован на N минут», а успех сбрасывает счётчик.
    */
   if ((await lockState(db, u.email)).locked) {
-    await verifyPassword(DUMMY_HASH, current); // ровный тайминг и под блокировкой
+    await verifyPassword(await dummyPasswordHash(), current); // ровный тайминг и под блокировкой
     await recordFailure(db, u.email);          // продолжение стука растит окно (до потолка)
     return { ok: false, reason: 'wrongCurrent' };
   }
@@ -471,7 +495,7 @@ export async function changePassword(
     await recordFailure(db, u.email);
     return { ok: false, reason: 'wrongCurrent' };
   }
-  // same policy as registration (≥10, letters, no spaces, not a common password)
+  // same policy as registration (≥10, two character classes, no spaces, not a common password)
   const { passwordPolicy } = await import('@klass/shared');
   if (!passwordPolicy.safeParse(next).success) return { ok: false, reason: 'weak' };
   await db.update(users)

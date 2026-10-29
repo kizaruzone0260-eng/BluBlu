@@ -13,6 +13,7 @@ import type { DB } from './db/index.js';
 import { currentBuildId, injectBuildMeta } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
 import { redactSecrets, safeErrorMessage } from './lib/redact.js';
+import { isSpaRoute, looksLikeStaticFile } from './lib/spaRoutes.js';
 import { effectiveCorsOrigins, effectiveIpWindowMax, effectiveIpWindowMs } from './lib/prodConfig.js';
 import { errorBody, newRequestId } from './lib/requestId.js';
 import { JSON_BODY_LIMIT } from './lib/bodyLimits.js';
@@ -31,10 +32,14 @@ import { postRoutes } from './routes/posts.js';
 import { noteRoutes } from './routes/notes.js';
 import { eventRoutes } from './routes/events.js';
 import { lessonRoutes } from './routes/lessons.js';
+// часть 3: гость без аккаунта — публичные входы и учительское управление ссылкой
+import { guestRoutes } from './routes/guest.js';
+import { lessonGuestRoutes } from './routes/lessonGuests.js';
 import { boardRoutes } from './routes/board.js';
 import { lessonArchiveRoutes } from './routes/lessonArchive.js';
 import { studentNoteRoutes } from './routes/studentNotes.js';
 import { telegramRoutes } from './routes/telegram.js';
+import { miniRoutes, type MiniRouteOptions } from './routes/mini.js';
 import { chatRoutes } from './routes/chat.js';
 import { lessonCommentRoutes } from './routes/lessonComments.js';
 import { lessonHandRoutes } from './routes/lessonHands.js';
@@ -106,8 +111,55 @@ export const accessLogOptions = {
   },
 };
 
+/**
+ * Task F (2026-10-28): CSP for the one document that must run inside Telegram.
+ *
+ * The global policy below stays exactly as it was — `script-src 'self'` and
+ * `frame-ancestors 'none'` — because it is pinned by the hardening tests and is right for every
+ * other page. The Mini App is the sole exception and needs exactly two widenings:
+ *
+ *  • `script-src https://telegram.org` — the official `telegram-web-app.js` SDK; without it
+ *    `window.Telegram.WebApp` is absent and there is no `initData` to verify;
+ *  • `frame-ancestors https://*.telegram.org https://telegram.org` — Telegram Web embeds the
+ *    page in an iframe (mobile clients use a webview and ignore this directive, so the policy is
+ *    still narrow for a plain browser tab: only Telegram can frame it).
+ *
+ * It is applied per-response in the `onSend` hook, only for `/mini`, so a request to any other
+ * path continues to receive the strict document-wide policy. The LiveKit origins are not listed:
+ * the Mini App never opens a call.
+ */
+const MINI_APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://telegram.org",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob: data:",
+  "font-src 'self' data:",
+  "connect-src 'self' blob:",
+  "frame-src 'self' blob: https://www.youtube-nocookie.com",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "frame-ancestors 'self' https://telegram.org https://*.telegram.org",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+/** `/mini` and its sub-paths (there are none today, but keep the check exact). */
+function isMiniAppPath(url: string): boolean {
+  return url === '/mini' || url.startsWith('/mini/');
+}
+
 export async function buildApp(
-  db: DB, opts: { logger?: FastifyBaseLogger; email?: EmailTransport } = {},
+  db: DB,
+  opts: {
+    logger?: FastifyBaseLogger;
+    email?: EmailTransport;
+    /**
+     * Task F: seams for the Mini App tests (capturing bot API, fake formatter). Production passes
+     * nothing and the routes build the shared bot API and the env-configured AI client themselves.
+     */
+    mini?: Omit<MiniRouteOptions, 'db'>;
+  } = {},
 ): Promise<FastifyInstance> {
   /*
    * Часть F (2026-10-16): транспорт писем входит в приложение, а не читается из модульного
@@ -200,6 +252,14 @@ export async function buildApp(
     // complementing robots.txt and the <meta name="robots"> in index.html.
     reply.header('x-robots-tag', 'noindex, nofollow, noarchive, nosnippet');
     const url = (req.raw.url ?? '').split('?')[0] ?? '';
+    // Task F: the Mini App document is the one response that may load the Telegram SDK and be
+    // framed by Telegram Web; see MINI_APP_CSP. `X-Frame-Options` is removed for it because the
+    // old header knows only SAMEORIGIN/DENY, and some Telegram webviews honour XFO while
+    // ignoring frame-ancestors.
+    if (isMiniAppPath(url)) {
+      reply.header('content-security-policy', MINI_APP_CSP);
+      reply.removeHeader('x-frame-options');
+    }
     // Private API/webhook data is never cached by any layer.
     if (url.startsWith('/api') || url.startsWith('/webhook')) {
       reply.header('cache-control', 'no-store');
@@ -212,6 +272,12 @@ export async function buildApp(
     } else if (url === '/sw.js') {
       // The service worker must revalidate so a new deploy is picked up.
       reply.header('cache-control', 'no-cache');
+    } else if (url.startsWith('/fonts/') || url.startsWith('/excalidraw-assets/')) {
+      // SEC-30 (аудит 2026-10-28): эти файлы отдавались без max-age и ревалидировались на каждом
+      // заходе — 736 KB шрифтов на вход и 14 MB ассетов Excalidraw при первом открытии доски.
+      // Имена здесь НЕ хэшированные (в отличие от /assets/), поэтому «immutable на год» соврал
+      // бы: держим неделю и разрешаем отдать закэшированное, пока идёт фоновая проверка.
+      reply.header('cache-control', 'public, max-age=604800, stale-while-revalidate=86400');
     } else if (reply.getHeader('content-type')?.toString().includes('text/html')) {
       // SPA shell + index: always revalidate (etag/304) so a deploy shows up fast.
       reply.header('cache-control', 'no-cache');
@@ -300,8 +366,11 @@ export async function buildApp(
     // opt out of @fastify/compress via the plugin's per-route `compress:false`.
     if (
       url.startsWith('/api/auth')
+      || url.startsWith('/api/guest')
       || url === '/api/invitations/register'
       || url === '/api/ws/ticket'
+      // Task F: the Mini App launch exchange answers with a bearer session token — same reason.
+      || url === '/api/mini/auth'
       || /^\/api\/[^/]+\/[^/]+\/(chat\/ticket|link-token|telegram-link|ical-token)$/.test(url)
       || /^\/api\/(classes|lessons)\/[^/]+\/(chat\/ticket|link-token)$/.test(url)
       || url === '/api/rtc/token'
@@ -339,7 +408,15 @@ export async function buildApp(
     // входам, — школа с одного адреса бьёт в них не чаще, чем в регистрацию по ссылке.
     if (url === '/api/auth/register' || url === '/api/join-by-code' || url === '/api/auth/check-code'
       || url === '/api/auth/email-code'
-      || url === '/api/invitations/preview' || url === '/api/invitations/register' || url === '/api/invitations/join') {
+      || url === '/api/invitations/preview' || url === '/api/invitations/register' || url === '/api/invitations/join'
+      // часть 3 (2026-10-28): гостевые входы — тот же «вход с общего адреса школы», что и
+      // приглашения: с одного IP может стучаться целый класс гостей, и потолок должен быть общим
+      || url === '/api/guest/preview' || url === '/api/guest/request'
+      || url === '/api/guest/status' || url === '/api/guest/rtc'
+      // Task F (2026-10-28): обмен initData на сессию Mini App — тоже публичный вход, и с одного
+      // школьного/мобильного адреса (CGNAT) его могут проходить десятки учителей. Потолок общий;
+      // отдельный per-user лимит на публикацию живёт в самих маршрутах.
+      || url === '/api/mini/auth') {
       routeOptions.config = {
         ...routeOptions.config,
         rateLimit: {
@@ -374,10 +451,15 @@ export async function buildApp(
   await app.register(noteRoutes, { db });
   await app.register(eventRoutes, { db });
   await app.register(lessonRoutes, { db });
+  await app.register(guestRoutes(db));
+  await app.register(lessonGuestRoutes, { db });
   await app.register(boardRoutes, { db });
   await app.register(lessonArchiveRoutes, { db }); // часть 4: архив уроков
   await app.register(studentNoteRoutes, { db });
   await app.register(telegramRoutes, { db });
+  // Task F (2026-10-28): the Mini App surface. It reuses the same bot API and homework engine as
+  // the bot, so the two entry points cannot publish through different code paths.
+  await app.register(miniRoutes, { db, ...opts.mini });
   await app.register(chatRoutes, { db }); // item 8
   await app.register(lessonCommentRoutes, { db }); // task 2 (2026-10-09): comments during a lesson
   await app.register(lessonHandRoutes, { db }); // task 2Б (2026-10-10): raise hand / give the floor
@@ -398,11 +480,22 @@ export async function buildApp(
       return shellHtml;
     };
     app.get('/', (_req, reply) => reply.type('text/html').send(shell()));
+    /*
+     * LOW-07 (аудит 2026-10-28): не-API путь больше не получает 200 «на всякий случай».
+     *  • известный маршрут SPA (список = App.tsx, паритет держит spa-routes.test.ts) → оболочка 200;
+     *  • неизвестная страница → та же оболочка, но 404: SPA нарисует свой экран, а поисковик и
+     *    монитор увидят честный код;
+     *  • файл с расширением (`.js`, `.map`, `.woff2`, …) → обычный 404 без HTML: оболочка вместо
+     *    скрипта — это ошибка разбора, а не страница.
+     */
     app.setNotFoundHandler((req, reply) => {
-      if (req.url.startsWith('/api') || req.url.startsWith('/webhook')) {
+      const pathname = (req.url.split('?')[0] ?? '/');
+      if (pathname.startsWith('/api') || pathname.startsWith('/webhook')) {
         return reply.code(404).send({ error: 'notFound' });
       }
-      return reply.type('text/html').send(shell());
+      if (looksLikeStaticFile(pathname)) return reply.code(404).send({ error: 'notFound' });
+      if (isSpaRoute(pathname)) return reply.type('text/html').send(shell());
+      return reply.code(404).type('text/html').send(shell());
     });
   } else {
     app.setNotFoundHandler((req, reply) => {

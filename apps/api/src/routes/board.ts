@@ -15,6 +15,7 @@ import {
   MAX_SCENE_BYTES, MAX_BOARD_ELEMENTS, type ExEl,
 } from '../services/board.js';
 import { createMaterial } from '../services/posts.js';
+import { audit } from '../services/audit.js';
 import { BOARD_PUBLISH_BODY_LIMIT } from '../lib/bodyLimits.js';
 
 const BROADCAST_MS = 30;   // §3.7 throttle
@@ -329,6 +330,15 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
       { title: p.data.title, description: '', topicId: null, newTopic: null, status: 'published', scheduledAt: null, audience: [], links: [] },
       [{ buffer, filename: `${p.data.title || 'board'}.${p.data.kind === 'png' ? 'png' : 'svg'}` }]);
     void mime;
+    /*
+     * Журнал (2026-10-28, аудит SEC-08). Публикация доски — это создание материала в ленте
+     * класса, но НЕ через `POST /api/classes/:id/materials`, поэтому общий `material_create` её
+     * не видит: без этой строки файл появился бы в классе без следа о том, с какого урока и чьей
+     * рукой. Сохранение же самой доски (`PUT …/board/page`) специально НЕ журналируется — это
+     * автосейв каждые несколько секунд, и журнал превратился бы в шум, в котором как раз и
+     * теряются значимые записи.
+     */
+    audit(db, req.user!.id, 'board_publish', { classId: cls.id, lessonId: s.id, postId: post.id, kind: p.data.kind });
     return reply.code(201).send({ postId: post.id });
   });
 
@@ -388,7 +398,15 @@ export async function boardRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (p.data.userId && !await resolveClass(db, p.data.userId, 'student', s.classId)) {
       return reply.code(404).send({ error: 'notFound' });
     }
-    return await setDrawPermission(db, s, p.data.userId, p.data.all, p.data.allow);
+    return await (async () => {
+      const result = await setDrawPermission(db, s, p.data.userId, p.data.all, p.data.allow);
+      // право рисовать меняет то, что чужие руки могут сделать с доской класса, — след обязателен
+      audit(db, req.user!.id, 'board_draw_permission', {
+        classId: s.classId, lessonId: s.id, all: p.data.all ?? false,
+        ...(p.data.userId ? { userId: p.data.userId } : {}), allow: p.data.allow,
+      });
+      return result;
+    })();
   });
 
   app.get('/api/lessons/:id/board/draw', { preHandler: app.authenticateTeacher }, async (req, reply) => {

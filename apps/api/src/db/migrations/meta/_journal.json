@@ -260,6 +260,34 @@
       "when": 1792780714976,
       "tag": "0036_gigantic_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793184889624,
+      "tag": "0037_lesson_one_active_per_class",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793185924425,
+      "tag": "0038_secure_public",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793205237347,
+      "tag": "0039_hesitant_gamora",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793210568635,
+      "tag": "0040_mini_app_drafts",
+      "breakpoints": true
     }
   ]
 }

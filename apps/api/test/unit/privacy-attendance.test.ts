@@ -48,6 +48,35 @@ const MARKS: Record<keyof typeof docs, { what: string[]; keep: string[] }> = {
 const body = (lang: keyof typeof docs, index: number) =>
   (docs[lang] as { privacy: { sections: { b: string[] }[] } }).privacy.sections[index].b.join(' ').toLowerCase();
 
+/*
+ * Аудит SEC-02/SEC-09 (2026-10-28): политика называла обработчиками только Render, Supabase,
+ * LiveKit и Telegram, хотя код умеет отправлять письма через Brevo/Resend/SMTP и текст учителя
+ * во внешний AI, а «в браузере» умалчивала о черновиках и кэше service worker. Эти метки — не
+ * переводческие, а фактические: если раздел потеряет обработчика или обещание «содержимое файлов
+ * не отправляется», тест падает раньше, чем текст увидит человек.
+ */
+const PROCESSORS = 4;
+const TRANSFERS = 5;
+const BROWSER = 8;
+
+const DISCLOSURE: Record<keyof typeof docs, { processors: string[]; transfers: string[]; browser: string[] }> = {
+  en: {
+    processors: ['brevo', 'resend', 'smtp', 'openai-compatible', 'never sent', 'off by default'],
+    transfers: ['chosen and enabled by the owner'],
+    browser: ['local draft', 'service worker', 'not cached'],
+  },
+  ru: {
+    processors: ['brevo', 'resend', 'smtp', 'совместимый с openai', 'не отправляется', 'по умолчанию выключен'],
+    transfers: ['выбирает и включает владелец'],
+    browser: ['локальным черновиком', 'service worker', 'не кэшируются'],
+  },
+  uz: {
+    processors: ['brevo', 'resend', 'smtp', 'openai bilan mos', 'hech qachon yuborilmaydi', 'standart holatda o‘chirilgan'],
+    transfers: ['egasi tanlaydi va yoqadi'],
+    browser: ['mahalliy qoralama', 'service worker', 'keshlanmaydi'],
+  },
+};
+
 describe('политика конфиденциальности про приход/уход и архив (часть 8)', () => {
   for (const lang of Object.keys(MARKS) as (keyof typeof docs)[]) {
     it(`${lang}: оба утверждения на месте`, () => {
@@ -65,6 +94,35 @@ describe('политика конфиденциальности про прих�
       const d = docs[lang] as { privacy: { version: string }; terms: { version: string } };
       expect(d.privacy.version, `${lang}: версия в политике`).toContain(POLICY_VERSION);
       expect(d.terms.version, `${lang}: версия в условиях`).toContain(POLICY_VERSION);
+    }
+  });
+
+  for (const lang of Object.keys(DISCLOSURE) as (keyof typeof docs)[]) {
+    it(`${lang}: обработчики почты и AI раскрыты, включая «файлы не отправляются»`, () => {
+      for (const mark of DISCLOSURE[lang].processors) {
+        expect(body(lang, PROCESSORS), `${lang}: в «обработчиках» нет «${mark}»`).toContain(mark);
+      }
+      for (const mark of DISCLOSURE[lang].transfers) {
+        expect(body(lang, TRANSFERS), `${lang}: в «передаче данных» нет «${mark}»`).toContain(mark);
+      }
+    });
+
+    it(`${lang}: локальные черновики и кэш service worker описаны честно`, () => {
+      for (const mark of DISCLOSURE[lang].browser) {
+        expect(body(lang, BROWSER), `${lang}: в «что хранится в браузере» нет «${mark}»`).toContain(mark);
+      }
+    });
+  }
+
+  /*
+   * Текст остаётся черновиком владельца: тест держит дисклеймер на месте, чтобы будущая правка
+   * не превратила его в заявление о готовом юридическом соответствии, которого никто не проверял.
+   */
+  it('во всех трёх языках сохранён дисклеймер «это черновик»', () => {
+    const draft: Record<keyof typeof docs, string> = { en: 'draft', ru: 'черновик', uz: 'qoralama' };
+    for (const lang of Object.keys(draft) as (keyof typeof docs)[]) {
+      const intro = (docs[lang] as { privacy: { intro: string } }).privacy.intro.toLowerCase();
+      expect(intro, `${lang}: вступление`).toContain(draft[lang]);
     }
   });
 

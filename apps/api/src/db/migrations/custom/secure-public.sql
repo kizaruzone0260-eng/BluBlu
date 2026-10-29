@@ -5,6 +5,17 @@
 --      read nothing);
 --   2) privileges revoked from anon/authenticated on schema, tables, sequences;
 --   3) default privileges so tables created LATER are covered too.
+--
+-- 2026-10-28, аудит SEC-06: те же операторы теперь ЕСТЬ В ЖУРНАЛЕ
+-- (`0038_secure_public.sql`), поэтому применяются при каждом старте приложения, а не
+-- только когда владелец вспомнит про этот скрипт. Файл оставлен как «применить НЕМЕДЛЕННО,
+-- без деплоя» (cloud-verify использует его) — и тест `db-secure-posture.test.ts` сверяет
+-- набор операторов здесь и в миграции, чтобы два пути не разошлись.
+--
+-- Проверка ролей: `anon`/`authenticated` создаёт только Supabase. На локальном
+-- embedded-postgres и в CI их нет, а REVOKE на несуществующую роль — ошибка 42704, которая
+-- роняет весь файл. Раньше скрипт на такой базе падал; теперь он, как и миграция, ничего не
+-- делает там, где ролей нет (и делает всё, где они есть).
 DO $$
 DECLARE r record;
 BEGIN
@@ -13,11 +24,24 @@ BEGIN
   END LOOP;
 END $$;
 
-REVOKE ALL ON SCHEMA public FROM anon, authenticated;
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA public FROM anon';
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon';
+    EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon';
+    EXECUTE 'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    EXECUTE 'REVOKE ALL ON SCHEMA public FROM authenticated';
+    EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM authenticated';
+    EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM authenticated';
+    EXECUTE 'REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM authenticated';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM authenticated';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM authenticated';
+    EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM authenticated';
+  END IF;
+END $$;

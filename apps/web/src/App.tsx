@@ -31,6 +31,10 @@ import ErrorBoundary from './components/ErrorBoundary';
 const ClassDetail = lazy(() => import('./pages/ClassDetail'));
 // задача 2026-10-23 (часть B): вход по одноразовой ссылке — и для нового аккаунта, и для вошедшего
 const Join = lazy(() => import('./pages/Join'));
+// часть 3 (2026-10-28): гость урока — без аккаунта, отдельно от всех авторизационных ворот
+const Guest = lazy(() => import('./pages/Guest'));
+// часть F (2026-10-28): Telegram Mini App — своя авторизация (initData), без cookie и без Shell
+const Mini = lazy(() => import('./pages/Mini'));
 // часть A (2026-10-16): урок монтирует провайдер над роутером, поэтому он здесь не маршрут
 import { LessonHostProvider, LessonSlot } from './components/LessonLive';
 // часть 4: архив урока — своя ленивая страница, чтобы Excalidraw-миниатюры не ехали в начальный чанк
@@ -43,6 +47,14 @@ const Sheets = lazy(() => import('./pages/Sheets'));
 const AuthCtx = createContext<{ me: Me | null; refresh: () => void }>({ me: null, refresh: () => {} });
 export const useAuth = () => useContext(AuthCtx);
 
+/**
+ * Пути, которые рендерятся без пользовательского роутера (гость урока, часть 3 2026-10-28;
+ * Telegram Mini App, часть F 2026-10-28). Держится списком, а не строкой в ветке:
+ * `apps/api/test/unit/spa-routes.test.ts` складывает его с `<Route path=…>` и требует
+ * равенства с серверным списком SPA-маршрутов.
+ */
+const STANDALONE_PATHS = ['/guest', '/mini'];
+
 function tryRestoreSession(): Promise<void> {
   // no access token in memory → attempt cookie refresh once at boot.
   // Shared single-flight with api()'s 401 handler (StrictMode double-boot safe).
@@ -53,6 +65,19 @@ export default function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [booted, setBooted] = useState(false);
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+  const where = useLocation();
+  /*
+   * Гостевая страница и Mini App стоят ВНЕ всех ворот аккаунта (политика, имя, временный пароль,
+   * Shell): у гостя нет учётной записи вообще, а Mini App авторизуется собственным токеном из
+   * проверенного initData — cookie основного приложения ей не нужны и не должны требоваться.
+   * Поэтому это ранний рендер, а не маршруты среди пользовательских.
+   *
+   * Адреса объявлены отдельной константой: серверный soft-404 (LOW-07) обязан отдавать оболочку
+   * на `/guest` и `/mini`, а unit-тест читает этот список и `<Route>`-ы вместе — иначе новая
+   * страница вне роутера молча превратилась бы в «404 на рабочей ссылке».
+   */
+  const standalonePath = where.pathname.replace(/\/+$/, '');
+  const guestPage = STANDALONE_PATHS.includes(standalonePath);
 
   // Offline (Phase 3): surface a friendly translated screen when the browser
   // reports no connection, and recover automatically when it comes back.
@@ -114,6 +139,22 @@ export default function App() {
     })();
     return onAuthChange(() => { void refresh(); });
   }, []);
+
+  /*
+   * Гость не ждёт и «загрузки сессии»: у него её нет по определению, а страница должна открыться
+   * и тогда, когда сервер учётных записей отвечает медленно. Ранний рендер стоит до `!booted`,
+   * но после ВСЕХ хуков — порядок хуков от этого не меняется.
+   */
+  if (guestPage) {
+    return (
+      <ErrorBoundary>
+        <TitleManager />
+        <Suspense fallback={<div className="container muted">…</div>}>
+          {standalonePath === '/mini' ? <Mini /> : <Guest />}
+        </Suspense>
+      </ErrorBoundary>
+    );
+  }
 
   if (!booted) return <div className="container muted">…</div>;
 
@@ -181,10 +222,12 @@ export default function App() {
             <Route path="/spike" element={<Spike />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
-            {/* a signed-in user landing on the auth screens goes home (previously
-                the catch-all redirect handled this); truly-unknown paths → 404 */}
+            {/* a signed-in user landing on the login screen goes home; unknown paths → 404.
+                «Как попасть в класс» — статическая страница-объяснение, а не форма входа:
+                ссылки на неё есть и внутри приложения (Home, Classes), поэтому вошедшему она
+                открывается как страница, а не перенаправляет домой (аудит 2026-10-28, п. 11). */}
             <Route path="/login" element={<Navigate to="/" replace />} />
-            <Route path="/register" element={<Navigate to="/" replace />} />
+            <Route path="/register" element={<Register />} />
             <Route path="*" element={<ErrorScreen kind="404" />} />
           </Routes>
           </Suspense>

@@ -22,7 +22,11 @@ import {
 } from '../db/schema.js';
 import { listEventsInRange } from './events.js';
 import { consumeLinkToken, getPrefs, hashToken, siteUrl, unlinkUser, enqueueNotification } from './notify.js';
-import { applyMenu, applyMenuForChat, esc, removeMenu, verifyCb, signCb, type BotApi, type InlineButton } from './botApi.js';
+import { miniAppUrl } from '../lib/miniAppUrl.js';
+import {
+  applyMenu, applyMenuForChat, esc, removeMenu, verifyCb, signCb,
+  type BotApi, type ChatMenuButton, type InlineButton,
+} from './botApi.js';
 import {
   homeworkCallback, homeworkCommand, homeworkDone, homeworkGroupBind, homeworkInput,
 } from './homework/flow.js';
@@ -86,8 +90,29 @@ export const T: Record<string, Loc> = {
     uz: 'Salom! Bu BluBlu boti. Proildagi havola orqali hisobingizni boglang (/start <kod>) — shunda jadval va sozlamalar ochiladi.',
     en: 'Hi! This is the BluBlu bot. Link your account with the URL from your BluBlu profile (a /start <code> message) to unlock your schedule and settings.',
   },
-  helloTeacher: { ru: 'Готово! Меню учителя активно.', uz: 'Tayyor! O‘qituvchi menyusi yoqildi.', en: 'Done! The teacher menu is active.' },
+  // Task F.1 (2026-10-29): the greeting must answer «where do I create homework?» in its first
+  // two sentences and point at a door that is still there after the message scrolls away.
+  helloTeacher: {
+    ru: 'Готово! Меню учителя активно. Домашнее задание для групп — в мини-приложении BluBlu: кнопка ниже всегда рядом с полем ввода, или команда /mini.',
+    uz: 'Tayyor! O‘qituvchi menyusi yoqildi. Guruhlar uchun uy vazifasi BluBlu mini ilovasida: quyidagi tugma doim yozish maydoni yonida, yoki /mini buyrug‘i.',
+    en: 'Done! The teacher menu is active. Homework for your groups lives in the BluBlu Mini App: the button below stays next to the message field, or use /mini.',
+  },
   helloStudent: { ru: 'Готово! Меню ученика активно.', uz: 'Tayyor! O‘quvchi menyusi yoqildi.', en: 'Done! The student menu is active.' },
+  // Task F/F.1: the Mini App is a second, screen-based surface of the SAME homework. The button
+  // is shown only when the public site is https (see lib/miniAppUrl.ts); otherwise the honest text.
+  miniButton: { ru: 'Открыть BluBlu', uz: 'BluBlu’ni ochish', en: 'Open BluBlu' },
+  miniIntro: {
+    ru: 'Соберите домашнее задание в мини-приложении: группы, текст, библиотека и предпросмотр — на одном экране. Кнопка ниже и команда /mini открывают его в любой момент.',
+    uz: 'Uy vazifasini mini ilovada yig‘ing: guruhlar, matn, kutubxona va ko‘rish — bitta ekranda. Quyidagi tugma va /mini buyrug‘i uni istalgan paytda ochadi.',
+    en: 'Build homework in the Mini App: groups, text, the library and a preview on one screen. The button below and /mini open it at any time.',
+  },
+  // Teacher-facing, and actionable: Telegram refuses a web_app button over http, so instead of
+  // a button that does nothing the bot names the working alternative.
+  miniNoHttps: {
+    ru: 'Мини-приложение пока не подключено: для него нужен адрес сайта по HTTPS. Пока домашнее задание можно отправить прямо в боте — /homework.',
+    uz: 'Mini ilova hali ulanmagan: unga saytning HTTPS manzili kerak. Hozircha uy vazifasini botning o‘zida yuborish mumkin — /homework.',
+    en: 'The Mini App is not connected yet: it needs the site’s HTTPS address. For now, send homework right in the bot with /homework.',
+  },
   linked: { ru: 'Telegram привязан к аккаунту BluBlu.', uz: 'Telegram BluBlu hisobiga bog‘landi.', en: 'Telegram is linked to your BluBlu account.' },
   badLink: { ru: 'Ссылка недействительна или устарела. Создайте новую в профиле.', uz: 'Havola yaroqsiz yoki eskirgan. Proilda yangisini yarating.', en: 'This link is invalid or expired. Create a new one in your profile.' },
   stopped: { ru: 'Аккаунт отвязан, уведомления отключены.', uz: 'Hisob uzildi, bildirishnomalar o‘chirildi.', en: 'Account unlinked, notifications are off.' },
@@ -112,9 +137,9 @@ export const T: Record<string, Loc> = {
     en: 'Commands: /start — link, /schedule — class schedule by name, /contact — write to a teacher, /language — language, /help — this message.',
   },
   helpTeacher: {
-    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы класса, /library — библиотека материалов для Telegram, /announce — объявление классу, /homework — домашнее задание в Telegram, /settings — уведомления, /language, /help.',
-    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — sinf materiallari, /library — Telegram uchun materiallar kutubxonasi, /announce — e’lon, /homework — Telegramga uy vazifasi, /settings — bildirishnomalar, /language, /help.',
-    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /library — the Telegram material library, /announce — post an announcement, /homework — homework to Telegram groups, /settings — notifications, /language, /help.',
+    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы класса, /library — библиотека материалов для Telegram, /announce — объявление классу, /homework — домашнее задание в Telegram, /mini — открыть BluBlu, /settings — уведомления, /language, /help.',
+    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — sinf materiallari, /library — Telegram uchun materiallar kutubxonasi, /announce — e’lon, /homework — Telegramga uy vazifasi, /mini — BluBlu’ni ochish, /settings — bildirishnomalar, /language, /help.',
+    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /library — the Telegram material library, /announce — post an announcement, /homework — homework to Telegram groups, /mini — open BluBlu, /settings — notifications, /language, /help.',
   },
   helpStudent: {
     ru: 'Команды: /schedule — расписание моих классов, /next — ближайшее событие, /contact — написать учителю, /language, /stop — отвязать аккаунт, /help.',
@@ -453,6 +478,7 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
     case '/settings': return settings(deps, chatId, id);
     case '/announce': return announceHome(deps, chatId, id, arg);
     case '/homework': return homeworkCommand(deps, chatId, id, m);
+    case '/mini': return miniHome(deps, chatId, id);
     case '/done': return homeworkDone(deps, chatId, id);
     case '/library': return libraryCommand(deps, chatId, id);
     default:
@@ -473,13 +499,93 @@ async function onStart(deps: BotDeps, chatId: string, id: Identity, arg: string)
     const nid = await identify(db, chatId, DEFAULT_LOCALE);
     await applyMenuForChat(api, nid.role ?? 'basic', chatId, nid.lang);
     await send(deps, chatId, 'linked', {}, nid.lang);
-    await send(deps, chatId, nid.role === 'teacher' ? 'helloTeacher' : 'helloStudent', {}, nid.lang);
+    await sendHello(deps, chatId, nid);
     return;
   }
-  await send(deps, chatId, id.role ? (id.role === 'teacher' ? 'helloTeacher' : 'helloStudent') : 'helloBasic', {}, id.lang);
+  await sendHello(deps, chatId, id);
+}
+
+/**
+ * Task F.1: the persistent menu button is decided in ONE place. Only a linked teacher on an
+ * https site gets the Mini App there; every other chat is reset to Telegram's default, so a
+ * demoted or unlinked account can never keep a button that opens nothing.
+ */
+function miniMenuButton(role: Identity['role'], lang: Lang): ChatMenuButton {
+  const url = role === 'teacher' ? miniAppUrl() : null;
+  return url ? { type: 'web_app', text: t('miniButton', lang), url } : { type: 'default' };
+}
+
+/** Cosmetic and persistent: a Telegram failure must never stop a greeting or a command. */
+async function syncMiniMenu(deps: BotDeps, chatId: string, id: Identity): Promise<void> {
+  await deps.api.setChatMenuButton(chatId, miniMenuButton(id.role, id.lang)).catch(() => undefined);
+}
+
+/**
+ * Bot boot (server.ts): linked teachers who started the bot BEFORE this version get the button
+ * without sending /start again — the button otherwise appears only from the next greeting.
+ * Sequential and bounded; a failure is counted, never retried in a loop.
+ */
+export async function syncTeacherMiniMenus(
+  db: DB, api: BotApi, limit = 500,
+): Promise<{ teachers: number; updated: number; failed: number }> {
+  if (!miniAppUrl()) return { teachers: 0, updated: 0, failed: 0 };
+  const rows = await db.select({ chatId: telegramLinks.chatId, locale: users.locale })
+    .from(telegramLinks)
+    .innerJoin(users, eq(users.id, telegramLinks.userId))
+    .where(and(
+      eq(users.role, 'teacher'), isNull(users.deletedAt), isNull(telegramLinks.blockedAt),
+    ))
+    .limit(limit);
+  let updated = 0;
+  for (const r of rows) {
+    const ok = await api.setChatMenuButton(r.chatId, miniMenuButton('teacher', r.locale))
+      .then(() => true).catch(() => false);
+    if (ok) updated++;
+  }
+  return { teachers: rows.length, updated, failed: rows.length - updated };
+}
+
+/**
+ * Task F/F.1: the teacher's greeting carries the inline Mini App button when the public site is
+ * https, and the button is also installed as the persistent menu button of the chat. A student
+ * never gets it (the Mini App is a teacher surface), and an http deployment gets an honest,
+ * actionable sentence instead — Telegram refuses a `web_app` button with an http URL, and a
+ * button that does nothing is worse than no button.
+ */
+async function sendHello(deps: BotDeps, chatId: string, id: Identity) {
+  const key = id.role === 'teacher' ? 'helloTeacher' : id.role === 'student' ? 'helloStudent' : 'helloBasic';
+  const url = id.role === 'teacher' ? miniAppUrl() : null;
+  await syncMiniMenu(deps, chatId, id);
+  if (!url) {
+    if (id.role === 'teacher') {
+      await deps.api.sendMessage(chatId, `${t(key, id.lang)}\n\n${t('miniNoHttps', id.lang)}`);
+      return;
+    }
+    await send(deps, chatId, key, {}, id.lang);
+    return;
+  }
+  await deps.api.sendMessage(chatId, t(key, id.lang), {
+    buttons: [[{ text: t('miniButton', id.lang), webApp: url }]],
+  });
+}
+
+/** `/mini` — the same door as the greeting button, for a teacher who already started the bot. */
+async function miniHome(deps: BotDeps, chatId: string, id: Identity) {
+  await syncMiniMenu(deps, chatId, id);
+  if (id.role !== 'teacher') {
+    await send(deps, chatId, id.role === 'student' ? 'denied' : 'needLink', {}, id.lang);
+    return;
+  }
+  const url = miniAppUrl();
+  if (!url) { await send(deps, chatId, 'miniNoHttps', {}, id.lang); return; }
+  await deps.api.sendMessage(chatId, t('miniIntro', id.lang), {
+    buttons: [[{ text: t('miniButton', id.lang), webApp: url }]],
+  });
 }
 
 async function onStop(deps: BotDeps, chatId: string, id: Identity) {
+  // before the early return: an already-unlinked chat may still carry a stale button
+  await deps.api.setChatMenuButton(chatId, { type: 'default' }).catch(() => undefined);
   if (!id.userId) { await send(deps, chatId, 'stopped', {}, id.lang); return; }
   await unlinkUser(deps.db, id.userId);
   await removeMenu(deps.api, chatId);
@@ -882,6 +988,8 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
         // honours it on every device instead of falling back to the browser
         await db.update(users).set({ locale: lang, localeExplicit: true }).where(eq(users.id, id.userId));
         await applyMenuForChat(api, id.role ?? 'basic', chatId, lang);
+        // the persistent button carries a label too: it must follow the chosen language
+        await api.setChatMenuButton(chatId, miniMenuButton(id.role, lang)).catch(() => undefined);
       } else {
         const s = await loadSession(db, chatId);
         await saveSession(db, chatId, s?.state ?? '', { ...(s?.data ?? {}), lang }, 15);

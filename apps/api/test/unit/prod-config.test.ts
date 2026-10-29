@@ -13,6 +13,8 @@ import { describe, it, expect } from 'vitest';
 import {
   DEV_WEB_ORIGIN,
   cookieIsSecure,
+  effectiveAccessTokenTtl,
+  effectiveArgon2Costs,
   effectiveCodeMax,
   effectiveCorsOrigins,
   effectiveLiveKitApiBase,
@@ -23,6 +25,10 @@ import {
   effectiveSiteBase,
   effectiveWebhookBase,
   effectiveWebOrigin,
+  PROD_ACCESS_TOKEN_TTL_FLOOR_SEC,
+  PROD_ARGON2_MEMORY_FLOOR,
+  PROD_ARGON2_PARALLELISM_FLOOR,
+  PROD_ARGON2_TIME_FLOOR,
   PROD_CODE_MAX,
   PROD_LOGIN_MAX,
   PROD_REFRESH_GRACE_CEILING_MS,
@@ -209,6 +215,40 @@ describe('production refuses to boot on shipped defaults (never echoing a value)
         ...base, nodeEnv, jwtSecret: DEV_JWT, livekitApiKey: 'devkey', livekitApiSecret: DEV_LK,
       })).toEqual([]);
     }
+  });
+});
+
+describe('SEC-15: production floors for password hashing and access-token TTL', () => {
+  it('cheap Argon2 parameters are raised to the floors in production', () => {
+    expect(effectiveArgon2Costs({ memoryCost: 1024, timeCost: 1, parallelism: 1 }, 'production'))
+      .toEqual({
+        memoryCost: PROD_ARGON2_MEMORY_FLOOR,
+        timeCost: PROD_ARGON2_TIME_FLOOR,
+        parallelism: PROD_ARGON2_PARALLELISM_FLOOR,
+      });
+  });
+
+  it('stronger parameters are kept as the operator set them', () => {
+    const strong = { memoryCost: 65_536, timeCost: 3, parallelism: 2 };
+    expect(effectiveArgon2Costs(strong, 'production')).toEqual(strong);
+  });
+
+  it('development and test keep cheap parameters on purpose (the suite would take hours)', () => {
+    const cheap = { memoryCost: 8192, timeCost: 1, parallelism: 1 };
+    expect(effectiveArgon2Costs(cheap, 'test')).toEqual(cheap);
+    expect(effectiveArgon2Costs(cheap, 'development')).toEqual(cheap);
+  });
+
+  it('access-token TTL: invalid or sub-minute values become 60 s in production only', () => {
+    expect(effectiveAccessTokenTtl('5s', 'production')).toBe(`${PROD_ACCESS_TOKEN_TTL_FLOOR_SEC}s`);
+    expect(effectiveAccessTokenTtl('nonsense', 'production')).toBe(`${PROD_ACCESS_TOKEN_TTL_FLOOR_SEC}s`);
+    expect(effectiveAccessTokenTtl('0', 'production')).toBe(`${PROD_ACCESS_TOKEN_TTL_FLOOR_SEC}s`);
+    // the shipped default and longer deliberate values are untouched
+    expect(effectiveAccessTokenTtl('15m', 'production')).toBe('15m');
+    expect(effectiveAccessTokenTtl('2h', 'production')).toBe('2h');
+    // tests deliberately use short-lived tokens (expiry/rotation specs)
+    expect(effectiveAccessTokenTtl('5s', 'test')).toBe('5s');
+    expect(effectiveAccessTokenTtl('nonsense', 'development')).toBe('nonsense');
   });
 });
 

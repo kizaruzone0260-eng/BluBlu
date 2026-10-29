@@ -8,6 +8,23 @@ on:
   # не годятся (шум в истории), а `gh run rerun` — это перезапуск того же прогона, а не новый.
   workflow_dispatch:
 
+# 2026-10-28, аудит SEC-07 (CWE-269). Прежний файл не имел блока `permissions` вообще, то есть
+# каждый job получал тот scope, который настроен в настройках репозитория, — а это значение
+# по умолчанию умеет быть «read-write», и ни один тест об этом не сказал бы. Теперь минимальный
+# scope задан ЯВНО и здесь, и он одинаков для всех семи джоб: `contents: read` (клон + история),
+# ничего больше. Загрузка артефактов — единственная операция, которой нужно расширение, и она
+# получает `actions: write` локально, в трёх своих джобах, а не всему workflow.
+#
+# Второе, что здесь поправлено тем же заходом (CWE-1104): все сторонние действия закреплены по
+# commit SHA вместо мутабельного тега `@v4`. Тег — это указатель, который владелец репозитория
+# действия может двинуть в любую минуту, и следующий релиз тогда приедет в CI сам, без решения
+# владельца BluBlu. Версии НЕ повышены: каждый SHA — это ровно тот коммит, на который теги
+# `v4` указывали на момент правки (checkout v4.4.0, setup-node v4.4.0, pnpm/action-setup v4.3.0,
+# upload-artifact v4.6.2), поэтому поведение джоб не меняется. Поднятие
+# мажорной версии — отдельная задача со своей проверкой, а не побочный эффект пиннинга.
+permissions:
+  contents: read
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -26,14 +43,14 @@ jobs:
     env:
       DATABASE_URL_TEST: postgres://klass:klass@localhost:5433/klass
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # полная история обязательна: этот job проверяет секреты по всем коммитам, а shallow-клон
         # (fetch-depth: 1 по умолчанию) дал бы «история прочитана — 0 находок» там, где
         # история не прочитана вовсе
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4          # packageManager pinned in root package.json
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0   # packageManager pinned in root package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -122,6 +139,12 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # `actions: write` нужен ровно одному шагу этого джобы — actions/upload-artifact с трассами
+    # и test-results. Без него при верхнем `permissions: contents: read` выкладка падала бы с
+    # «Resource not accessible by integration», и это был бы красный CI без дефекта в коде.
+    permissions:
+      contents: read
+      actions: write
     # 25 минут стало мало после zz20–zz22: прогон 38506706395 был снят таймаутом ровно на 25m21s
     # (все остальные джобы — зелёные). Набор растёт вместе с фичами, а «упало 4 теста из-за
     # таймера» — это не про код. Заодно tracet-snapshot шаг остаётся доступным.
@@ -158,9 +181,9 @@ jobs:
       LIVEKIT_API_KEY: e2ekey
       LIVEKIT_API_SECRET: e2esecrete2esecrete2esecrete2esecret
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -185,7 +208,7 @@ jobs:
       # e2e-results.json), это плата за сохранённые трассы.
       - name: Трассы и test-results упавшего прогона
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-test-results-${{ github.run_id }}
           path: |
@@ -200,6 +223,10 @@ jobs:
   # вписан в docs/MANUAL_QA.md с шагами ручной проверки.
   e2e-unstable:
     runs-on: ubuntu-latest
+    # то же, что в `e2e`: `actions: write` только ради выкладки трасс упавшего прогона
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 20
     needs: build-test
     continue-on-error: true
@@ -228,9 +255,9 @@ jobs:
       LIVEKIT_API_KEY: e2ekey
       LIVEKIT_API_SECRET: e2esecrete2esecrete2esecrete2esecret
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -240,7 +267,7 @@ jobs:
       - run: pnpm --filter @klass/e2e exec playwright test --grep @unstable
       - name: Трассы и test-results неблокирующего спека
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-unstable-results-${{ github.run_id }}
           path: |
@@ -257,13 +284,17 @@ jobs:
   # Медиа-сервер не нужен: урок снимается как экран, вход в комнату спеком не делается.
   phone-shots:
     runs-on: ubuntu-latest
+    # то же, что в `e2e`: `actions: write` только ради выкладки кадров телефонов
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 25
     needs: build-test
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -276,7 +307,7 @@ jobs:
         # always(): сорванный на пятом экране прогон всё равно обязан отдать снятые кадры —
         # именно они и показывают, на котором из экранов что-то сломалось
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: phone-shots-${{ github.run_id }}
           path: apps/e2e/test-results/phone-shots
@@ -313,7 +344,7 @@ jobs:
       PGUSER: klass
       PGPASSWORD: klass
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: backup.sh → шифрование → restore.sh → сверка (прямой режим, pg_dump)
         run: bash deploy/scripts/test-backup-restore.sh
       - name: pg_dump и версии клиента (чтобы вывод сверки читался без догадок)
@@ -327,7 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build apps/api/Dockerfile
         run: docker build -f apps/api/Dockerfile -t klass-api:${{ github.sha }} .
       - name: Image size (printed for comparison, not a gate)
@@ -407,8 +438,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U klass" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - name: Clean build of the image, without any layer cache

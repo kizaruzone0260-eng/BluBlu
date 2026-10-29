@@ -19,9 +19,12 @@
   --accent-text: #ffffff;
   --danger: #c0392f;
   --danger-soft: #fbe9e7;
-  --ok: #1c7c43;
+  /* 2026-10-28 (аудит, пункт 13): прежние --ok #1c7c43 / --warn #9a6700 давали на своих
+     «мягких» фонах 4.48 / 4.41 — ниже порога AA 4.5. Затемнены до 6.00 / 5.32 без смены
+     оттенков; на белом контраст вырос с 5.23/4.87 до 7.00/5.87. Тёмная тема не менялась. */
+  --ok: #17663a;
   --ok-soft: #dcf3e4;
-  --warn: #9a6700;
+  --warn: #8a5b00;
   --warn-soft: #fdf3dc;
   --shadow-sm: 0 1px 2px rgba(23, 33, 29, .06), 0 1px 3px rgba(23, 33, 29, .05);
   --shadow-md: 0 2px 6px rgba(23, 33, 29, .07), 0 8px 24px rgba(23, 33, 29, .08);
@@ -205,7 +208,9 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 /* live camera self-view on the pre-join screen */
 .preview-video { width: 100%; max-width: 320px; aspect-ratio: 16/9; background: #000; border-radius: var(--r-md); margin-top: 8px; }
 /* build stamp (task 1): tiny, unobtrusive */
-.build-tag { font-size: .7rem; opacity: .55; text-align: center; margin-top: var(--sp-4); }
+/* 2026-10-28 (аудит, пункт 13): прозрачность .55 поверх --text-muted давала 2.27 на белом.
+   Приглушённость даёт сам --text-muted (5.61), без opacity. */
+.build-tag { font-size: .7rem; text-align: center; margin-top: var(--sp-4); }
 /* moderation feedback (task 3) */
 .chip-active { background: var(--accent) !important; color: var(--accent-text) !important; border-color: var(--accent) !important; }
 .banner {
@@ -484,14 +489,26 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
  */
 .sidebar.collapsed .side-lang { padding: 4px 0; }
 .sidebar.collapsed .lang-wrap button { width: 100%; min-width: 0; padding: 0 4px; gap: 2px; justify-content: center; }
-.sidebar.collapsed .lang-code { font-size: .58rem; font-weight: 700; opacity: .75; }
+/* 2026-10-28 (аудит, пункт 13): opacity .75 гасила код языка до ~3.6 на белом. Код и так
+   мельче прочей подписи; контраст держит --accent (5.47) без прозрачности. */
+.sidebar.collapsed .lang-code { font-size: .58rem; font-weight: 700; }
 .sidebar.collapsed .side-collapse { justify-content: center; padding: 0 4px; }
 .sidebar.collapsed .side-user { padding: 4px; justify-content: center; }
 .sidebar.collapsed .nav-badge { min-width: 8px; width: 8px; height: 8px; padding: 0; font-size: 0; margin-left: 0; }
 /* меню пользователя и меню языка в свёрнутом виде открываются ВПРАВО от рейки: внутрь 64 px они не помещаются */
 .sidebar.collapsed .menu-pop { left: 100%; right: auto; width: 240px; margin-left: 4px; }
-.side-user { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border-radius: var(--r-md); cursor: pointer; min-height: var(--tap); }
-.side-user:hover { background: var(--surface-2); }
+/* 2026-10-28 (аудит, пункт 13): пользовательская плашка в рейке — настоящая <button>, а не
+   div с role="button": Enter/Space и имя доступности берутся из семантики. Базовые стили
+   кнопки сняты, чтобы рейка выглядела как прежде. */
+.side-user {
+  display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2);
+  border-radius: var(--r-md); cursor: pointer; min-height: var(--tap);
+  width: 100%; margin-top: 0; justify-content: flex-start; text-align: left;
+  background: transparent; color: var(--text); border: 1px solid transparent;
+  font: inherit; font-weight: inherit;
+}
+.side-user:hover:not(:disabled) { background: var(--surface-2); }
+.side-user:active:not(:disabled) { transform: none; }
 .avatar {
   width: 34px; height: 34px; flex: 0 0 34px; border-radius: var(--r-full);
   background: var(--accent); color: var(--accent-text);
@@ -629,6 +646,11 @@ th { color: var(--text-muted); font-weight: 600; font-size: .8rem; }
 .fc .fc-button-primary:not(:disabled):hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .fc .fc-button-primary:not(:disabled).fc-button-active, .fc .fc-button-primary:not(:disabled):active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number, .fc .fc-list-day-text, .fc .fc-list-day-side-text { color: var(--text); }
+/* 2026-10-28 (аудит, пункт 13): числа соседних месяцев FullCalendar гасит opacity .3 —
+   на белом это 1.91. Различаем их цветом --text-muted (5.61), а не прозрачностью; селектор
+   с лишним классом перебивает CSS пакета, который грузится позже основного. */
+.fc .fc-daygrid-day.fc-day-other .fc-daygrid-day-top { opacity: 1; }
+.fc .fc-daygrid-day.fc-day-other .fc-daygrid-day-number { color: var(--text-muted); }
 
 /* ── misc ───────────────────────────────────────────────────────────────── */
 @media (max-width: 640px) { .container { padding: var(--sp-3) var(--sp-3) 84px; } }
@@ -844,6 +866,13 @@ button.danger-text { color: var(--danger); }
 .pdf-board label { width: 100%; margin: 0; }
 .pdf-thumb { width: 96px; height: 60px; object-fit: contain; background: #fff; border: 1px solid var(--border); border-radius: var(--r-md); flex: 0 0 auto; }
 .pdf-thumb-empty { display: inline-block; }
+/* 2026-10-28 (аудит, пункты 10/13): размеры загруженного файла неизвестны до декодирования,
+   поэтому место под картинку и видео в окне просмотра резервируется контейнером — иначе
+   появление изображения сдвигало заголовок окна (CLS). */
+.preview-media {
+  height: min(70vh, 560px); display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); border-radius: var(--r-md); overflow: hidden;
+}
 .pdf-progress { position: relative; display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: var(--r-md); padding: 6px 8px; overflow: hidden; }
 .pdf-progress .pdf-bar { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: .28; transition: width var(--tr); }
 .pdf-progress > span { position: relative; }
@@ -901,7 +930,17 @@ button.danger-text { color: var(--danger); }
   background: var(--surface-2); color: var(--text); font-size: .9rem; font-weight: 550;
   transition: background var(--tr), color var(--tr), border-color var(--tr);
 }
-.bar-btn:hover { border-color: var(--accent); color: var(--accent); }
+/*
+ * Наведение в полосе урока не берёт общую заливку кнопок (`--accent-hover`): подпись здесь
+ * окрашена в `--accent`, и пара «accent на accent-hover» даёт 1.37:1 — axe serious, красный
+ * прогон 2026-10-28 (курсор остаётся на «Ещё» после открытия меню). Фон остаётся своим, меняются
+ * только рамка и цвет; красные кнопки остаются красными, а не зеленеют от общего :hover.
+ */
+.bar-btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--accent); color: var(--accent); }
+.bar-btn.bar-active:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.bar-btn.bar-off:hover:not(:disabled), .bar-btn.bar-leave:hover:not(:disabled) {
+  background: var(--danger); border-color: var(--danger); color: #fff;
+}
 .bar-btn .bar-ico { font-size: 1.05rem; line-height: 1; }
 .bar-btn .bar-lbl { display: none; }
 /*
@@ -934,7 +973,8 @@ button.danger-text { color: var(--danger); }
   border-radius: 0 var(--r-full) var(--r-full) 0; background: var(--surface-2); color: var(--text-muted);
   margin: 0; font-size: .7rem;
 }
-.bar-split .bar-arrow:hover { color: var(--accent); border-color: var(--accent); }
+/* та же причина, что у `.bar-btn:hover`: своя заливка, чтобы текст оставался читаемым */
+.bar-split .bar-arrow:hover:not(:disabled) { background: var(--surface-2); color: var(--accent); border-color: var(--accent); }
 .bar-badge {
   position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px;
   border-radius: var(--r-full); background: var(--accent); color: var(--accent-text);
@@ -1226,3 +1266,205 @@ a.invite-tg:hover { border-color: var(--accent); }
 .invite-record__facts > div { min-width: 0; }
 .invite-record__facts dt { font-size: .72rem; color: var(--text-muted); text-transform: none; }
 .invite-record__facts dd { margin: 0; font-size: .85rem; overflow-wrap: anywhere; }
+
+/* ═══ Telegram Mini App (задача F, 2026-10-28) ═══════════════════════════════
+   Отдельная поверхность внутри телеграм-вебвью: без Shell, без cookie-сессии.
+   Правила этой секции:
+   • 390 px — эталон: никакого горизонтального скролла, все инпуты min-width:0;
+   • любая кнопка/чекбокс-строка — не ниже --tap (44 px);
+   • цвета берём из Telegram (themeParams приходят CSS-переменными --tg-*), а
+     брендовый акцент остаётся нашим: чужой button_color превратил бы интерфейс
+     в «телеграм-синий» и разошёлся бы с остальным продуктом;
+   • safe-area учитывается сверху и снизу — под жестами iPhone кнопка «Отправить»
+     не должна оказаться;
+   • тёмная тема: applyTelegramTheme выставляет html[data-theme], поэтому все
+     токены (--surface, --border, --danger…) уже переключены. */
+.mini-app {
+  --mini-bg: var(--tg-bg, var(--bg));
+  --mini-surface: var(--tg-bg-2, var(--surface));
+  --mini-text: var(--tg-text, var(--text));
+  --mini-muted: var(--tg-hint, var(--text-muted));
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--mini-bg);
+  color: var(--mini-text);
+  padding: calc(env(safe-area-inset-top, 0px) + 10px)
+           calc(env(safe-area-inset-right, 0px) + 14px)
+           calc(env(safe-area-inset-bottom, 0px) + 18px)
+           calc(env(safe-area-inset-left, 0px) + 14px);
+  overflow-x: clip;
+}
+.mini-app * { min-width: 0; }
+.mini-screen {
+  width: 100%; max-width: 560px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  overflow-wrap: anywhere;
+}
+.mini-screen h1 { margin: 0 0 2px; font-size: 1.28rem; }
+.mini-screen h2 { margin: var(--sp-2) 0 0; }
+.mini-screen p { margin: 0; }
+.mini-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-2); padding-bottom: var(--sp-1);
+}
+.mini-head--sticky {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) - 10px); z-index: 3;
+  background: var(--mini-bg);
+  padding: 10px 0 var(--sp-2);
+  margin-top: -10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.mini-step {
+  font-size: .72rem; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--mini-muted);
+}
+.mini-refresh {
+  flex: none; width: var(--tap); min-width: var(--tap); height: var(--tap);
+  padding: 0; margin: 0; font-size: 1.15rem; border-radius: var(--r-full);
+}
+.mini-screen .muted { color: var(--mini-muted); }
+.mini-screen .card {
+  background: var(--mini-surface); color: var(--mini-text);
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  margin: 0;
+}
+.mini-cta-card { display: flex; flex-direction: column; gap: var(--sp-2); }
+.mini-cta { width: 100%; min-height: 52px; margin: 0; font-size: 1rem; }
+/* Task F.1: three doors on the home screen — each opens a real screen, each is a full tap target. */
+.mini-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+.mini-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: 64px; padding: 10px 12px; margin: 0;
+  background: var(--mini-surface); color: var(--mini-text);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--r-md); text-align: left; font-size: .86rem;
+}
+.mini-tile:hover { background: color-mix(in srgb, var(--accent) 8%, var(--mini-surface)); }
+.mini-tile-title { font-weight: 600; }
+.mini-tile-count { font-size: .76rem; color: var(--mini-muted); }
+@media (max-width: 359px) {
+  .mini-tiles { grid-template-columns: 1fr; }
+  .mini-tile { min-height: var(--tap); flex-direction: row; align-items: center; justify-content: space-between; }
+}
+.mini-note { font-size: .88rem; }
+.mini-foot { padding-top: var(--sp-2); font-size: .76rem; text-align: center; }
+
+/* списки: строки-кнопки и строки-чекбоксы */
+.mini-list { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+.mini-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  width: 100%; min-height: 52px; margin: 0; padding: 10px 12px;
+  background: var(--mini-surface); color: var(--mini-text);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--r-md);
+  font-size: .92rem; font-weight: 500; text-align: left;
+}
+.mini-row-main { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; flex: 1; }
+.mini-row-main strong { font-weight: 600; font-size: .95rem; }
+.mini-row-main small { font-size: .78rem; }
+.mini-row--button { cursor: pointer; }
+.mini-row--button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 8%, var(--mini-surface)); }
+.mini-row--static { align-items: flex-start; }
+.mini-row--check {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
+  cursor: pointer;
+}
+.mini-row--check input[type=checkbox] {
+  width: 22px; height: 22px; margin: 0; accent-color: var(--accent);
+}
+.mini-row--check.is-disabled { opacity: .6; cursor: not-allowed; }
+.mini-history .mini-row { min-height: 44px; padding: 8px 12px; }
+
+/* бейджи результата: цвет — из статуса, не из позиции */
+.mini-badge {
+  flex: none; padding: 3px 9px; border-radius: var(--r-full);
+  font-size: .72rem; font-weight: 600; white-space: nowrap;
+  background: var(--surface-2); color: var(--text-muted);
+}
+.mini-badge--sent { background: var(--ok-soft); color: var(--ok); }
+.mini-badge--failed { background: var(--danger-soft); color: var(--danger); }
+.mini-badge--uncertain, .mini-badge--sending { background: var(--warn-soft); color: var(--warn); }
+
+.mini-section { display: flex; flex-direction: column; gap: var(--sp-2); }
+.mini-section label { margin: var(--sp-2) 0 0; }
+.mini-app input, .mini-app textarea, .mini-app select {
+  background: var(--mini-surface); color: var(--mini-text); margin-top: 0;
+}
+.mini-app textarea { resize: vertical; line-height: 1.4; }
+.mini-links { border: 0; margin: var(--sp-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.mini-links legend { padding: 0; font-size: .82rem; font-weight: 550; color: var(--mini-muted); }
+.mini-link-row { display: flex; align-items: stretch; gap: 6px; }
+.mini-link-fields { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.mini-link-remove { flex: none; width: var(--tap); padding: 0; margin: 0; }
+.mini-row-actions { margin-top: var(--sp-1); }
+.mini-row-actions button { margin-top: 0; }
+
+.mini-notice {
+  font-size: .86rem; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm);
+  background: var(--warn-soft); color: var(--warn);
+}
+.mini-warnings, .mini-questions {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: var(--sp-3); border-radius: var(--r-md); font-size: .84rem;
+}
+.mini-warnings { background: var(--warn-soft); color: var(--warn); }
+.mini-questions { background: var(--accent-soft); color: var(--text); }
+.mini-warnings ul, .mini-questions ul { margin: 0; padding-left: 1.1rem; }
+.mini-fidelity { font-size: .78rem; }
+
+.mini-final-text {
+  margin: 0; max-height: 42vh; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--mini-surface); color: var(--mini-text);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  padding: var(--sp-3); font: inherit; font-size: .88rem; line-height: 1.45;
+}
+.mini-check {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  min-height: var(--tap); margin: var(--sp-2) 0 0; padding: 10px 0;
+  font-size: .88rem; font-weight: 500; color: var(--mini-text); cursor: pointer;
+}
+.mini-check input[type=checkbox] { width: 22px; height: 22px; flex: none; margin: 0; accent-color: var(--accent); }
+
+.mini-summary { display: grid; gap: 6px; margin: 0; }
+.mini-summary > div { display: flex; justify-content: space-between; gap: var(--sp-2); }
+.mini-summary dt { color: var(--mini-muted); font-size: .8rem; }
+.mini-summary dd { margin: 0; font-size: .86rem; text-align: right; }
+
+.mini-nav {
+  position: sticky; bottom: 0; z-index: 3;
+  display: flex; gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  padding: var(--sp-2) 0 calc(env(safe-area-inset-bottom, 0px) + 6px);
+  background: linear-gradient(to top, var(--mini-bg) 78%, transparent);
+}
+.mini-nav button { flex: 1; margin: 0; min-height: 48px; }
+.mini-cancel { text-align: center; padding-bottom: var(--sp-3); }
+.mini-cancel button { margin: 0; }
+
+.mini-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mini-count {
+  padding: 4px 10px; border-radius: var(--r-full);
+  font-size: .78rem; font-weight: 600; background: var(--surface-2); color: var(--text-muted);
+}
+.mini-count--ok { background: var(--ok-soft); color: var(--ok); }
+.mini-count--bad { background: var(--danger-soft); color: var(--danger); }
+.mini-count--warn { background: var(--warn-soft); color: var(--warn); }
+.mini-pub--failed { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.mini-pub--uncertain { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.mini-parts { margin: 4px 0 0; padding-left: 1.1rem; font-size: .78rem; color: var(--mini-muted); }
+.mini-retry { display: flex; flex-direction: column; gap: var(--sp-2); }
+.mini-retry button { margin: 0; }
+
+/* на большом экране окно Telegram тоже бывает широким: мастер не растягиваем */
+@media (min-width: 640px) {
+  .mini-screen { max-width: 600px; }
+  .mini-app { padding-top: calc(env(safe-area-inset-top, 0px) + 20px); }
+}
+
+/* очень узкий телефон (320 px): ссылки и кнопки — в столбик */
+@media (max-width: 360px) {
+  .mini-link-row { flex-direction: column; }
+  .mini-link-remove { align-self: flex-end; }
+  .mini-nav button { font-size: .84rem; padding: 10px 8px; }
+}

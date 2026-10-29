@@ -10,8 +10,22 @@
 import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
 import { env } from '../env.js';
 
-export interface InlineButton { text: string; cb?: string; url?: string }
+/**
+ * Task F (2026-10-28): `webApp` opens a Mini App in Telegram's own webview (Bot API `web_app`
+ * button). This is the ONLY client-side trace of the bot token: the URL is built from the public
+ * https site, never from the token, and the app verifies initData server-side.
+ */
+export interface InlineButton { text: string; cb?: string; url?: string; webApp?: string }
 export interface SendOpts { buttons?: InlineButton[][]; html?: boolean }
+/**
+ * Task F.1 (2026-10-29): the button that sits next to the message field and stays there between
+ * sessions (Bot API `setChatMenuButton`). Telegram refuses a `web_app` menu button over http,
+ * so `default` is the honest state both when the site has no https address and for every chat
+ * that must not see the teacher's Mini App at all.
+ */
+export type ChatMenuButton =
+  | { type: 'web_app'; text: string; url: string }
+  | { type: 'default' };
 /**
  * Can this `file_id` still be re-sent? `missing` is Telegram's own definite refusal (4xx),
  * `unknown` is any other failure — a timeout must not block a homework. Metadata only:
@@ -43,6 +57,11 @@ export interface BotApi {
   /** scope: undefined = default (global) scope, a chat id = per-chat menu */
   setMyCommands(commands: { command: string; description: string }[], languageCode: string, chatId?: string): Promise<void>;
   deleteMyCommands(languageCode: string, chatId?: string): Promise<void>;
+  /**
+   * The persistent menu button of ONE private chat. Per-chat, not global: a global `web_app`
+   * would show the teacher's Mini App to students and unlinked people too.
+   */
+  setChatMenuButton(chatId: string, button: ChatMenuButton): Promise<void>;
 }
 
 /** Wraps a grammY bot api; failures bubble to the caller which logs them. */
@@ -100,13 +119,29 @@ export function grammyApi(bot: { api: any }): BotApi {
       const scope = chatId ? { type: 'chat', chat_id: Number(chatId) } : { type: 'all_private_chats' };
       await bot.api.deleteMyCommands({ scope, language_code: languageCode });
     },
+    async setChatMenuButton(chatId, button) {
+      await bot.api.setChatMenuButton({
+        chat_id: Number(chatId),
+        menu_button: button.type === 'web_app'
+          ? { type: 'web_app', text: button.text, web_app: { url: button.url } }
+          : { type: 'default' },
+      });
+    },
   };
 }
 
 function extra(opts?: SendOpts) {
   const e: Record<string, unknown> = {};
   if (opts?.html) { e.parse_mode = 'HTML'; e.disable_web_page_preview = true; }
-  if (opts?.buttons?.length) e.reply_markup = { inline_keyboard: opts.buttons.map((row) => row.map((b) => (b.cb ? { text: b.text, callback_data: b.cb } : { text: b.text, url: b.url }))) };
+  if (opts?.buttons?.length) {
+    e.reply_markup = {
+      inline_keyboard: opts.buttons.map((row) => row.map((b) => (b.webApp
+        ? { text: b.text, web_app: { url: b.webApp } }
+        : b.cb
+          ? { text: b.text, callback_data: b.cb }
+          : { text: b.text, url: b.url }))),
+    };
+  }
   return e;
 }
 
@@ -115,6 +150,7 @@ export class CapturingApi implements BotApi {
   calls: {
     kind: string; chatId: string; text?: string; messageId?: number; opts?: SendOpts;
     commands?: unknown; lang?: string; fileId?: string; fromChatId?: string; messageIds?: number[];
+    menu?: ChatMenuButton;
   }[] = [];
   failNext = false;
   /** Chat ids whose sends throw — used to prove per-group publication outcomes. */
@@ -196,6 +232,7 @@ export class CapturingApi implements BotApi {
   }
   async setMyCommands(commands: unknown, lang: string, chatId?: string) { this.calls.push({ kind: 'cmds', chatId: chatId ?? '', commands, lang }); }
   async deleteMyCommands(lang: string, chatId?: string) { this.calls.push({ kind: 'delcmds', chatId: chatId ?? '', lang }); }
+  async setChatMenuButton(chatId: string, menu: ChatMenuButton) { this.calls.push({ kind: 'menubtn', chatId, menu }); }
   last(kind: string) { for (let i = this.calls.length - 1; i >= 0; i--) if (this.calls[i]?.kind === kind) return this.calls[i]; return undefined; }
 }
 
@@ -259,6 +296,9 @@ export const TEACHER_COMMANDS = [
   ['library', { ru: 'Библиотека материалов', uz: 'Materiallar kutubxonasi', en: 'Material library' }],
   ['announce', { ru: 'Объявление классу', uz: 'E’lon yuborish', en: 'Announce to class' }],
   ['homework', { ru: 'Домашнее задание в Telegram', uz: 'Telegramga uy vazifasi', en: 'Homework to Telegram' }],
+  // Task F/F.1: the screen-based editor of the same homework, labelled as the door it is —
+  // the command list is part of the teacher's menu, so it must say what tapping it opens.
+  ['mini', { ru: 'Открыть BluBlu', uz: 'BluBlu’ni ochish', en: 'Open BluBlu' }],
   ['settings', { ru: 'Настройки уведомлений', uz: 'Bildirishnoma sozlamalari', en: 'Notification settings' }],
   ['language', { ru: 'Язык', uz: 'Til', en: 'Language' }],
   ['help', { ru: 'Помощь', uz: 'Yordam', en: 'Help' }],

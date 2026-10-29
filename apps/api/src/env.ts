@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { effectiveTokenTtl } from './lib/tokenTtl.js';
-import { effectiveLiveKitApiBase, effectiveLiveKitWs, effectiveRefreshGrace, effectiveWebOrigin, productionSecretProblems } from './lib/prodConfig.js';
+import {
+  effectiveAccessTokenTtl, effectiveArgon2Costs, effectiveLiveKitApiBase, effectiveLiveKitWs,
+  effectiveRefreshGrace, effectiveWebOrigin, productionSecretProblems,
+} from './lib/prodConfig.js';
 
 const DEV_SECRET = 'dev-only-secret-change-me-0123456789abcdefgh';
 
@@ -38,6 +41,11 @@ const envSchema = z
   PUBLIC_URL: z.string().default(''),
   STORAGE_DIR: z.string().default('./files-store'),
   MAX_FILE_MB: z.coerce.number().default(100),
+  // SEC-10 (2026-10-28): сколько ТЯЖЁЛЫХ загрузок процесс держит одновременно. Лимит размера
+  // (`MAX_FILE_MB × 4`) считает один запрос, а память — сумма всех одновременных; см.
+  // `lib/uploadGate.ts`. Потолок 16 — защита от опечатки, при которой гейт перестал бы
+  // что-либо ограничивать.
+  MAX_CONCURRENT_UPLOADS: z.coerce.number().int().min(1).max(16).default(2),
   TEACHER_QUOTA_GB: z.coerce.number().default(5),
   // Origin of the UI. The schema default is EMPTY on purpose: lib/prodConfig keeps the
   // vite dev origin for development/test and leaves production unset (see task 2в).
@@ -206,6 +214,23 @@ env.PUBLIC_WEB_ORIGIN = effectiveWebOrigin(process.env.PUBLIC_WEB_ORIGIN, env.NO
 // Part 4а: floor the LiveKit lesson-token TTL at 2 h in production, so a
 // mistyped small value can never drop a mid-lesson participant.
 env.RTC_TOKEN_TTL = String(effectiveTokenTtl(env.RTC_TOKEN_TTL, env.NODE_ENV));
+
+/*
+ * SEC-15 (аудит 2026-10-28): нижние рамки стоимости парольного хеша и срока access-токена в
+ * production. Считать их здесь, до первого импорта `lib/password.ts`, важно: тот читает env на
+ * уровне модуля. В тестах и разработке значения не меняются — дешёвый Argon2 там намеренный.
+ */
+{
+  const argon2 = effectiveArgon2Costs({
+    memoryCost: env.ARGON2_MEMORY_COST,
+    timeCost: env.ARGON2_TIME_COST,
+    parallelism: env.ARGON2_PARALLELISM,
+  }, env.NODE_ENV);
+  env.ARGON2_MEMORY_COST = argon2.memoryCost;
+  env.ARGON2_TIME_COST = argon2.timeCost;
+  env.ARGON2_PARALLELISM = argon2.parallelism;
+  env.ACCESS_TOKEN_TTL = effectiveAccessTokenTtl(env.ACCESS_TOKEN_TTL, env.NODE_ENV);
+}
 
 export type Env = typeof env;
 

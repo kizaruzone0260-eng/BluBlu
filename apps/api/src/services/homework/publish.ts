@@ -26,6 +26,7 @@ import type { DB } from '../../db/index.js';
 import type { PublicationPart } from '../../db/schema.js';
 import { tgDraftItems, tgDrafts, tgGroups, tgPublications } from '../../db/schema.js';
 import { safeErrorMessage } from '../../lib/redact.js';
+import { audit } from '../audit.js';
 import type { BotApi } from '../botApi.js';
 import { PUBLISH_CHUNK } from './constants.js';
 import { listDraftMaterials, markMaterialsUsed, type HwDraftMaterialRow } from './libraryStore.js';
@@ -299,13 +300,25 @@ async function finalize(
       .map((m) => m.materialId).filter((id): id is string => Boolean(id));
     await markMaterialsUsed(db, ownerId, ids).catch(() => undefined);
   }
-  if (rows.some((r) => r.status === 'uncertain' || r.status === 'sending')) {
-    return transitionDraft(db, draftId, ownerId, ['publishing'], 'publish_unknown');
-  }
-  if (rows.some((r) => r.status === 'failed')) {
-    return transitionDraft(db, draftId, ownerId, ['publishing'], 'failed');
-  }
-  return transitionDraft(db, draftId, ownerId, ['publishing'], 'published', { publishedAt: new Date() });
+  /*
+   * Одна запись на исход (2026-10-28, аудит SEC-08). До этого homework не оставлял следа в
+   * `audit_log` вообще: «кто и когда раздал задание классам» можно было восстановить только по
+   * строкам `tg_drafts`/`tg_publications`, то есть по машинному состоянию, а не по поступку
+   * человека. Машина состояний при этом остаётся ЕДИНСТВЕННЫМ местом, где живут тайминги и partie:
+   * здесь нарочно дублируется только факт и счётчики — без текстов заданий, без названий групп и
+   * без identifiers чатов учеников.
+   */
+  const outcome = rows.some((r) => r.status === 'uncertain' || r.status === 'sending')
+    ? 'publish_unknown'
+    : rows.some((r) => r.status === 'failed') ? 'failed' : 'published';
+  const draft = outcome === 'published'
+    ? await transitionDraft(db, draftId, ownerId, ['publishing'], outcome, { publishedAt: new Date() })
+    : await transitionDraft(db, draftId, ownerId, ['publishing'], outcome);
+  audit(db, ownerId, 'homework_publish', {
+    draftId, status: outcome, groups: rows.length,
+    failed: rows.filter((r) => r.status === 'failed').length,
+  });
+  return draft;
 }
 
 async function sendRows(

@@ -103,6 +103,14 @@ const api = spawn('node', ['dist/server.js'], {
     ...(process.env.LIVEKIT_URL ? { LIVEKIT_URL: process.env.LIVEKIT_URL } : {}),
     LIVEKIT_INTERNAL_URL: 'http://127.0.0.1:7880',
     TELEGRAM_TRANSPORT: 'log',
+    /*
+     * Mini App (task F): the e2e stand deliberately has NO bot token, and m-mini.spec.ts checks
+     * the honest 503 `miniUnavailable` a browser sees then. Pinning the values explicitly keeps
+     * a token exported in the developer's shell (or inherited from CI) from changing what that
+     * test means. The `log` transport never reaches Telegram anyway.
+     */
+    TELEGRAM_BOT_TOKEN: '',
+    TELEGRAM_BOT_NAME: '',
     PUBLIC_WEB_ORIGIN: `http://127.0.0.1:${PORT}`,
     // The suite logs in far more than a real user from one IP (127.0.0.1), so
     // relax the auth brute-force caps for e2e only. The HTTP rate-limit unit

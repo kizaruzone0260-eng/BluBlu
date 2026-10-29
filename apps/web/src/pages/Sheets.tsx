@@ -138,7 +138,7 @@ export default function Sheets() {
               }}>{openId === s.id ? t('common.save') : '≡'}</button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => exportSheet(s, 'md')}>.md</button>
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => exportSheet(s, 'txt')}>.txt</button>
-            <button className="danger" style={{ marginTop: 0 }} data-testid="sheet-del"
+            <button className="danger" style={{ marginTop: 0 }} data-testid="sheet-del" aria-label={t('common.delete')}
               onClick={() => { if (window.confirm(t('notes.deleteConfirm'))) del.mutate(s.id); }}>✕</button>
           </div>
           {openId === s.id && (

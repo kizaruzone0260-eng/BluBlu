@@ -4,25 +4,51 @@ import { AccessToken, RoomServiceClient, TrackSource } from 'livekit-server-sdk'
 import { lessonSessions } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env, livekitRoomApiUrl } from '../env.js';
+import { isUniqueViolation } from '../lib/pgErrors.js';
 
 export type LessonSession = typeof lessonSessions.$inferSelect;
 
+/**
+ * Начать урок — или вернуть уже идущий.
+ *
+ * SEC-11 (2026-10-28). Здесь была настоящая гонка: SELECT активной сессии и INSERT — два запроса,
+ * и между ними окно. Два одновременных «Начать урок» (двойной клик, две вкладки, повтор после
+ * таймаута) создавали ДВЕ активные сессии одного класса: у каждой своя комната LiveKit и своя
+ * доска, ученики попадали в разные уроки, а завершение одного оставляло второй висеть.
+ *
+ * Предпроверка ниже осталась: в обычном случае она даёт идемпотентный ответ без исключения. Но
+ * инвариант теперь держит частичный уникальный индекс `lesson_sessions_one_active_per_class`
+ * (см. schema.ts). Если гонку выиграл конкурент, INSERT падает с 23505 — это не ошибка для
+ * учителя, а знак «урок уже начат»: перечитываем активную сессию и возвращаем её. Повторная
+ * попытка нужна и на единственном другом уникальном поле — `room_name`: случайное совпадение
+ * 64-битного хвоста практически невозможно, но правильная реакция на него — новый хвост, а не
+ * 500. Все прочие ошибки уходят наружу, как раньше.
+ */
 export async function startLesson(
   db: DB, teacherId: string, classId: string, eventId?: string,
 ): Promise<LessonSession> {
-  // one active session per class at a time (v1)
-  const [existing] = await db.select().from(lessonSessions)
-    .where(and(eq(lessonSessions.classId, classId), isNull(lessonSessions.endedAt)))
-    .limit(1);
-  if (existing) return existing;
-  // Hardening (Phase 1к): 64 bits of per-session entropy in the room name.
-  // The room itself is never a secret (a valid, membership-gated JWT is still
-  // required to join), but a longer random tail removes any guessability.
-  const room = `lesson-${classId.slice(0, 8)}-${randomBytes(8).toString('hex')}`;
-  const [s] = await db.insert(lessonSessions).values({
-    classId, eventId: eventId ?? null, roomName: room, createdBy: teacherId,
-  }).returning();
-  return s!;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // one active session per class at a time (v1)
+    const [existing] = await db.select().from(lessonSessions)
+      .where(and(eq(lessonSessions.classId, classId), isNull(lessonSessions.endedAt)))
+      .limit(1);
+    if (existing) return existing;
+    // Hardening (Phase 1к): 64 bits of per-session entropy in the room name.
+    // The room itself is never a secret (a valid, membership-gated JWT is still
+    // required to join), but a longer random tail removes any guessability.
+    const room = `lesson-${classId.slice(0, 8)}-${randomBytes(8).toString('hex')}`;
+    try {
+      const [s] = await db.insert(lessonSessions).values({
+        classId, eventId: eventId ?? null, roomName: room, createdBy: teacherId,
+      }).returning();
+      return s!;
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+      // либо активную сессию создал конкурент (перечитает следующая итерация), либо совпал
+      // room_name — тогда новая попытка возьмёт новый случайный хвост
+    }
+  }
+  throw new Error('startLesson: could not create or find an active session');
 }
 
 export async function endLesson(db: DB, sessionId: string): Promise<LessonSession | null> {

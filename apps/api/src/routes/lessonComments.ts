@@ -63,7 +63,13 @@ export async function lessonCommentRoutes(app: FastifyInstance, opts: { db: DB }
     if (!a) return;
     const comments = await recentComments(db, a.sessionId);
     const unread = await unreadCount(db, req.user!.id, a.sessionId);
-    void markCommentsRead(db, req.user!.id, a.sessionId).catch(() => undefined);
+    /*
+     * The cursor is awaited on purpose. Fire-and-forget looked like a free read, but two
+     * refreshes in a row raced: the second one computed `unread` before the first one's write
+     * landed and announced a comment that had already been read (seen 2026-10-28 as a red
+     * lesson-comments test). A failed cursor write still must not fail the list itself.
+     */
+    await markCommentsRead(db, req.user!.id, a.sessionId).catch(() => undefined);
     return {
       comments, unread, mode: a.mode, ended: Boolean(a.endedAt),
       // a student is told whether THEY are muted (the list of muted authors is the teacher's view)

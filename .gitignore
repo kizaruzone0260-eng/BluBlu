@@ -50,5 +50,8 @@ apps/web/public/excalidraw-assets/
 /rep-anon-*.json
 /rep-fra-*.json
 
+# cwv-perf.mjs: лабораторные прогоны LCP/CLS; метод и ориентиры описаны в docs/PERFORMANCE.md,
+# сырой прогон в дерево не попадает (как и lesson-perf.json).
+/cwv-perf.json
 # e2e json-отчёт: нужен гейту ci-no-skips.mjs, в дерево не попадает
 apps/e2e/e2e-results.json

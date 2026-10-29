@@ -45,6 +45,7 @@ test.describe.serial('internal link crawl (Phase 3)', () => {
       // shell chrome present everywhere
       await expect(page.locator('meta[name="robots"]')).toHaveCount(1);
       await expect(page.locator('link[rel="icon"]')).toHaveCount(1);
+      await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveCount(1);
       await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
       // a real translated title (never the bare "BluBlu" on a content screen)
       const title = await page.title();
@@ -52,13 +53,38 @@ test.describe.serial('internal link crawl (Phase 3)', () => {
     }
   });
 
-  test('a truly unknown route shows the translated 404', async ({ page }) => {
+  test('a truly unknown route is a 404 in both senses', async ({ page }) => {
     await page.goto('/login');
     await page.getByTestId('email').fill(stack.teacherEmail);
     await page.getByTestId('password').fill(stack.teacherPassword);
     await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
-    await page.goto('/this-page-does-not-exist-xyz');
+    /*
+     * До 2026-10-28 сервер отдавал на неизвестный путь HTML-оболочку со статусом 200
+     * (soft 404), хотя SPA рисовала «страница не найдена». Теперь статус честный, и
+     * проверка держит обе половины: код ответа для машин и экран для человека.
+     */
+    const res = await page.goto('/this-page-does-not-exist-xyz');
+    expect(res?.status(), 'unknown route HTTP status').toBe(404);
+    expect(res?.headers()['content-type'] ?? '').toContain('text/html');
     await expect(page.getByRole('alert')).toBeVisible({ timeout: 5_000 });
+  });
+
+  test('the class-entry explainer is a page for a signed-in user, not a redirect', async ({ page }) => {
+    await page.goto('/login');
+    await page.getByTestId('email').fill(stack.teacherEmail);
+    await page.getByTestId('password').fill(stack.teacherPassword);
+    await page.getByTestId('login-submit').click();
+    await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
+    /*
+     * Ссылки «Как попасть в класс» живут на Home и Classes и ведут на /register. Пока
+     * /register перенаправлял вошедшего домой, ссылка возвращала туда, откуда пришли
+     * (аудит 2026-10-28, пункт 11). Страница статическая — ей незачем быть закрытой.
+     */
+    await page.goto('/register');
+    await expect(page.getByTestId('register-explainer')).toBeVisible({ timeout: 5_000 });
+    await expect(page).toHaveURL(/\/register$/);
+    // «Войти» вошедшему не показываем: эта ссылка вела бы на перенаправление
+    await expect(page.getByTestId('register-login')).toHaveCount(0);
   });
 });

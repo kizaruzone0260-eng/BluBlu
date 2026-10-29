@@ -7,6 +7,7 @@ import './fonts.css';
 import './styles.css';
 import { applyTheme, getThemeChoice } from './lib/theme';
 import { primeJoinToken } from './lib/joinToken';
+import { primeGuestToken } from './lib/guestToken';
 import App from './App';
 
 /*
@@ -17,6 +18,13 @@ import App from './App';
  * (так устроен ESM), но утечки в этом нет: фрагмент не отправляется серверу ни при каком запросе.
  */
 primeJoinToken(window as unknown as Window & { [key: string]: unknown });
+
+/*
+ * Гостевая ссылка `/guest#<токен>` — та же причина и тот же порядок: ключ уходит из адреса до
+ * первого рендера. Страница гостя живёт без аккаунта, поэтому токен хранится в sessionStorage
+ * вкладки: перезагрузка во время ожидания одобрения не должна ломать ссылку.
+ */
+primeGuestToken(window as unknown as Window & { [key: string]: unknown });
 
 applyTheme(getThemeChoice());
 

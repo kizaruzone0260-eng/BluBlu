@@ -8,7 +8,8 @@
  * bearer'у на всех маршрутах, кроме смены пароля, чтения своего профиля, принятия документов и
  * выхода. Три первых теста — про запрет; четвёртый появился 2026-10-27 и держит ровно обратное:
  * согласие с документами от этого списка не исчезнет, иначе аккаунт от учителя не может сделать
- * первый шаг.
+ * первый шаг. Пятый (2026-10-28, аудит SEC-03) держит МЕТОД: на одном пути `/api/me` живут и
+ * «прочитать себя», и «стереть себя», и список обязан различать эти два права.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -95,6 +96,47 @@ suite('C2: временный пароль без смены не даёт ра�
     const blocked = await app.inject({ method: 'GET', url: '/api/classes', headers: bearer(accessToken) });
     expect(blocked.statusCode).toBe(403);
     expect(blocked.json().error).toBe('passwordChangeRequired');
+  });
+
+  /*
+   * 2026-10-28, аудит SEC-03. Прежний список сравнивал ПУТЬ с множеством путей, а на `/api/me`
+   * висят два маршрута — `GET` (прочитать себя) и `DELETE` (стереть себя). Запись `'/api/me'`
+   * открывала поэтому и удаление: аккаунт с навязанной сменой пароля мог уничтожить себя, так и
+   * не задав собственный пароль. Стоит ЭТОМУ месту, а не отдельным файлом, потому что дальше идёт
+   * тест, который меняет пароль, — после него предусловие (флаг смены) уже не держится.
+   *
+   * Проверяются обе стороны: опасная операция закрыта, а нужные первому входу — открыты.
+   */
+  it('метод имеет значение: чтение своего профиля открыто, удаление себя — закрыто', async () => {
+    const { accessToken } = await login();
+
+    const read = await app.inject({ method: 'GET', url: '/api/me', headers: bearer(accessToken) });
+    expect(read.statusCode, 'свой профиль нужен экрану').toBe(200);
+
+    // HEAD = GET: ничего не меняет, и отрезался бы только по формальности сверки строк
+    const head = await app.inject({ method: 'HEAD', url: '/api/me', headers: bearer(accessToken) });
+    expect(head.statusCode, 'HEAD своего профиля не упирается в гейт').toBe(200);
+
+    // синхронизация языка и часового пояса, которую SPA делает на каждом входе
+    const patch = await app.inject({
+      method: 'PATCH', url: '/api/me/profile', headers: bearer(accessToken),
+      payload: { name: 'Гат', lastName: 'Тест', tz: 'Asia/Tashkent' },
+    });
+    expect(patch.statusCode, `свой профиль можно обновить и до смены: ${patch.body}`).toBe(200);
+
+    const del = await app.inject({ method: 'DELETE', url: '/api/me', headers: bearer(accessToken) });
+    expect(del.statusCode, 'удаление аккаунта до смены пароля закрыто').toBe(403);
+    expect(del.json().error).toBe('passwordChangeRequired');
+
+    // и, главное, DELETE действительно НИЧЕГО не стёр — иначе «403» ничего не доказывает
+    const still = await t.db.select({ id: users.id, deletedAt: users.deletedAt })
+      .from(users).where(eq(users.email, email)).limit(1);
+    expect(still[0], 'строка аккаунта на месте').toBeTruthy();
+    expect(still[0]!.deletedAt, 'мягкое удаление не произошло').toBeNull();
+
+    // чужие методы на тех же путях тоже не пропуск: у `/api/me/change-password` есть только POST
+    const weird = await app.inject({ method: 'DELETE', url: '/api/me/change-password', headers: bearer(accessToken) });
+    expect(weird.statusCode, 'несуществующий метод на разрешённом пути не обязан быть 200').toBe(404);
   });
 
   it('сменить пароль, прочитать свой профиль и выйти всё ещё можно', async () => {

@@ -114,7 +114,7 @@ export default function NotesDrawer({ classId, sessionId, open, onToggle }: {
             <strong>{t('sheets.title')}</strong>
             <div className="spacer" />
             <button className="secondary" style={{ marginTop: 0 }} onClick={() => create.mutate()} disabled={create.isPending}>+ {t('sheets.new')}</button>
-            <button className="danger" style={{ marginTop: 0 }} onClick={onToggle}>✕</button>
+            <button className="danger" style={{ marginTop: 0 }} aria-label={t('common.close')} onClick={onToggle}>✕</button>
           </div>
           <div className="row" style={{ flexWrap: 'nowrap', overflowX: 'auto' }}>
             {list.map((s) => (

@@ -40,15 +40,32 @@ export const authPlugin = fp(async (app: FastifyInstance, opts: { db: DB }) => {
    * (`policy_acceptances.user_id`, только своё собственное согласие) с жёсткой проверкой версии
    * документа, и он не даёт тронуть ни класс, ни урок, ни чужие данные. Ровно за тем же держится
    * в списке `/api/me/profile`, который SPA зовёт для синхронизации часового пояса.
+   *
+   * Почему ключ — МЕТОД плюс путь (2026-10-28, аудит SEC-03). Прежний список сравнивал
+   * `req.url` с множеством путей, а Fastify живёт парой «метод + путь». На `/api/me` висят ДВА
+   * маршрута: `GET` (прочитать себя) и `DELETE` (стереть себя, `routes/auth.ts:298`). Значит
+   * запись `'/api/me'` открывала и удаление: аккаунт с навязанной сменой пароля мог уничтожить
+   * себя, так и не задав собственный пароль — не доступ к чужим данным, но ровно тот обход
+   * правила, ради которого этот гейт и существует. Теперь в списке только те combinations,
+   * которые действительно нужны первому входу, и `DELETE /api/me` отвечает 403.
+   *
+   * Отдельно: `HEAD` читается как `GET`. Он по определению не изменяет ничего, а строгая сверка
+   * метода лишила бы смысла простую проверку доступности своим же профилем.
    */
   const TEMP_PW_ALLOWED = new Set([
-    '/api/me',
-    '/api/me/profile',   // SPA синхронизирует часовой пояс и язык при каждом входе: это не работа с уроком
-    '/api/me/accept-policy', // первая калитка стоит ПЕРЕД сменой пароля: иначе аккаунт без согласия в ловушке
-    '/api/me/change-password',
-    '/api/auth/logout',
-    '/api/auth/logout-all',
+    'GET /api/me',            // экрану нужно показать, что происходит
+    'PATCH /api/me/profile',  // SPA синхронизирует часовой пояс и язык при каждом входе
+    'POST /api/me/accept-policy', // первая калитка стоит ПЕРЕД сменой пароля: иначе вход в ловушке
+    'POST /api/me/change-password',
+    'POST /api/auth/logout',
+    'POST /api/auth/logout-all',
   ]);
+
+  /** Ключ списка: «МЕТод путь» без query. `HEAD` = `GET`. */
+  function tempPwKey(req: FastifyRequest): string {
+    const method = req.method === 'HEAD' ? 'GET' : req.method;
+    return `${method} ${(req.url ?? '').split('?')[0] ?? ''}`;
+  }
 
   app.addHook('onRequest', async (req) => {
     const header = req.headers.authorization;
@@ -73,7 +90,7 @@ export const authPlugin = fp(async (app: FastifyInstance, opts: { db: DB }) => {
     if (role && u.role !== role) {
       return reply.code(role === 'teacher' ? 403 : 401).send({ error: 'forbidden' });
     }
-    if (u.mustChangePassword && !TEMP_PW_ALLOWED.has((req.url ?? '').split('?')[0] ?? '')) {
+    if (u.mustChangePassword && !TEMP_PW_ALLOWED.has(tempPwKey(req))) {
       return reply.code(403).send({ error: 'passwordChangeRequired' });
     }
     return undefined;

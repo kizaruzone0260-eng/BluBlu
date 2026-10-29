@@ -21,11 +21,17 @@ async function loginOwner(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('home-title')).toBeVisible({ timeout: 20_000 });
 }
 
-/** Collect CRITICAL/SERIOUS axe violations on the current page (no throw). */
+/**
+ * Collect CRITICAL/SERIOUS axe violations on the current page (no throw).
+ *
+ * `color-contrast` is no longer excluded (2026-10-28, audit item 13): the note said
+ * contrast was handled elsewhere and it was not, so two token pairs sat at 4.48/4.41
+ * while these screens stayed green. The light tokens were darkened to 6.00/5.32 and
+ * the rule now runs with the rest — a new theme colour cannot pass unnoticed.
+ */
 async function axeCritical(page: import('@playwright/test').Page, name: string) {
   const res = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .disableRules(['color-contrast']) // contrast handled separately below
     .analyze();
   return res.violations
     .filter((v) => v.impact === 'critical' || v.impact === 'serious')
@@ -74,5 +80,35 @@ test.describe('a11y (Phase 3)', () => {
     await ctx.close();
     if (all.length) console.log('A11Y AUTH FAILINGS:', JSON.stringify(all, null, 2));
     expect(all, 'axe critical/serious on authenticated screens').toEqual([]);
+  });
+
+  /**
+   * Audit item 13: the bottom-left block used to be a `<div role="button">` with no keyboard
+   * at all, and the profile/theme/logout menu it opened could not be closed with Escape.
+   * It is a real `<button>` now; this checks the parts a screen reader and a keyboard user need:
+   * a name (collapsed rail hides the visible name, so the aria-label is the only name there),
+   * aria-expanded telling the truth, Enter to open and Escape to close with focus coming back.
+   */
+  test('the sidebar user menu is operable and named from the keyboard', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await loginOwner(page);
+    const btn = page.getByTestId('side-user');
+    const menu = page.getByTestId('side-user-menu');
+
+    await expect(btn).toHaveAccessibleName(/E2E Teacher/);
+    await expect(btn).toHaveAttribute('aria-expanded', 'false');
+
+    await btn.focus();
+    await page.keyboard.press('Enter');
+    await expect(menu).toBeVisible();
+    await expect(btn).toHaveAttribute('aria-expanded', 'true');
+
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    await expect(btn).toHaveAttribute('aria-expanded', 'false');
+    await expect(btn).toBeFocused();
+
+    await ctx.close();
   });
 });

@@ -7,7 +7,7 @@ import {
   getSession, buildJoinToken, getRoomService, studentPermission, floorPermission,
   lecturePreDevices, isParticipantGone, type CurrentPermission, type LessonSession,
 } from '../services/lessons.js';
-import { wsJoin, wsBroadcast } from '../lib/wsHub.js';
+import { wsJoin, wsBroadcast, teacherRoomKey } from '../lib/wsHub.js';
 import { closeAttendance, recordJoin, recordLeave } from '../services/lessonArchive.js';
 import { env, livekitPublicWsUrl } from '../env.js';
 import { eq, sql } from 'drizzle-orm';
@@ -55,17 +55,29 @@ async function media<T>(fn: () => Promise<T>): Promise<{ ok: true; value: T } | 
   }
 }
 
+/**
+ * Учительская проверка сессии, вынесенная из замыкания (2026-10-28): её использует и гостевой
+ * маршрут (`routes/lessonGuests.ts`). Копия этой проверки в другом файле означала бы, что одна
+ * из копий однажды забудет `allowEnded` или `resolveClass` — а это уже дыра, а не дублирование.
+ */
+export async function teacherSessionFor(
+  db: DB, userId: string | null, reply: import('fastify').FastifyReply, sessionId: string,
+  { allowEnded = false } = {},
+) {
+  const s = await getSession(db, sessionId);
+  if (!s) { await reply.code(404).send({ error: 'notFound' }); return null; }
+  const cls = await resolveClass(db, userId!, 'teacher', s.classId);
+  if (!cls) { await reply.code(404).send({ error: 'notFound' }); return null; }
+  // AUDIT-H3: moderation of an ENDED session is meaningless — reject like missing
+  if (s.endedAt && !allowEnded) { await reply.code(404).send({ error: 'notFound' }); return null; }
+  return s;
+}
+
 export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
   const { db } = opts;
 
   async function teacherSession(req: { user: { id: string } | null }, reply: import('fastify').FastifyReply, sessionId: string, { allowEnded = false } = {}) {
-    const s = await getSession(db, sessionId);
-    if (!s) { await reply.code(404).send({ error: 'notFound' }); return null; }
-    const cls = await resolveClass(db, req.user!.id, 'teacher', s.classId);
-    if (!cls) { await reply.code(404).send({ error: 'notFound' }); return null; }
-    // AUDIT-H3: moderation of an ENDED session is meaningless — reject like missing
-    if (s.endedAt && !allowEnded) { await reply.code(404).send({ error: 'notFound' }); return null; }
-    return s;
+    return teacherSessionFor(db, req.user!.id, reply, sessionId, { allowEnded });
   }
 
   // Teacher: start (idempotent per class) / end
@@ -372,6 +384,8 @@ export async function lessonRoutes(app: FastifyInstance, opts: { db: DB }) {
       const cls = await resolveClass(db, consumed.userId, consumed.role, s.classId);
       if (!cls) { socket.close(4404); return; }
       wsJoin(q, socket);
+      // заявки гостей — только учителю: ученик не узнаёт ни имён, ни факта заявки
+      if (consumed.role === 'teacher') wsJoin(teacherRoomKey(q), socket);
       // часть 4: сокет урока закрывается — это и есть «участник вышел»
       socket.on('close', () => { void recordLeave(db, q, consumed.userId).catch(() => undefined); });
       socket.send(JSON.stringify({

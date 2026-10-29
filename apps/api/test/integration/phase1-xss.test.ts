@@ -73,7 +73,7 @@ suite('Part 1(д): stored XSS + SSRF', () => {
     await new Promise<void>((r) => probe.listen(0, '127.0.0.1', r));
     const port = (probe.address() as AddressInfo).port;
     const [cls] = await t.db.insert(classes).values({ teacherId, name: 'ssrf' }).returning();
-    // an internal numeric host passes the format-only validator; the point is nothing fetches it
+    // a numeric internal host is rejected by the validator (SEC-22); independently, nothing fetches it
     const up = await app.inject({
       method: 'POST', url: `/api/classes/${cls!.id}/announcements`, headers: bearer(),
       payload: { title: 'link', body: 'x', links: [{ url: `http://127.0.0.1:${port}/ssrf-probe`, title: 'p' }] },
@@ -85,15 +85,18 @@ suite('Part 1(д): stored XSS + SSRF', () => {
     void up;
   });
 
-  it('the URL validator rejects non-http(s)/hostless URLs; internal IPs pass format — no-fetch is the SSRF defence', async () => {
+  it('the URL validator rejects non-http(s)/hostless URLs and literal loopback/link-local hosts', async () => {
     const { safeExternalUrl } = await import('../../src/services/posts.js');
     expect(safeExternalUrl('http://localhost:9/admin')).toBeNull(); // bare host, no dot
     expect(safeExternalUrl('javascript:alert(1)')).toBeNull();
     expect(safeExternalUrl('data:text/html,<script>')).toBeNull();
     expect(safeExternalUrl('file:///etc/passwd')).toBeNull();
-    // numeric internal hosts PASS the format-only check — which is exactly why the
-    // "server never fetches a user URL" probe above is the real SSRF defence.
-    expect(typeof safeExternalUrl('http://169.254.169.254/latest/meta-data')).toBe('string');
-    expect(typeof safeExternalUrl('http://127.0.0.1:80/')).toBe('string');
+    /*
+     * SEC-22: такой литерал открывает БРАУЗЕР ученика, поэтому адрес отклоняется на входе.
+     * Сервер по-прежнему не ходит по пользовательским ссылкам — это доказывает проба выше;
+     * две защиты не заменяют друг друга.
+     */
+    expect(safeExternalUrl('http://169.254.169.254/latest/meta-data')).toBeNull();
+    expect(safeExternalUrl('http://127.0.0.1:80/')).toBeNull();
   });
 });

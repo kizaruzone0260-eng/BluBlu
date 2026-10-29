@@ -50,17 +50,26 @@ try {
     'tg_operators', 'tg_groups', 'tg_bind_tokens', 'tg_drafts', 'tg_draft_targets',
     'tg_draft_items', 'tg_publications', 'tg_callback_tokens',
     'tg_materials', 'tg_material_groups', 'tg_draft_materials',
+    // 0039 (2026-10-28): гостевая ссылка и заявки — на чистой базе они обязаны появиться
+    // вместе со всеми остальными, а не только при догоняющей миграции живой базы
+    'lesson_guest_links', 'lesson_guest_requests',
   ];
   const missing = required.filter((t) => !have.has(t));
   if (missing.length) throw new Error(`missing tables after migration: ${missing.join(', ')}`);
 
+  const guardedNames = [
+    'tg_materials', 'tg_material_groups', 'tg_draft_materials',
+    'lesson_guest_links', 'lesson_guest_requests',
+  ];
   const guarded = await target`
     select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
      where n.nspname = 'public'
-       and c.relname in ('tg_materials', 'tg_material_groups', 'tg_draft_materials')
+       and c.relname in ${target(guardedNames)}
        and c.relrowsecurity
        and not exists (select 1 from pg_policies p where p.tablename = c.relname)`;
-  if (guarded.length !== 3) throw new Error('the library tables are not RLS-guarded with zero policies');
+  if (guarded.length !== guardedNames.length) {
+    throw new Error(`tables are not RLS-guarded with zero policies: ${guardedNames.join(', ')}`);
+  }
 
   const enumValues = await target`
     select e.enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid
@@ -75,6 +84,37 @@ try {
      where table_schema = 'public' and table_name = 'tg_drafts' and column_name = 'instruction'`;
   if (!columns.length) throw new Error('tg_drafts.instruction was not added');
 
+  /*
+   * 0040 (task F): the Mini App creates a draft without any Telegram message, so the source
+   * message of an item may be absent, and every draft records where it came from. These are
+   * columns, not conventions — a clean database must carry them from the first boot, otherwise
+   * the first Mini App launch on a new server fails at INSERT time.
+   */
+  const miniDraftCols = await target`
+    select column_name, is_nullable, column_default from information_schema.columns
+     where table_schema = 'public' and table_name = 'tg_drafts'
+       and column_name in ('origin', 'due_at') order by column_name`;
+  const origin = miniDraftCols.find((c) => c.column_name === 'origin');
+  const due = miniDraftCols.find((c) => c.column_name === 'due_at');
+  if (!origin || origin.is_nullable !== 'NO'
+    || String(origin.column_default ?? '').replace(/::text$/, '') !== `'bot'`) {
+    throw new Error('tg_drafts.origin must be NOT NULL DEFAULT \'bot\'');
+  }
+  if (!due || due.is_nullable !== 'YES') throw new Error('tg_drafts.due_at must be nullable');
+
+  const [sourceMessage] = await target`
+    select is_nullable from information_schema.columns
+     where table_schema = 'public' and table_name = 'tg_draft_items'
+       and column_name = 'source_message_id'`;
+  if (sourceMessage?.is_nullable !== 'YES') {
+    throw new Error('tg_draft_items.source_message_id must be nullable for Mini App items');
+  }
+
+  const draftIndexes = await target`
+    select indexname from pg_indexes
+     where schemaname = 'public' and indexname = 'tg_drafts_owner_origin_idx'`;
+  if (!draftIndexes.length) throw new Error('tg_drafts_owner_origin_idx is missing');
+
   // and the shape the flow depends on: a library file_id is unique per teacher, a draft keeps
   // its own snapshot copy of a material even after the library row is gone
   const [snapshotFk] = await target`
@@ -85,7 +125,7 @@ try {
   if (String(snapshotFk?.confdeltype) !== 'n') throw new Error('deleting a material must SET NULL, not cascade');
 
   console.log(`[migrations-fresh] ok: ${migrations[0].n} migrations, ${tables[0].n} tables, `
-    + `${required.length} tg_* tables present, RLS on the library tables, draft statuses and `
+    + `${required.length} required tables present, RLS on the library and guest tables, draft statuses and `
     + `the snapshot key verified on a database created for this run`);
 } finally {
   await target.end({ timeout: 5 });

@@ -15,12 +15,15 @@ Render web service (free) + Supabase Free (Postgres) + LiveKit Cloud Build
   (будит консоль/первое подключение; при засыпании API отвечает 503 — redeploy
   не нужен, достаточно открыть проект).
 - **Supabase Data API (PostgREST):** приложение ходит в Postgres напрямую и
-  REST API не использует. Скрипт `pnpm --filter @klass/api db:secure`
-  (SQL: `src/db/migrations/custom/secure-public.sql`, идемпотентен) включает
-  RLS на всех таблицах схемы public без политик + отзывает привилегии у
-  `anon`/`authenticated` (и по default privileges — новые таблицы тоже
-  закрываются после повторного запуска). Роль `postgres` (владелец таблиц,
-  DATABASE_URL приложения) RLS обходит — это ожидаемо.
+  REST API не использует. Начиная с миграции `0038_secure_public` (2026-10-28,
+  аудит SEC-06) RLS на всех таблицах схемы public без политик + отзыв привилегий у
+  `anon`/`authenticated` (и default privileges на будущие объекты) применяются
+  **при каждом старте приложения** — ручной шаг больше не обязателен. Скрипт
+  `pnpm --filter @klass/api db:secure`
+  (SQL: `src/db/migrations/custom/secure-public.sql`, идемпотентен, те же операторы)
+  остаётся для «применить немедленно, без деплоя»; на кластере без Supabase-ролей
+  он завершается без действий. Роль `postgres` (владелец таблиц,
+  DATABASE_URL приложения) RLS обходит — это ожидаемо (SEC-05, см. docs/DECISIONS.md).
 
 ## Пошагово
 1. **Supabase.** Создать проект (регион ближайший к вам), Settings → Database:

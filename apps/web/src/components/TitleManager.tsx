@@ -22,6 +22,8 @@ const ROUTE_KEY = (path: string): string => {
   if (path.startsWith('/privacy')) return 'privacy';
   if (path.startsWith('/terms')) return 'terms';
   if (path.startsWith('/chat')) return 'chat';
+  // Telegram Mini App (часть F): у неё свой язык из профиля, но вкладка всё равно подписана
+  if (path.startsWith('/mini')) return 'mini';
   if (/^\/classes\/[^/]+\/material\/new/.test(path)) return 'materialNew';
   if (/^\/classes\/[^/]+/.test(path) && path.split('/')[2]) return 'class';
   if (path.startsWith('/classes')) return 'classes';

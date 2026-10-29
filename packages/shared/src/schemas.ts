@@ -20,12 +20,41 @@ const COMMON_PASSWORDS: ReadonlySet<string> = new Set([
   '111111', '000000', '121212', '654321', '666666', '888888', 'asdasd', 'azerty', 'zuza',
 ]);
 
-/** Password POLICY — applied when a password is CREATED (registration). */
+/**
+ * Password POLICY — applied when a password is CREATED (registration).
+ *
+ * 2026-10-28 (аудит SEC-12): прежнее правило требовало ровно одной строчной буквы и запрещало
+ * пробелы — «aaaaaaaaaaaa» или «1234567890ab» проходили, хотя оба набираются с одной руки и
+ * живут в первых строках любого словаря подбора. Теперь нужны **два вида символов из четырёх**:
+ * строчные, заглавные, цифры, знаки. Два, а не четыре, — сознательный компромисс: четыре вида
+ * на телефоне при диктовке ученику дают больше сбросов пароля, чем добавляют стойкости, а два
+ * вида уже отсекают одноалфавитные строки, которые и были настоящей проблемой.
+ *
+ * Классы считаются по Unicode-свойствам, а не по ASCII: кириллица, латиница и, например, арабский
+ * попадают в «строчные/заглавные» одинаково, и пароль на родном языке ученика не отвергается
+ * из-за того, что буква не английская. «Знак» — всё, что не буква и не цифра (пунктуация,
+ * спецсимволы); пробелы запрещены отдельно, чтобы «два вида» нельзя было набрать пробелом.
+ *
+ * Список ходовых паролей проверяется последним и не ослаблен: «Pupil2026!» проходит форму, но
+ * точное совпадение с ходовым значением по-прежнему отклоняется.
+ */
+const PASSWORD_CLASSES: readonly RegExp[] = [
+  /\p{Ll}/u, // строчные буквы
+  /\p{Lu}/u, // заглавные буквы
+  /\p{Nd}/u, // десятичные цифры
+  /[^\p{L}\p{Nd}]/u, // знаки: всё, что не буква и не цифра
+];
+
+export function passwordClassCount(value: string): number {
+  return PASSWORD_CLASSES.reduce((n, re) => n + (re.test(value) ? 1 : 0), 0);
+}
+
 export const passwordPolicy = z
   .string()
   .min(10, 'passwordTooShort')
   .max(128)
-  .regex(/(?=.*[a-zА-Яа-я])(?=[^ ]+$)/, 'passwordTooSimple')
+  .refine((v) => !/\s/u.test(v), 'passwordTooSimple')
+  .refine((v) => passwordClassCount(v) >= 2, 'passwordTooSimple')
   .refine((v) => !COMMON_PASSWORDS.has(v.toLowerCase()), 'passwordTooCommon');
 
 /** Login only checks the SHA against the stored hash — never re-applies the

@@ -16,7 +16,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
 import { env } from '../../src/env.js';
-import { issueRefreshSession, rotateRefresh } from '../../src/services/auth.js';
+import { issueRefreshSession, rotateRefresh, sweepRefreshTokens } from '../../src/services/auth.js';
+import { hashRefreshToken } from '../../src/lib/tokens.js';
 import { refreshTokens } from '../../src/db/schema.js';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -91,5 +92,31 @@ suite('Part 4б: refresh-reuse grace vs. a stalled rotation', () => {
     expect(stolen.ok).toBe(false); // window closed ⇒ strict theft behaviour returns
     const left = await t.db.select().from(refreshTokens).where(eq(refreshTokens.userId, uid));
     expect(left).toHaveLength(0);
+  });
+
+  /*
+   * SEC-13 (аудит 2026-10-28): уборка удаляет ТОЛЬКО просроченные строки. Заменённая, но ещё
+   * живая строка обязана остаться: по ней работает окно grace (`replaced_at` выше) и по ней же
+   * обнаруживается повторное использование семейства. Убери её «для чистоты» — и следующий
+   * перехваченный refresh перестал бы отличаться от просроченного.
+   */
+  it('SEC-13: a sweep deletes expired rows only — replaced-but-live rows stay', async () => {
+    await clearFamily();
+    const expired = await issueRefreshSession(t.db, uid);
+    const replacedLive = await issueRefreshSession(t.db, uid);
+    const live = await issueRefreshSession(t.db, uid);
+    await t.sql`update refresh_tokens set expires_at = now() - interval '1 second'
+                where token_hash = ${hashRefreshToken(expired.refreshToken)}`;
+    await t.sql`update refresh_tokens set replaced_at = now()
+                where token_hash = ${hashRefreshToken(replacedLive.refreshToken)}`;
+
+    const removed = await sweepRefreshTokens(t.db);
+    expect(removed).toBe(1);
+
+    const left = await t.db.select().from(refreshTokens).where(eq(refreshTokens.userId, uid));
+    expect(left).toHaveLength(2);
+    expect(left.map((r) => r.tokenHash).sort()).toEqual(
+      [replacedLive.refreshToken, live.refreshToken].map(hashRefreshToken).sort(),
+    );
   });
 });

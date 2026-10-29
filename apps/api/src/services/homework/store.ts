@@ -37,8 +37,11 @@ export const ACTIVE_DRAFT_STATUSES = [
 type DraftPatch = Partial<Pick<
   HwDraftRow,
   | 'title' | 'formattedText' | 'instruction' | 'aiQuestions' | 'aiWarnings'
-  | 'aiProvider' | 'lastError' | 'publishedAt'
+  | 'aiProvider' | 'lastError' | 'publishedAt' | 'dueAt'
 >>;
+
+/** Which surface created a draft. Bot and Mini App share every table and the publish engine. */
+export type HwDraftOrigin = 'bot' | 'mini';
 
 // ─── identity ────────────────────────────────────────────────────────────────
 
@@ -105,12 +108,30 @@ export async function upsertOperator(
 
 // ─── drafts ──────────────────────────────────────────────────────────────────
 
-export async function latestActiveDraft(db: DB, ownerId: string): Promise<HwDraftRow | null> {
+export async function latestActiveDraft(
+  db: DB, ownerId: string, origin: HwDraftOrigin = 'bot',
+): Promise<HwDraftRow | null> {
   const [row] = await db.select().from(tgDrafts).where(and(
     eq(tgDrafts.ownerId, ownerId),
+    eq(tgDrafts.origin, origin),
     inArray(tgDrafts.status, [...ACTIVE_DRAFT_STATUSES]),
   )).orderBy(desc(tgDrafts.updatedAt)).limit(1);
   return row ?? null;
+}
+
+/** A teacher's own drafts of one surface, newest first (Mini App home/history). */
+export async function listDrafts(
+  db: DB, ownerId: string, opts: {
+    origin?: HwDraftOrigin;
+    statuses?: readonly HwDraftStatus[];
+    limit?: number;
+  } = {},
+): Promise<HwDraftRow[]> {
+  const filters = [eq(tgDrafts.ownerId, ownerId)];
+  if (opts.origin) filters.push(eq(tgDrafts.origin, opts.origin));
+  if (opts.statuses?.length) filters.push(inArray(tgDrafts.status, [...opts.statuses]));
+  return db.select().from(tgDrafts).where(and(...filters))
+    .orderBy(desc(tgDrafts.updatedAt)).limit(opts.limit ?? 12);
 }
 
 export async function getDraft(db: DB, draftId: string, ownerId: string): Promise<HwDraftRow | null> {
@@ -120,8 +141,11 @@ export async function getDraft(db: DB, draftId: string, ownerId: string): Promis
   return row ?? null;
 }
 
-export async function createDraft(db: DB, ownerId: string): Promise<HwDraftRow> {
-  const [row] = await db.insert(tgDrafts).values({ ownerId, status: 'selecting' }).returning();
+export async function createDraft(
+  db: DB, ownerId: string, origin: HwDraftOrigin = 'bot', status: HwDraftStatus = 'selecting',
+): Promise<HwDraftRow> {
+  const [row] = await db.insert(tgDrafts)
+    .values({ ownerId, status, origin }).returning();
   return row!;
 }
 
@@ -267,7 +291,8 @@ export interface NewItem {
   mimeType?: string | null;
   fileSize?: number | null;
   caption?: string;
-  sourceMessageId: number;
+  /** NULL for an «extra link» typed in the Mini App: there is no original message to copy. */
+  sourceMessageId?: number | null;
   /** The chat the message came from — with `sourceMessageId` this is what `copyMessage` needs. */
   sourceChatId?: string | null;
   /** Telegram's album id: messages sharing it are copied with one `copyMessages` call. */
@@ -305,7 +330,7 @@ export async function addItem(db: DB, draftId: string, item: NewItem): Promise<H
     mimeType: item.mimeType ?? null,
     fileSize: item.fileSize ?? null,
     caption: item.caption ?? '',
-    sourceMessageId: item.sourceMessageId,
+    sourceMessageId: item.sourceMessageId ?? null,
     sourceChatId: item.sourceChatId ?? null,
     sourceMediaGroupId: item.sourceMediaGroupId ?? null,
     forwarded: item.forwarded ?? false,
@@ -325,6 +350,7 @@ export async function publicationsOf(db: DB, draftId: string): Promise<HwPublica
 export interface HistoryRow {
   id: string;
   status: HwPublicationRow['status'];
+  groupId: string;
   groupTitle: string;
   updatedAt: Date;
   draftId: string;
@@ -337,6 +363,7 @@ export async function recentPublications(
   return db.select({
     id: tgPublications.id,
     status: tgPublications.status,
+    groupId: tgPublications.groupId,
     groupTitle: tgPublications.groupTitle,
     updatedAt: tgPublications.updatedAt,
     draftId: tgPublications.draftId,

@@ -21,6 +21,9 @@
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
     <meta name="description" content="BluBlu — платформа онлайн-уроков" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- iOS: без apple-touch-icon «На экран “Домой”» рисует снимок страницы, а не знак продукта
+         (аудит 2026-10-28, пункт 14). Берём существующий PNG 192×192 — iOS масштабирует сам. -->
+    <link rel="apple-touch-icon" href="/icon-192.png" sizes="192x192" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- Performance (Phase 4): preload the two Inter weights used above the fold
          so the first text paint (LCP) does not wait on the CSS @font-face scan.

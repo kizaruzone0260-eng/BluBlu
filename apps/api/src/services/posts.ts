@@ -2,46 +2,30 @@ import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import {
   posts, files, users, teacherNotes, topics, postAttachments, postAudience, classMembers,
 } from '../db/schema.js';
-import type { DB } from '../db/index.js';
+import type { DB, Tx } from '../db/index.js';
 import { env } from '../env.js';
 import { getStorage } from '../storage/provider.js';
 import { detectFileType } from '../lib/magic.js';
 import { randomUUID } from 'node:crypto';
 import { enqueueNotification } from './notify.js';
 import { classTitle } from './notifyQueue.js';
+import {
+  safeExternalUrl, classifyAttachmentUrl, type AttachmentKind,
+} from '@klass/shared';
 
 /**
  * Material form (task A): posts with unified attachments (file/link/youtube/
  * drive), selected-student audiences, real topics and draft/scheduled/published
  * statuses. Students only ever see published material addressed to them — the
  * feed, file delivery and the bot all run the same visibility rules server-side.
+ *
+ * Проверка ссылок с 2026-10-28 (аудит SEC-22 и паритет форм) живёт в
+ * `@klass/shared::links` — одна копия на API и на форму. Реэкспорт ниже оставлен, потому что
+ * этим именем пользуются маршруты и тесты; второй реализации больше нет.
  */
-
-export type AttachmentKind = 'file' | 'link' | 'youtube' | 'drive';
+export { safeExternalUrl, classifyAttachmentUrl };
+export type { AttachmentKind };
 export type PostStatus = 'draft' | 'scheduled' | 'published';
-
-/**
- * Only http(s) absolute URLs with a dotted host survive. This is pure parsing —
- * the server NEVER fetches these URLs (no SSRF). javascript:, data:, file:,
- * protocol-relative and bare hostnames are rejected.
- */
-export function safeExternalUrl(raw: string): string | null {
-  try {
-    const u = new URL(String(raw).trim());
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    const h = u.hostname.toLowerCase();
-    if (!/^[a-z0-9.-]+$/.test(h) || !h.includes('.')) return null;
-    return u.toString().slice(0, 2000);
-  } catch { return null; }
-}
-
-export function classifyAttachmentUrl(url: string): AttachmentKind {
-  let h = 'https://';
-  try { h = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { /* link */ }
-  if (h === 'youtu.be' || h === 'youtube.com' || h.endsWith('.youtube.com')) return 'youtube';
-  if (h === 'drive.google.com' || h === 'docs.google.com') return 'drive';
-  return 'link';
-}
 
 export interface AttachmentRow {
   id: string; kind: AttachmentKind; url: string | null; title: string; position: number;
@@ -143,7 +127,7 @@ export class MaterialRejected extends Error {
 }
 
 /** validate + store buffers, respecting the magic-bytes/quota rules (shared by create & append) */
-async function storeUploads(db: DB, teacherId: string, postId: string, uploaded: UploadFileInput[]) {
+export async function storeUploads(db: DB, teacherId: string, postId: string, uploaded: UploadFileInput[]) {
   const maxBytes = env.MAX_FILE_MB * 1024 * 1024;
   const quotaBytes = env.TEACHER_QUOTA_GB * 1024 * 1024 * 1024;
   const storage = getStorage();
@@ -173,13 +157,29 @@ async function storeUploads(db: DB, teacherId: string, postId: string, uploaded:
   const out: AttachmentRow[] = [];
   for (const p of prepared) {
     await storage.put(p.key, p.buffer);
-    const [fr] = await db.insert(files).values({
-      postId, storageKey: p.key, originalName: p.name, mime: p.mime, size: p.buffer.length, uploadedBy: teacherId,
-    }).returning();
-    const [ar] = await db.insert(postAttachments).values({
-      postId, kind: 'file', title: p.name, fileId: fr!.id, position: ++position,
-    }).returning();
-    out.push({ id: ar!.id, kind: 'file', url: null, title: p.name, position: ar!.position, file: { id: fr!.id, name: p.name, mime: p.mime, size: p.buffer.length } });
+    /*
+     * Байты пишутся раньше строки (иначе у вставки не было бы `storageKey`), поэтому любая ошибка
+     * ниже обязана забрать файл: до 2026-10-28 он оставался сиротой — файл без строки `files`
+     * никто не показывал, никто не удалял, и он не учитывался в квоте учителя, то есть тихая
+     * загрузка диска. Откат записи при этом и так атомарен (одна транзакция здесь не нужна:
+     * вставка `files` и `post_attachments` идут последовательно, и сбой второй оставил бы строку
+     * файла — её тоже убирает этот блок).
+     */
+    let fileId = '';
+    try {
+      const [fr] = await db.insert(files).values({
+        postId, storageKey: p.key, originalName: p.name, mime: p.mime, size: p.buffer.length, uploadedBy: teacherId,
+      }).returning();
+      fileId = fr!.id;
+      const [ar] = await db.insert(postAttachments).values({
+        postId, kind: 'file', title: p.name, fileId, position: ++position,
+      }).returning();
+      out.push({ id: ar!.id, kind: 'file', url: null, title: p.name, position: ar!.position, file: { id: fileId, name: p.name, mime: p.mime, size: p.buffer.length } });
+    } catch (e) {
+      await storage.delete(p.key).catch(() => undefined);
+      if (fileId) await db.delete(files).where(eq(files.id, fileId)).catch(() => undefined);
+      throw e;
+    }
   }
   return out;
 }
@@ -335,7 +335,7 @@ export async function createAnnouncement(db: DB, teacherId: string, classId: str
   return post!;
 }
 
-export async function updatePost(db: DB, id: string, patch: Partial<{
+export async function updatePost(db: DB | Tx, id: string, patch: Partial<{
   title: string; body: string; pinned: boolean; topicId: string | null;
 }>) {
   const [p] = await db.update(posts).set({ ...patch, updatedAt: new Date() }).where(eq(posts.id, id)).returning();
@@ -343,7 +343,24 @@ export async function updatePost(db: DB, id: string, patch: Partial<{
 }
 
 /** replace the audience of a post (teacher edit); [] ⇒ whole class */
-export async function setPostAudience(db: DB, postId: string, userIds: string[]) {
+/**
+ * Замена аудитории публикации.
+ *
+ * 2026-10-28 (аудит, Stage 4): класс обязан быть передан, а его участники — проверены. Создание
+ * материала эту проверку делало (`createMaterial` выше бросает `invalidAudience`), а PATCH — нет:
+ * в `post_audience` можно было вписать ЛЮБОЙ uuid. Прямой утечки это не давало (читатель всё
+ * равно проходит `resolveClass`, а чужак не видит чужую ленту), но висячая строка «этот ученик
+ * в аудитории этого класса» врала о данных: её нельзя было ни показать, ни удалить через экран, а
+ * при переносе ученика между классами она становилась заметной. Теперь у маршрута ровно то же
+ * правило, что у создания, и оно живёт рядом с ним в одном сервисе.
+ */
+export async function setPostAudience(db: DB | Tx, classId: string, postId: string, userIds: string[]) {
+  if (userIds.length) {
+    const members = await db.select({ userId: classMembers.userId }).from(classMembers)
+      .where(eq(classMembers.classId, classId));
+    const known = new Set(members.map((m) => m.userId));
+    if (!userIds.every((u) => known.has(u))) throw new MaterialRejected('invalidAudience');
+  }
   await db.delete(postAudience).where(eq(postAudience.postId, postId));
   if (userIds.length) {
     await db.insert(postAudience).values(userIds.map((userId) => ({ postId, userId })));

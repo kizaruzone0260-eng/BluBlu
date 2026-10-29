@@ -52,6 +52,8 @@ export interface BarActions {
   pickCam: (deviceId: string) => void; pickMic: (deviceId: string) => void;
   /** часть A (шаг A4): «новая заметка» — переход через роутер, адрес считает родитель */
   note: () => void;
+  /** задача 2026-10-28, часть 3: «Поделиться уроком» — окно гостевой ссылки (только учитель) */
+  guests: () => void;
   /** часть C (2026-10-23): вынести показ экрана в окно поверх других программ / вернуть его */
   pip: () => void;
 }
@@ -363,6 +365,14 @@ export default function LessonBar({ state, actions, devices }: {
                 onClick={() => { close(); actions.board(); }}>
                 🧑‍🏫 {state.boardOpen ? t('lesson.boardClose') : t('lesson.boardOpen')}
               </button>
+              {state.isTeacher && (
+                // задача 2026-10-28, часть 3: гостевой ссылкой учитель пускает человека без
+                // аккаунта; кнопка открывает окно со ссылкой и заявками, а не выдаёт права сама
+                <button type="button" className="bar-item" role="menuitem" data-testid="share-lesson"
+                  onClick={() => { close(); actions.guests(); }}>
+                  🔗 {t('lesson.shareLesson')}
+                </button>
+              )}
               {state.isTeacher && (
                 <button type="button" className="bar-item" role="menuitemcheckbox" aria-checked={state.lectureMode}
                   data-testid="lecture-mode" onClick={() => actions.lecture()}>

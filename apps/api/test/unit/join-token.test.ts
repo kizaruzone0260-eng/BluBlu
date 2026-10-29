@@ -134,9 +134,12 @@ describe('shell и точка входа: ключ уходит из адрес�
   });
 
   it('подготовка ключа оставляет его там же, где читает страница', () => {
-    expect(primed).toMatch(/import \{ JOIN_TOKEN_KEY, takeJoinToken \} from '@klass\/shared'/);
+    // 2026-10-28: к памяти страницы добавилась копия в sessionStorage — она и переживает
+    // перезагрузку на шаге входа. Проверяем обе записи, а не только первую.
+    expect(primed).toMatch(/import \{[^}]*JOIN_TOKEN_KEY[^}]*takeJoinToken[^}]*\} from '@klass\/shared'/);
     expect(primed).toMatch(/win\[JOIN_TOKEN_KEY\] = token/);
-    expect(primed, 'очистка без записи ключа потеряла бы приглашение').toMatch(/if \(token\)/);
+    expect(primed, 'очистка без записи ключа потеряла бы приглашение').toMatch(/if \(!token\) return/);
+    expect(primed, 'копия для перезагрузки вкладки').toMatch(/sessionStorage/);
   });
 
   /** Чтобы правило «нет инлайн-скриптов» имело причину, а не была случайностью. */

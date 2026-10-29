@@ -377,6 +377,7 @@ function BoardCard({ board, name }: { board: Board; name: string }) {
         onClick={() => setOpen((v) => !v)}>
         {shown
           ? <img src={shown} alt="" data-testid={`archive-thumb-${board.pageNo}`}
+            loading="lazy" decoding="async"
             className={`archive-thumb${open ? ' archive-thumb-full' : ''}`} />
           : <span className="archive-thumb archive-thumb-empty" data-testid={`archive-thumb-${board.pageNo}`}
             aria-hidden="true" />}

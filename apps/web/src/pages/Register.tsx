@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../App';
 
 /**
  * «Как попасть в класс» — страница вместо прежней регистрации по коду (2026-10-27).
@@ -20,6 +21,9 @@ import { useTranslation } from 'react-i18next';
  */
 export default function Register() {
   const { t } = useTranslation();
+  // Вошедшему страница тоже доступна (ссылки из Home и Classes): «Войти» ему не нужно,
+  // а ссылка вела бы на перенаправление домой (аудит 2026-10-28, пункт 11).
+  const { me } = useAuth();
 
   return (
     <div className="card" style={{ maxWidth: 460, margin: '40px auto' }} data-testid="register-explainer">
@@ -39,7 +43,7 @@ export default function Register() {
         {t('register.codeRetired')}
       </p>
       <p>
-        <Link to="/login" data-testid="register-login">{t('common.login')}</Link>
+        {!me && <Link to="/login" data-testid="register-login">{t('common.login')}</Link>}
       </p>
       <p className="muted">
         <Link to="/privacy">{t('legalLinks.privacy')}</Link>

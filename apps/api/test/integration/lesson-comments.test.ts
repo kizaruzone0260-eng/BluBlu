@@ -7,7 +7,7 @@ import WebSocket from 'ws';
 import { and, eq, inArray } from 'drizzle-orm';
 import { TEST_DATABASE_URL, preparedDb, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
-import { auditLog, classMembers, classes, lessonComments, lessonSessions, users } from '../../src/db/schema.js';
+import { auditLog, classMembers, classes, lessonComments, users } from '../../src/db/schema.js';
 import { hashPassword } from '../../src/lib/password.js';
 import { lessonCommentRateReset } from '../../src/services/lessonComments.js';
 import type { FastifyInstance } from 'fastify';
@@ -75,9 +75,11 @@ suite('lesson comments (task 2)', () => {
     studentAId = sa!.id; studentBId = sb!.id; teacherId = teacher!.id; outsiderId = out!.id;
     const [c1] = await t.db.insert(classes).values({ teacherId: teacher!.id, name: 'LC класс' }).returning();
     const [c2] = await t.db.insert(classes).values({ teacherId: teacher!.id, name: 'LC чужой класс' }).returning();
+    const [c3] = await t.db.insert(classes).values({ teacherId: teacher!.id, name: 'LC второй урок' }).returning();
     classId = c1!.id; foreignClassId = c2!.id;
     await t.db.insert(classMembers).values([
       { classId, userId: sa!.id }, { classId, userId: sb!.id }, { classId: foreignClassId, userId: out!.id },
+      { classId: c3!.id, userId: sa!.id }, { classId: c3!.id, userId: sb!.id },
     ]);
     const login = async (email: string) => {
       const r = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: PW } });
@@ -92,12 +94,14 @@ suite('lesson comments (task 2)', () => {
 
     sessionId = (await send(teacherTok, '/api/lessons/start', { classId })).json().id as string;
     foreignSessionId = (await send(teacherTok, '/api/lessons/start', { classId: foreignClassId })).json().id as string;
-    // a second LIVE session of the same class, inserted directly (`startLesson` is idempotent per
-    // class by design): it is what proves a mute belongs to one lesson and not to the class
-    const [second] = await t.db.insert(lessonSessions).values({
-      classId, roomName: `lc-second-${Date.now()}`, createdBy: teacherId,
-    }).returning({ id: lessonSessions.id });
-    secondSessionId = second!.id;
+    /*
+     * SEC-11 (2026-10-28): второй ЖИВОЙ урок того же класса больше невозможен — у класса один
+     * активный урок, это держит частичный уникальный индекс. Прежняя фикстура вставляла такую
+     * сессию напрямую и тем самым проверяла состояние, которого в продукте нет. Здесь второй урок
+     * идёт в отдельном классе того же учителя, с теми же А и Б: проверяемое свойство не изменилось
+     * — заглушение и непрочитанное принадлежат одному уроку, а не человеку или классу.
+     */
+    secondSessionId = (await send(teacherTok, '/api/lessons/start', { classId: c3!.id })).json().id as string;
   });
 
   afterAll(async () => { await app?.close(); await t?.sql.end(); });

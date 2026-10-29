@@ -34,24 +34,28 @@ export async function verifyPassword(hash$: string, password: string): Promise<b
  * один алфавит; скрипт владельца импортирует её из `dist/lib/password.js`.
  *
  * Алфавит без неоднозначных знаков (I l 1 O 0) — пароль диктуют голосом и набирают с телефона.
- * 55 знаков × 12 ≈ 2^69 переборов. Политика требует ≥10 знаков и наличия строчной буквы —
- * ниже этот знак гарантируется, чтобы временный пароль всегда проходил собственную политику.
+ * 55 знаков × 12 ≈ 2^69 переборов. Политика требует ≥10 знаков и ДВА вида символов —
+ * ниже эти виды гарантируются, чтобы временный пароль всегда проходил собственную политику.
  */
 export const TEMP_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 export const TEMP_PASSWORD_LENGTH = 12;
 
 export function tempPassword(len = TEMP_PASSWORD_LENGTH): string {
+  const upper = TEMP_ALPHABET.replace(/[^A-Z]/g, '');
   const lower = TEMP_ALPHABET.replace(/[^a-z]/g, '');
-  const b = randomBytes(len + 1);
-  let s = '';
-  for (let i = 0; i < len; i++) s += TEMP_ALPHABET[b[i]! % TEMP_ALPHABET.length];
+  const b = randomBytes(len + 2);
+  const chars = Array.from({ length: len }, (_, i) => TEMP_ALPHABET[b[i]! % TEMP_ALPHABET.length]);
   /*
-   * Последний знак всегда строчная буква. Нужно потому, что политика регистрации
-   * (`@klass/shared::passwordPolicy`) требует наличия строчной буквы, а целиком заглавный
-   * набор она ОТКЛОНЯЕТ — перебор из 200 значений поймал «VFUT6HBVZEYZ». Временный пароль,
-   * который собственный policy-фильтр не пропускает, — ловушка для следующего шага (смены
-   * пароля) и для любой проверки входа в будущем. Ценой почти незаметной потери энтропии:
-   * было 12·log2(55) ≈ 69,4 бита, стало 11·log2(55) + log2(23) ≈ 68,1 бита.
+   * Первый знак — заглавная, последний — строчная. С 2026-10-28 (аудит SEC-12) политика
+   * (`@klass/shared::passwordPolicy`) требует два вида символов из четырёх, а случайные 12
+   * знаков могут целиком оказаться строчными (шанс ~7 из 100 000) или без букв вообще —
+   * такой пароль собственный policy-фильтр отклонил бы, и сброс выдал бы значение, которое
+   * нельзя сразу использовать. Две разные классовые буквы по краям дают гарантию при любой
+   * генерации. Цена — энтропия 10·log2(55) + log2(24) + log2(23) ≈ 67,0 бита вместо 68–69.
    */
-  return s.slice(0, len - 1) + lower[b[len]! % lower.length];
+  if (len >= 2) {
+    chars[0] = upper[b[len]! % upper.length];
+    chars[len - 1] = lower[b[len + 1]! % lower.length];
+  }
+  return chars.join('');
 }

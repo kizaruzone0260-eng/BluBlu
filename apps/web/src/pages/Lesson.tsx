@@ -27,6 +27,7 @@ import ScreenStage from '../components/ScreenStage';
 import SharePip from '../components/SharePip';
 import { focusMainPage, openSharePipWindow, pipApi, type PipHandle } from '../lib/documentPip';
 import { useSceneBand } from '../lib/sceneBand';
+import { useFocusTrap } from '../lib/focusTrap';
 
 /*
  * Часть 2 задачи 2026-10-10 (измерено, а не «на глаз»): и Excalidraw, и панель вкладок жили в
@@ -40,6 +41,9 @@ import { useSceneBand } from '../lib/sceneBand';
 const Board = lazy(() => import('../components/Board'));
 const LessonPanelLazy = lazy(() => import('../components/LessonPanel'));
 const CommentsPanelLazy = lazy(() => import('../components/LessonComments').then((m) => ({ default: m.CommentsPanel })));
+// Задача 2026-10-28, часть 3: «Поделиться уроком» — отдельный чанк, как панель и комментарии:
+// учитель, не открывавший окно гостей, этот код не скачивает.
+const LessonGuestsLazy = lazy(() => import('../components/LessonGuests'));
 
 interface Session {
   id: string; classId: string; eventId: string | null; roomName: string;
@@ -265,6 +269,9 @@ export default function Lesson({ mode = 'full', target = null }: {
   const muteAllRef = useRef(false);
   useEffect(() => { muteAllRef.current = muteAll; }, [muteAll]);
   const [lectureAsk, setLectureAsk] = useState<{ restore: boolean } | null>(null);
+  // Tab не должен уходить в органы управления урока за затемнением (аудит 2026-10-28, пункт 13)
+  const lectureDialogRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(lectureDialogRef, lectureAsk !== null);
   const [camErr, setCamErr] = useState('');
   const [micErr, setMicErr] = useState('');
   const [sheetsOpen, setSheetsOpen] = useState(false);
@@ -283,6 +290,13 @@ export default function Lesson({ mode = 'full', target = null }: {
   };
   /** лист настроек устройств из меню «Ещё» */
   const [devicesOpen, setDevicesOpen] = useState(false);
+  /**
+   * Задача 2026-10-28, часть 3: окно «Поделиться уроком». Ссылка и заявки живут на СЕССИИ,
+   * поэтому окно закрывается вместе с уроком, а сам гость эту страницу не видит и прав не получает:
+   * сервер выдаёт ему только просмотр (и только после одобрения).
+   */
+  const [guestsOpen, setGuestsOpen] = useState(false);
+  useEffect(() => { if (!session) setGuestsOpen(false); }, [session]);
   /** входящее видео на паузе (экономия трафика) — применяется и к новым подпискам */
   const [videoPaused, setVideoPaused] = useState(false);
   const videoPausedRef = useRef(false);
@@ -322,6 +336,12 @@ export default function Lesson({ mode = 'full', target = null }: {
   const meIdRef = useRef<string | null>(me?.id ?? null);
   const commentsOpenRef = useRef(false);
   useEffect(() => { commentsOpenRef.current = commentsOpen; }, [commentsOpen]);
+  /*
+   * Задача 2026-10-28, часть 3: окно гостей открыто? Тост «просится гость» нужен только когда
+   * учитель его не видит: если панель уже на экране, кадр `guestUpdate` просто обновит список.
+   */
+  const guestsOpenRef = useRef(false);
+  useEffect(() => { guestsOpenRef.current = guestsOpen; }, [guestsOpen]);
   useEffect(() => { meIdRef.current = me?.id ?? null; }, [me?.id]);
   const [floorTakenNotice, setFloorTakenNotice] = useState(false);
   useEffect(() => {
@@ -687,6 +707,8 @@ export default function Lesson({ mode = 'full', target = null }: {
             /** часть 1: `restore` приходит в кадрах lectureMode и lecture_off */
             restore?: boolean;
             comment?: { authorId?: string };
+            /** часть 3: заявка гостя в кадре `guestRequest` (только учительская комната) */
+            request?: { id?: string; name?: string };
           };
           if (msg.type === 'ended') { setSession(null); void leaveRoom(); }
           if (msg.type === 'layout' && msg.layout) setLayout(msg.layout);
@@ -702,6 +724,21 @@ export default function Lesson({ mode = 'full', target = null }: {
           }
           if (msg.type === 'lecture_off') endLectureEpisode(msg.restore !== false);
           if (msg.type === 'muteAll') { setMuteAll(!!msg.on); applyMuteAll(!!msg.on); }
+          /*
+           * Задача 2026-10-28, часть 3: заявки гостей едут тем же сокетом (учитель получает их
+           * в отдельной комнате `g:<sessionId>`). Кадр только обновляет список в панели — права
+           * по-прежнему проверяет сервер, а сам гость в сокет урока не ходит.
+           */
+          if (msg.type === 'guestRequest') {
+            void qc.invalidateQueries({ queryKey: ['lesson-guests', s.id] });
+            if (!guestsOpenRef.current) {
+              const name = msg.request?.name ?? '';
+              showToast(t('lesson.guestWaiting', { name }), {
+                label: t('lesson.guestShow'), run: () => setGuestsOpen(true),
+              });
+            }
+          }
+          if (msg.type === 'guestUpdate') void qc.invalidateQueries({ queryKey: ['lesson-guests', s.id] });
           // task 2: comments arrive on this same socket — the panel's query is the single source
           // for the mode, so the frame only has to invalidate it (see useCommentFrames)
           onCommentFrame(msg.type);
@@ -1576,6 +1613,8 @@ export default function Lesson({ mode = 'full', target = null }: {
     },
     lecture: setLecture,
     devices: () => setDevicesOpen(true),
+    // часть 3: «Поделиться уроком» — только учителю; кто именно, решает сервер, не клиент
+    guests: () => setGuestsOpen(true),
     hideSelf: () => setPip((p) => ({ ...p, hidden: !p.hidden })),
     stopVideo: () => applyVideoPause(!videoPaused),
     fullscreenToggle: toggleStageFull,
@@ -1939,6 +1978,7 @@ export default function Lesson({ mode = 'full', target = null }: {
                   {lectureAsk && (
                     <div className="modal-backdrop" role="presentation" onClick={() => setLectureAsk(null)}>
                       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="lecture-ask-title"
+                        ref={lectureDialogRef}
                         data-testid="lecture-confirm" onClick={(e) => e.stopPropagation()}>
                         <h2 id="lecture-ask-title" className="modal-title">{t('lesson.lectureConfirmTitle')}</h2>
                         <p className="muted">{t('lesson.lectureConfirmBody')}</p>
@@ -2012,6 +2052,14 @@ export default function Lesson({ mode = 'full', target = null }: {
               </div>
               <div className="panel-body">{deviceSettings}</div>
             </div>
+          )}
+
+          {/* Задача 2026-10-28, часть 3: окно «Поделиться уроком» — гостевая ссылка и заявки.
+              Только у учителя и только пока идёт урок: ссылка живёт на сессии. */}
+          {guestsOpen && session && isTeacher && (
+            <Suspense fallback={null}>
+              <LessonGuestsLazy sessionId={session.id} onClose={() => setGuestsOpen(false)} />
+            </Suspense>
           )}
 
           <LessonBar state={barState} actions={barActions} devices={barDevices} />

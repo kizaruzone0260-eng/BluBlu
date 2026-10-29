@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -10,6 +10,7 @@ import { NoteBodyView } from './NoteInk';
 import RichText from './RichText';
 import { clearDraftIfSaved, type EditorHandle } from '../lib/uncontrolledEditor';
 import { useAuth } from '../App';
+import { useFocusTrap } from '../lib/focusTrap';
 
 /**
  * Class feed (material task A): published posts grouped by topic with
@@ -45,6 +46,18 @@ export default function Feed({ classId }: { classId: string }) {
   const qc = useQueryClient();
   const feed = useQuery({ queryKey: ['feed', classId], queryFn: () => api<FeedPost[]>(`/api/classes/${classId}/feed`) });
   const [preview, setPreview] = useState<{ url: string; mime: string; name: string; revoke: () => void } | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  // окно просмотра файла ведёт себя как диалог: Escape закрывает, Tab не уходит за затемнение
+  // (аудит 2026-10-28, пункт 13)
+  useFocusTrap(previewRef, preview !== null);
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { preview.revoke(); setPreview(null); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [preview]);
 
   const isTeacher = me?.role === 'teacher';
   const invalidate = () => qc.invalidateQueries({ queryKey: ['feed', classId] });
@@ -159,7 +172,7 @@ export default function Feed({ classId }: { classId: string }) {
                 <button className="secondary" style={{ marginTop: 0 }} onClick={() => setEditing(editing === p.id ? null : p.id)}>
                   {t('feed.edit')}
                 </button>
-                <button className="danger" style={{ marginTop: 0 }}
+                <button className="danger" style={{ marginTop: 0 }} aria-label={t('common.delete')}
                   onClick={() => { if (window.confirm(t('feed.deleteConfirm'))) delPost.mutate(p.id); }}>✕</button>
               </div>
               <strong>{p.title}</strong>
@@ -195,7 +208,7 @@ export default function Feed({ classId }: { classId: string }) {
                     </button>
                     <button className="secondary" style={{ marginTop: 0 }} data-testid="post-edit"
                       onClick={() => setEditing(editing === p.id ? null : p.id)}>{t('feed.edit')}</button>
-                    <button className="danger" style={{ marginTop: 0 }} data-testid="post-del"
+                    <button className="danger" style={{ marginTop: 0 }} data-testid="post-del" aria-label={t('common.delete')}
                       onClick={() => { if (window.confirm(t('feed.deleteConfirm'))) delPost.mutate(p.id); }}>✕</button>
                   </>
                 )}
@@ -215,23 +228,42 @@ export default function Feed({ classId }: { classId: string }) {
 
       {preview && (
         <div
+          role="presentation"
           onClick={() => { preview.revoke(); setPreview(null); }}
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', display: 'flex',
             alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16,
           }}
         >
-          <div className="card" style={{ maxWidth: '90vw', maxHeight: '90vh', width: 900, overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+          <div className="card" role="dialog" aria-modal="true" aria-label={`${t('feed.preview')}: ${preview.name}`}
+            ref={previewRef}
+            style={{ maxWidth: '90vw', maxHeight: '90vh', width: 900, overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
             <div className="row">
               <strong>{preview.name}</strong>
               <div className="spacer" />
-              <button className="danger" style={{ marginTop: 0 }} onClick={() => { preview.revoke(); setPreview(null); }}>✕</button>
+              <button className="danger" style={{ marginTop: 0 }} aria-label={t('common.close')}
+                onClick={() => { preview.revoke(); setPreview(null); }}>✕</button>
             </div>
-            {preview.mime.startsWith('image/') && <img src={preview.url} alt="" style={{ maxWidth: '100%' }} />}
-            {preview.mime === 'application/pdf' && <iframe src={preview.url} title="" style={{ width: '100%', height: '70vh', border: 'none' }} />}
+            {/*
+              Размеры загруженного файла неизвестны на момент рендера, поэтому width/height у
+              <img> поставить неоткуда — вместо этого место под изображение резервирует контейнер
+              той же высоты, что у PDF-просмотра. Иначе позднее декодирование сдвигало заголовок
+              окна (CLS; аудит 2026-10-28, пункт 10).
+            */}
+            {preview.mime.startsWith('image/') && (
+              <div className="preview-media">
+                <img src={preview.url} alt="" decoding="async"
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+              </div>
+            )}
+            {preview.mime === 'application/pdf' && <iframe src={preview.url} title={`${t('feed.preview')}: ${preview.name}`} style={{ width: '100%', height: '70vh', border: 'none' }} />}
             {preview.mime.startsWith('audio/') && <audio src={preview.url} controls style={{ width: '100%' }} />}
-            {preview.mime.startsWith('video/') && <video src={preview.url} controls style={{ width: '100%' }} />}
-            {preview.mime.startsWith('text/') && <iframe src={preview.url} title="" style={{ width: '100%', height: '70vh', border: 'none', background: '#fff' }} />}
+            {preview.mime.startsWith('video/') && (
+              <div className="preview-media">
+                <video src={preview.url} controls style={{ maxWidth: '100%', maxHeight: '100%' }} />
+              </div>
+            )}
+            {preview.mime.startsWith('text/') && <iframe src={preview.url} title={`${t('feed.preview')}: ${preview.name}`} style={{ width: '100%', height: '70vh', border: 'none', background: '#fff' }} />}
           </div>
         </div>
       )}

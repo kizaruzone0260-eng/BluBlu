@@ -12,6 +12,8 @@ import {
 } from '../services/posts.js';
 import { getStorage } from '../storage/provider.js';
 import { isInlineSafe, fileCsp } from '../lib/magic.js';
+import { tryAcquireUploadSlot, releaseUploadSlot } from '../lib/uploadGate.js';
+import { audit } from '../services/audit.js';
 import { enqueueNotification } from '../services/notify.js';
 import { classTitle, schedulePostPublish } from '../services/notifyQueue.js';
 
@@ -75,6 +77,32 @@ function rejectToReply(e: unknown, reply: FastifyReply) {
   if (e instanceof MaterialRejected) return reply.code(400).send({ error: e.reason });
   throw e;
 }
+
+/*
+ * Гейт одновременных загрузок (2026-10-28, аудит SEC-10). Два маршрута ниже читают multipart
+ * ЦЕЛИКОМ в память и держат буферы до конца записи, а лимит размера считается на один запрос
+ * (`MAX_FILE_MB × 4 файла`): он ничего не говорит о том, сколько таких запросов сервер обслуживает
+ * одновременно. Это два хука уровня маршрута, а не обёртка внутри тела, по одной причине: slot
+ * обязан освобождаться ВСЕГДА, включая 4xx, 5xx и оборванное соединение, — а ручная `try/finally`
+ * вокруг шестидесятистрочного обработчика как раз и есть то место, где такой finally однажды
+ * забывают. Отказ — 429 с `Retry-After`, а не очередь: очередь тоже держала бы раскрытый
+ * multipart и соединение, только невидимо для наблюдателя.
+ */
+const UPLOAD_RETRY_AFTER_SEC = '5';
+/** Запросы, которые действительно получили слот; без этого onResponse отдал бы чужой слот. */
+const heldSlots = new WeakSet<FastifyRequest>();
+
+const uploadGateHooks = {
+  onRequest: async (req: FastifyRequest, reply: FastifyReply) => {
+    if (tryAcquireUploadSlot()) { heldSlots.add(req); return undefined; }
+    reply.header('retry-after', UPLOAD_RETRY_AFTER_SEC);
+    return reply.code(429).send({ error: 'uploadBusy' });
+  },
+  // onResponse стреляет и после успешного ответа, и после отказа; `onRequestAbort` — когда клиент
+  // ушёл посреди передачи. WeakSet делает освобождение идемпотентным.
+  onResponse: async (req: FastifyRequest) => { if (heldSlots.delete(req)) releaseUploadSlot(); },
+  onRequestAbort: async (req: FastifyRequest) => { if (heldSlots.delete(req)) releaseUploadSlot(); },
+};
 
 export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
   const { db } = opts;
@@ -141,6 +169,7 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
   // Teacher creates a material: multipart — text fields + JSON arrays + files.
   app.post('/api/classes/:id/materials', {
     preHandler: app.authenticateTeacher,
+    ...uploadGateHooks,
   }, async (req, reply) => {
     const classId = (req.params as { id: string }).id;
     const cls = await memberOrTeacher(db, req, reply, classId);
@@ -188,6 +217,15 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
         void notifyMaterialPublished(db, post).catch(() => undefined);
       }
       if (post.status === 'scheduled' && post.scheduledAt) schedulePostPublish(post.scheduledAt);
+      /*
+       * Журнал (2026-10-28, аудит SEC-08). До этой правки в файле не было НИ ОДНОГО вызова
+       * `audit()`: публикация материала и приложенные к нему файлы не оставляли следа, и на
+       * вопрос «кто выложил этот файл в этот класс» не отвечал ни API, ни `audit_log`. В цели —
+       * только идентификаторы и счётчики: ни заголовка, ни текста, ни имён ссылок.
+       */
+      audit(db, req.user!.id, 'material_create', {
+        classId: cls.id, postId: post.id, status: post.status, files: uploaded.length, links: links.length,
+      });
       return reply.code(201).send(post);
     } catch (e) {
       return rejectToReply(e, reply);
@@ -208,6 +246,7 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
         params: { title: p.data.title, class: name }, dedupeBase: `post:${post.id}`, excludeUserId: req.user!.id,
       });
     })().catch(() => undefined);
+    audit(db, req.user!.id, 'announcement_create', { classId: cls.id, postId: post.id });
     return reply.code(201).send(post);
   });
 
@@ -233,9 +272,26 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
         .from(topicsTable).where(eq(topicsTable.id, text.topicId)).limit(1);
       if (!t || t.classId !== existing.classId) return reply.code(400).send({ error: 'invalidInput' });
     }
-    if (Object.keys(text).length) await updatePost(db, existing.id, text);
-    if (audience) await setPostAudience(db, existing.id, audience);
+    /*
+     * Текст и аудитория применяются ОДНИМ ходом. Пока аудитория проверялась после `updatePost`,
+     * отказ `invalidAudience` возвращал 400 уже с применённым заголовком — клиент считал правку
+     * несохранённой, а в ленте она была. Отказ обязан откатывать и текст.
+     */
+    try {
+      await db.transaction(async (tx) => {
+        if (Object.keys(text).length) await updatePost(tx, existing.id, text);
+        // класс и проверка участников — здесь: `post_audience` без них была бы строкой в никуда
+        if (audience) await setPostAudience(tx, existing.classId, existing.id, audience);
+      });
+    } catch (e) {
+      return rejectToReply(e, reply);
+    }
     const [row] = await db.select().from(postsTable).where(eq(postsTable.id, existing.id)).limit(1);
+    // имена полей и количество адресатов, но ни заголовка, ни текста, ни списка имён учеников
+    audit(db, req.user!.id, 'post_update', {
+      classId: existing.classId, postId: existing.id, fields: Object.keys(text),
+      ...(audience ? { audienceCount: audience.length } : {}),
+    });
     return row ?? existing;
   });
 
@@ -246,6 +302,7 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     const flipped = await publishPost(db, existing.id);
     if (!flipped) return reply.code(400).send({ error: 'alreadyPublished' });
     void notifyMaterialPublished(db, flipped).catch(() => undefined);
+    audit(db, req.user!.id, 'post_publish', { classId: existing.classId, postId: existing.id });
     return flipped;
   });
 
@@ -257,6 +314,7 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!p.success) return reply.code(400).send({ error: 'invalidInput' });
     if (!safeExternalUrl(p.data.url)) return reply.code(400).send({ error: 'invalidLink' });
     const row = await addLinkAttachment(db, existing.id, p.data.url, p.data.title);
+    audit(db, req.user!.id, 'attachment_link_add', { classId: existing.classId, postId: existing.id, attachmentId: row?.id ?? null });
     return reply.code(201).send(row);
   });
 
@@ -267,11 +325,14 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!uuidRe.test(aid)) return reply.code(404).send({ error: 'notFound' });
     const gone = await removeAttachment(db, existing.id, aid);
     if (!gone) return reply.code(404).send({ error: 'notFound' });
+    // удаление вложения — то, что ученик может обнаружить только постфактум, поэтому след обязан
+    // быть: идентификаторы, без имени файла и без пути в хранилище
+    audit(db, req.user!.id, 'attachment_remove', { classId: existing.classId, postId: existing.id, attachmentId: aid });
     return { ok: true };
   });
 
   // append files to an existing post (multipart, same limits/magic bytes/quota)
-  app.post('/api/posts/:postId/files', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+  app.post('/api/posts/:postId/files', { preHandler: app.authenticateTeacher, ...uploadGateHooks }, async (req, reply) => {
     const existing = await ownPost(req, reply);
     if (!existing) return reply;
     if (!req.isMultipart()) return reply.code(400).send({ error: 'invalidInput' });
@@ -280,6 +341,10 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     if (!mp.uploaded.length) return reply.code(400).send({ error: 'invalidInput' });
     try {
       const added = await addFilesToPost(db, req.user!.id, existing.id, mp.uploaded);
+      audit(db, req.user!.id, 'file_attach', {
+        classId: existing.classId, postId: existing.id,
+        files: added.filter((a) => a.kind === 'file').length,
+      });
       return reply.code(201).send(added);
     } catch (e) {
       return rejectToReply(e, reply);
@@ -290,6 +355,7 @@ export async function postRoutes(app: FastifyInstance, opts: { db: DB }) {
     const existing = await ownPost(req, reply);
     if (!existing) return reply;
     await deletePost(db, existing.id);
+    audit(db, req.user!.id, 'post_delete', { classId: existing.classId, postId: existing.id, kind: existing.kind });
     return { ok: true };
   });
 

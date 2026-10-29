@@ -46,6 +46,8 @@ export default function ClassDetail() {
   const [pwFor, setPwFor] = useState<string | null>(null);
   const [pwA1, setPwA1] = useState('');
   const [pwA2, setPwA2] = useState('');
+  // показ сгенерированного временного пароля (2026-10-28): «скопировано» живёт до следующего сброса
+  const [pwCopied, setPwCopied] = useState(false);
   // 2026-10-26: добавление СУЩЕСТВУЮЩЕГО аккаунта по почте. Нужно ровно для тупика
   // «ученик забыл пароль, а в списке его нет»: сброс требует членства, а членства нет.
   // Пароль здесь не создаётся и не меняется — только строка в class_members.
@@ -204,7 +206,7 @@ export default function ClassDetail() {
   /** прежний путь: сервер генерирует пароль и показывает его один раз */
   const resetPw = useMutation({
     mutationFn: (userId: string) => api<{ tempPassword: string }>(`/api/classes/${id}/members/${userId}/reset-password`, { method: 'POST' }),
-    onSuccess: () => say(t('classes.pwSet')),
+    onSuccess: () => { setPwCopied(false); say(t('classes.pwSet')); },
   });
   /** новый путь: пароль набирает учитель; ответ сервера его не возвращает */
   const setPw = useMutation({
@@ -501,11 +503,37 @@ export default function ClassDetail() {
                         {t('classes.removeMember')}
                       </button>
                       {resetPw.data && resetPw.variables === m.userId && !resetPw.isPending && (
-                        <span className="ok" data-testid="member-temp-pw" style={{ marginLeft: 8 }}>{resetPw.data.tempPassword}</span>
+                        <div className="invite-reveal" data-testid="member-temp-pw-box">
+                          {/* временный пароль существует ровно один раз: сервер его не хранит и
+                              повторно не покажет — копия должна уйти ученику отсюда, а не из
+                              переписки с самим собой (2026-10-28) */}
+                          <p className="invite-warn" role="status" data-testid="member-temp-pw-hint">
+                            {t('classes.pwTempWarn')}
+                          </p>
+                          <div className="invite-url" dir="ltr">
+                            <code data-testid="member-temp-pw">{resetPw.data.tempPassword}</code>
+                          </div>
+                          <div className="row invite-actions">
+                            <button type="button" data-testid="member-temp-pw-copy" onClick={() => {
+                              void navigator.clipboard?.writeText(resetPw.data!.tempPassword)
+                                .then(() => setPwCopied(true)).catch(() => undefined);
+                            }}>
+                              {pwCopied ? t('classes.pwCopied') : t('classes.pwCopy')}
+                            </button>
+                            <button type="button" className="ghost" style={{ marginTop: 0 }}
+                              data-testid="member-temp-pw-done"
+                              onClick={() => { resetPw.reset(); setPwCopied(false); }}>
+                              {t('classes.pwDone')}
+                            </button>
+                          </div>
+                        </div>
                       )}
                       {resetPw.error && resetPw.variables === m.userId && (
                         <span className="error" data-testid="member-reset-pw-error" style={{ marginLeft: 8 }}>
-                          {t('common.errorGeneric')}
+                          {/* код сервера переводится как остальные ошибки входа; неизвестный
+                              код не показывает сырой ключ и не превращается в пустоту */}
+                          {t(`auth.${(resetPw.error as { code?: string }).code ?? 'errorGeneric'}`,
+                            { defaultValue: t('common.errorGeneric') })}
                         </span>
                       )}
                     </td>

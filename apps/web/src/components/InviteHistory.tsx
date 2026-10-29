@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { fmtDate, fmtDateTime } from '../lib/format';
+import { useFocusTrap } from '../lib/focusTrap';
 
 /**
  * История приглашений класса (задача 2026-10-24, часть B) — отдельное окно, закрытое по умолчанию.
@@ -44,8 +45,11 @@ export default function InviteHistory({ classId, open, onClose }: {
   const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   // кнопка, которая открыла окно: после закрытия фокус обязан вернуться к ней, а не исчезнуть
   const openerRef = useRef<Element | null>(null);
+  // Tab не должен уходить на страницу под затемнением (аудит 2026-10-28, пункт 13)
+  useFocusTrap(dialogRef, open);
 
   const rows = useQuery({
     queryKey: ['invitations', classId],
@@ -77,7 +81,7 @@ export default function InviteHistory({ classId, open, onClose }: {
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <div className="modal invite-history" role="dialog" aria-modal="true"
+      <div className="modal invite-history" role="dialog" aria-modal="true" ref={dialogRef}
         aria-labelledby="invite-history-title" data-testid="invite-history"
         onClick={(e) => e.stopPropagation()}>
         <div className="row" style={{ alignItems: 'flex-start' }}>

@@ -40,7 +40,7 @@ describe('B3: один генератор временного пароля', ()
       const p = tempPassword();
       expect(p).toHaveLength(TEMP_PASSWORD_LENGTH);
       expect([...p].every((c) => TEMP_ALPHABET.includes(c)), p).toBe(true);
-      // политика требует ≥10 и наличия буквы: временный пароль обязан проходить её ВСЕГДА,
+      // политика требует ≥10 и ДВА вида символов: временный пароль обязан проходить её ВСЕГДА,
       // иначе сброс даёт аккаунт, который не может сменить пароль на такой же
       expect(passwordPolicy.safeParse(p).success, `политика отклонила «${p}»`).toBe(true);
     }

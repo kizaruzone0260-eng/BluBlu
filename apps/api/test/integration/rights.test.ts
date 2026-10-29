@@ -24,7 +24,7 @@ import { and, eq } from 'drizzle-orm';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, loginToken, makeInviteLink, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
-import { classes, posts, files as filesTable, users } from '../../src/db/schema.js';
+import { classes, posts, files as filesTable, users, classTelegramChats } from '../../src/db/schema.js';
 import type { FastifyInstance } from 'fastify';
 
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
@@ -35,7 +35,7 @@ suite('§7 rights audit', () => {
   let app: FastifyInstance;
   const tok: Record<string, string> = {};
   const id: Record<string, string> = {};
-  let classA = '', classB = '', teacherAId = '', studentAId = '', studentBId = '';
+  let classA = '', classB = '', teacherAId = '', teacherBId = '', studentAId = '', studentBId = '';
   let postA = '', fileA = '', noteA = '', eventA = '', sessionA = '', sheetA = '', inviteA = '';
 
   /*
@@ -57,6 +57,7 @@ suite('§7 rights audit', () => {
     const tA = await makeTeacher(t.sql, `audA${Date.now()}@x.io`);
     teacherAId = tA.id;
     const tB = await makeTeacher(t.sql, `audB${Date.now()}@x.io`);
+    teacherBId = tB.id;
     const chk = await t.sql`select email, left(password_hash, 14) as h from users where id = ${tA.id}`;
     if (!chk.length) throw new Error('teacher row missing after insert!');
     for (const [who, u] of [['teacherA', tA], ['teacherB', tB]] as const) {
@@ -465,6 +466,72 @@ suite('§7 rights audit', () => {
     expect(pubStu.statusCode).toBe(403);
     const okGet = await app.inject({ method: 'GET', url: `/api/lessons/${sessionA}/board`, headers: a('studentA') });
     expect(okGet.statusCode).toBe(200);
+  });
+
+  /**
+   * Stage 4: четыре маршрута, которые аудит назвал непроверенными отрицательными тестами.
+   * Реализация их уже проверяла (`chatAccess` / `resolveClass` / `authenticateTeacher`), здесь
+   * фиксируется ответ на чужого и на анонима, чтобы правило не размылось молча. Для отвязки
+   * telegram проверяется ещё и то, чего тест ответа не видит: после отказа чужая строка привязки
+   * остаётся на месте — маршрут не должен успеть удалить её «до» проверки владения.
+   */
+  it('chat ticket/read, telegram unbind and board authors refuse the foreign tenant', async () => {
+    // ── чат: аноним 401, чужой учитель и чужой ученик 404, свой участник работает ──
+    for (const path of ['ticket', 'read']) {
+      const url = `/api/classes/${classA}/chat/${path}`;
+      const anon = await app.inject({ method: 'POST', url });
+      expect(anon.statusCode, `anon ${url}`).toBe(401);
+      for (const who of ['teacherB', 'studentB'] as const) {
+        const r = await app.inject({ method: 'POST', url, headers: a(who) });
+        expect(r.statusCode, `${who} ${url}`).toBe(404);
+      }
+    }
+    const ownTicket = await app.inject({ method: 'POST', url: `/api/classes/${classA}/chat/ticket`, headers: a('studentA') });
+    expect(ownTicket.statusCode).toBe(200);
+    expect(typeof ownTicket.json().ticket).toBe('string');
+    const ownRead = await app.inject({ method: 'POST', url: `/api/classes/${classA}/chat/read`, headers: a('studentA') });
+    expect(ownRead.statusCode).toBe(200);
+
+    // ── отвязка telegram: чужой класс 404, ученик 403, аноним 401; строки не тронуты ──
+    const chatA = '-1009000000001';
+    const chatB = '-1009000000002';
+    await t.db.insert(classTelegramChats).values([
+      { classId: classA, chatId: chatA, linkedBy: teacherAId },
+      { classId: classB, chatId: chatB, linkedBy: teacherBId },
+    ]);
+    const foreign = await app.inject({ method: 'DELETE', url: `/api/classes/${classA}/telegram/${chatA}`, headers: a('teacherB') });
+    expect(foreign.statusCode).toBe(404);
+    // чат, привязанный к СВОЕМУ классу B, через маршрут класса A тоже не удаляется
+    const crossBound = await app.inject({ method: 'DELETE', url: `/api/classes/${classA}/telegram/${chatB}`, headers: a('teacherB') });
+    expect(crossBound.statusCode).toBe(404);
+    const pupil = await app.inject({ method: 'DELETE', url: `/api/classes/${classA}/telegram/${chatA}`, headers: a('studentA') });
+    expect(pupil.statusCode).toBe(403);
+    const anon = await app.inject({ method: 'DELETE', url: `/api/classes/${classA}/telegram/${chatA}` });
+    expect(anon.statusCode).toBe(401);
+    const bindings = await t.db.select({ classId: classTelegramChats.classId, chatId: classTelegramChats.chatId })
+      .from(classTelegramChats);
+    expect(bindings.map((b) => b.chatId).sort(), 'неудачные попытки не удалили ни одной привязки')
+      .toEqual([chatA, chatB].sort());
+    // контроль: владелец снимает свою привязку
+    const own = await app.inject({ method: 'DELETE', url: `/api/classes/${classA}/telegram/${chatA}`, headers: a('teacherA') });
+    expect(own.statusCode).toBe(200);
+    const left = await t.db.select({ chatId: classTelegramChats.chatId }).from(classTelegramChats)
+      .where(eq(classTelegramChats.classId, classA));
+    expect(left.map((b) => b.chatId)).toEqual([]);
+
+    // ── авторы рисунков: учительский маршрут, чужой урок 404, свой 200 ──
+    const authors = `/api/lessons/${sessionA}/board/authors`;
+    const anonAuthors = await app.inject({ method: 'GET', url: authors });
+    expect(anonAuthors.statusCode).toBe(401);
+    const pupilAuthors = await app.inject({ method: 'GET', url: authors, headers: a('studentA') });
+    expect(pupilAuthors.statusCode).toBe(403);
+    const foreignAuthors = await app.inject({ method: 'GET', url: authors, headers: a('teacherB') });
+    expect(foreignAuthors.statusCode).toBe(404);
+    const ownAuthors = await app.inject({ method: 'GET', url: authors, headers: a('teacherA') });
+    expect(ownAuthors.statusCode).toBe(200);
+    const counts = (ownAuthors.json() as { byAuthor: Record<string, number> }).byAuthor;
+    expect(typeof counts).toBe('object');
+    expect(Object.values(counts).every((n) => typeof n === 'number')).toBe(true);
   });
 
   it('student sheets are owner-only: B list empty, B patch/delete 404, teacher never sees them', async () => {

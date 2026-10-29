@@ -9,6 +9,7 @@ import {
 } from '../lib/boardPdf';
 import { boardWordFileName } from '../lib/boardDocx';
 import { DocxCancelled, buildWordDocx, type WordBoardSource, type WordMode } from '@klass/shared/boardDocxBuild';
+import { useFocusTrap } from '../lib/focusTrap';
 
 type ExportKind = 'pdf' | `word-${WordMode}`;
 
@@ -52,6 +53,10 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Tab обязан оставаться в окне: за затемнением лежат кнопки урока, до которых не добраться
+  // мышью, но легко добраться клавиатурой (аудит 2026-10-28, пункт 13)
+  useFocusTrap(dialogRef, true);
   const [boards, setBoards] = useState<BoardRow[] | null>(null);
   const [className, setClassName] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -229,7 +234,7 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
     <div className="modal-backdrop" data-testid="pdf-dialog" role="dialog" aria-modal="true"
       aria-label={t('lesson.pdfTitle')}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal pdf-modal">
+      <div className="modal pdf-modal" ref={dialogRef}>
         <div className="row">
           <h2 style={{ margin: 0 }}>{t('lesson.pdfTitle')}</h2>
           <div className="spacer" />
@@ -268,7 +273,8 @@ export default function BoardExportDialog({ sessionId, classId, current, liveEle
                     <input type="checkbox" data-testid={`pdf-pick-${b.pageNo}`} checked={selected.has(b.pageNo)}
                       onChange={() => toggle(b.pageNo)} aria-label={label(b, i + 1)} />
                     {thumbs[b.pageNo]
-                      ? <img src={thumbs[b.pageNo]} alt="" data-testid={`pdf-thumb-${b.pageNo}`} className="pdf-thumb" />
+                      ? <img src={thumbs[b.pageNo]} alt="" data-testid={`pdf-thumb-${b.pageNo}`} className="pdf-thumb"
+                          loading="lazy" decoding="async" />
                       : <span className="pdf-thumb pdf-thumb-empty" data-testid={`pdf-thumb-${b.pageNo}`} aria-hidden="true" />}
                     <span data-testid={`pdf-name-${b.pageNo}`}>
                       {label(b, i + 1)}

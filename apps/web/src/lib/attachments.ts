@@ -1,30 +1,15 @@
 /**
- * Material task A — client-side helpers for external attachments. These mirror
- * the server rules (services/posts.ts) so the form can reject bad URLs before
- * sending; the server re-validates everything anyway. The browser never loads
- * third-party thumbnails (i.ytimg.com is not even in the CSP img-src) and the
- * YouTube player is only embedded after an explicit click, via youtube-nocookie.
+ * Material task A — client-side helpers for external attachments.
+ *
+ * `safeExternalUrl`/`classifyAttachmentUrl` больше не переписаны здесь: с 2026-10-28 (аудит
+ * SEC-22 и паритет форм) это ОДНА реализация из `@klass/shared::links`, которой пользуется и
+ * сервер. Копипаста расходилась молча — форма пропускала адрес, который сервер потом отклонял,
+ * или наоборот. `youtubeVideoId` остаётся в вебе: сервер по нему ничего не решает.
+ *
+ * Браузер по-прежнему не грузит сторонние превью (i.ytimg.com нет в CSP img-src), а плеер
+ * YouTube встраивается только после явного клика, через youtube-nocookie.
  */
-
-export function safeExternalUrl(raw: string): string | null {
-  try {
-    const u = new URL(String(raw).trim());
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    const h = u.hostname.toLowerCase();
-    if (!/^[a-z0-9.-]+$/.test(h) || !h.includes('.')) return null;
-    return u.toString().slice(0, 2000);
-  } catch { return null; }
-}
-
-export type AttachmentKind = 'file' | 'link' | 'youtube' | 'drive';
-
-export function classifyAttachmentUrl(url: string): AttachmentKind {
-  let h = '';
-  try { h = new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return 'link'; }
-  if (h === 'youtu.be' || h === 'youtube.com' || h.endsWith('.youtube.com')) return 'youtube';
-  if (h === 'drive.google.com' || h === 'docs.google.com') return 'drive';
-  return 'link';
-}
+export { safeExternalUrl, classifyAttachmentUrl, type AttachmentKind } from '@klass/shared';
 
 /** 11-char video id for the nocookie embed, or null when the URL has none */
 export function youtubeVideoId(url: string): string | null {

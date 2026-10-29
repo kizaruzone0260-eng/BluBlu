@@ -21,5 +21,8 @@ export * from './boardStylesPanel.js';
 export * from './screenPip.js';
 export * from './inviteLinks.js';
 export * from './joinToken.js';
+// часть 3: гостевая ссылка на урок — без аккаунта, только по одобрению учителя
+export * from './guestLinks.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';
+export * from './links.js';

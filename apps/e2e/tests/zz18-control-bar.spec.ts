@@ -50,18 +50,21 @@ async function livekitReachable(wsUrl: string): Promise<boolean> {
 const m = (label: string, value: unknown) => console.log(`MEASURE ${label} ${JSON.stringify(value)}`);
 
 /*
- * Тот же прицел, что у zz6-a11y: WCAG 2 A/AA + 2.1, без color-contrast (есть отдельная проверка),
- * и падаем только на critical/serious. Правило взято из zz6 дословно, чтобы «axe без critical и
- * serious» означало в новом спеке ровно то же самое.
+ * Тот же прицел, что у zz6-a11y: WCAG 2 A/AA + 2.1, и падаем только на critical/serious.
+ * color-contrast включён с 2026-10-28 (аудит, пункт 13): токены исправлены, и оба спека
+ * обязаны видеть контраст одинаково — иначе «зелёный» снова ничего не значит.
  */
 async function expectAccessible(page: Page, name: string) {
   const res = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .disableRules(['color-contrast'])
     .analyze();
   const bad = res.violations
     .filter((v) => v.impact === 'critical' || v.impact === 'serious')
-    .map((v) => ({ screen: name, id: v.id, impact: v.impact, n: v.nodes.length, first: v.nodes[0]?.target }));
+    .map((v) => ({
+      screen: name, id: v.id, impact: v.impact, n: v.nodes.length, first: v.nodes[0]?.target,
+      // у color-contrast в data лежат fg/bg/ratio/font — без них падение нечем разбирать
+      detail: v.nodes[0]?.any.map((c) => c.data) ?? [],
+    }));
   if (bad.length) console.log('A11Y NEW BAR:', JSON.stringify(bad, null, 2));
   expect(bad, `axe critical/serious on ${name}`).toEqual([]);
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { passwordPolicy } from '@klass/shared';
 import { changePassword } from '../lib/api';
 
 /**
@@ -18,7 +19,7 @@ export default function ChangePasswordForm({ onDone }: { onDone?: () => void }) 
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
 
-  // client-side shape only; the authoritative policy runs on the server
+  // кнопка активна по форме; окончательное слово — за общей политикой и сервером
   const valid = current.length > 0 && next.length >= 10 && next === confirm;
 
   async function submit(e: React.FormEvent) {
@@ -26,6 +27,12 @@ export default function ChangePasswordForm({ onDone }: { onDone?: () => void }) 
     if (busy) return;
     setErr('');
     if (next !== confirm) { setErr('passwordsMismatch'); return; }
+    /*
+     * Та же `passwordPolicy`, что у регистрации и у сервера (паритет проверок, аудит
+     * 2026-10-28). Раньше здесь была только длина: «aaaaaaaaaa» уходило запросом и
+     * возвращалось ошибкой сервера — тот же текст, но после сети и без причины на месте.
+     */
+    if (!passwordPolicy.safeParse(next).success) { setErr('passwordTooWeak'); return; }
     setBusy(true);
     try {
       await changePassword(current, next);

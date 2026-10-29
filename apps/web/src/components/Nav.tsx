@@ -115,6 +115,19 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('klass_sidebar') === '1');
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggedOut, setLoggedOut] = useState(false);
+  const userBtnRef = useRef<HTMLButtonElement | null>(null);
+  // Escape закрывает меню и возвращает фокус на кнопку — как у любого раскрывающегося списка
+  // (аудит 2026-10-28, пункт 13: раньше это был div с role="button" без клавиатуры вовсе)
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMenuOpen(false);
+      userBtnRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
   const nav = useNavigate();
   const unreadQ = useChatUnread();
   const unread = (unreadQ.data ?? []).reduce((n, s) => n + s.unread, 0);
@@ -158,12 +171,17 @@ export function Nav({ me, live }: { me: Me | null; live: NavState }) {
               <span style={{ transform: collapsed ? 'rotate(180deg)' : undefined, display: 'inline-flex' }}><Icon d={icons.collapse} size={18} /></span>
               {!collapsed && <span className="lbl">{t('nav.collapse')}</span>}
             </button>
-            <div className="side-user" onClick={() => setMenuOpen(!menuOpen)} role="button" tabIndex={0}>
-              <span className="avatar">{initials}</span>
+            {/* имя обязательно: в свёрнутой рейке подпись скрыта display:none и в ари-имя не
+                попадает — оставался бы безымянный значок (аудит 2026-10-28, пункт 13) */}
+            <button type="button" ref={userBtnRef} className="side-user" data-testid="side-user"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen} aria-controls="side-user-menu"
+              aria-label={`${me.name} — ${t('nav.menu')}`}>
+              <span className="avatar" aria-hidden="true">{initials}</span>
               <span className="lbl" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{me.name}</span>
-            </div>
+            </button>
             {menuOpen && (
-              <div className="menu-pop" onMouseLeave={() => setMenuOpen(false)}>
+              <div className="menu-pop" id="side-user-menu" data-testid="side-user-menu" onMouseLeave={() => setMenuOpen(false)}>
                 <NavLink to="/profile" className="side-item" onClick={() => setMenuOpen(false)}>
                   <span className="ico"><Icon d={icons.profile} size={18} /></span><span className="lbl">{t('nav.profile')}</span>
                 </NavLink>

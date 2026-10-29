@@ -63,6 +63,12 @@ async function main() {
       .then((m) => m.sweepLoginAttempts(db))
       .then((n) => { if (n) console.log(`auth: удалено строк счётчика старше 24 ч — ${n}`); })
       .catch(() => undefined);
+    // SEC-13: просроченные refresh-строки. Заменённые, но ещё живые не удаляются: они нужны
+    // ротации (grace) и обнаружению повторного использования семейства.
+    import('./services/auth.js')
+      .then((m) => m.sweepRefreshTokens(db))
+      .then((n) => { if (n) console.log(`auth: удалено просроченных refresh-токенов — ${n}`); })
+      .catch(() => undefined);
     // Часть F: строки неподтверждённой регистрации. Человек запросил письмо и не вернулся —
     // его адрес держится в базе сутки после истечения кода, дальше нечего хранить: аккаунта нет,
     // письмо не доставлено, а адрес заявителя — персональные данные.
@@ -125,6 +131,16 @@ async function main() {
   if (bot && env.TELEGRAM_TRANSPORT === 'telegram') {
     const { applyMenu, grammyApi } = await import('./services/botApi.js');
     await applyMenu(grammyApi(bot), 'basic').catch((e: Error) => console.warn(errorLine('setMyCommands failed', e)));
+    /*
+     * Task F.1: the Mini App button is installed into the chat menu of every linked teacher.
+     * It is persistent, so this is not needed on every boot — but doing it here means teachers
+     * who linked BEFORE this version see the button without sending /start again. Background
+     * on purpose: boot must not wait for N Telegram calls, and a failure is only a log line.
+     */
+    void import('./services/bot.js')
+      .then(({ syncTeacherMiniMenus }) => syncTeacherMiniMenus(db, grammyApi(bot)))
+      .then((r) => { if (r.teachers) console.log(`telegram menu buttons: ${r.updated}/${r.teachers} teacher chats updated`); })
+      .catch((e: Error) => console.warn(errorLine('setChatMenuButton failed', e)));
   }
   // Demo (docs/DEMO.md): TELEGRAM_MODE=polling — long-polling, no public webhook required.
   if (bot && env.TELEGRAM_MODE === 'polling') {
@@ -162,6 +178,17 @@ async function main() {
   const origins = originBootSummary();
   console.log(`origins: allowed=[${origins.allowed.join(', ') || '—'}] sameHost=on`);
   for (const w of origins.warnings) console.warn(`origin config warning: ${w}`);
+
+  /*
+   * SEC-14: прогреваем фиктивный хеш до первого входа. Он считается теми же env-параметрами,
+   * что и настоящие, поэтому первая попытка «нет такого аккаунта» не должна включать в себя
+   * ещё и генерацию. Отказ не роняет старт: если Argon2 не работает, вход всё равно сломан,
+   * и падать на прогреве — значит не дать приложению даже сказать об этом.
+   */
+  {
+    const { dummyPasswordHash } = await import('./services/auth.js');
+    await dummyPasswordHash().catch((e) => console.warn(errorLine('dummy hash warm-up', e)));
+  }
 
   await app.listen({ port: env.PORT, host: env.HOST });
 

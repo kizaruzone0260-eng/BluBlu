@@ -39,4 +39,21 @@ describe('brand: BluBlu everywhere the user can see', () => {
     expect(manifest.short_name).toBe('BluBlu');
     expect(fs.existsSync('../web/public/favicon.svg')).toBe(true);
   });
+
+  it('iOS gets a real home-screen icon, not a page snapshot', () => {
+    // аудит 2026-10-28, пункт 14: без apple-touch-icon «На экран Домой» рисует снимок страницы
+    const html = fs.readFileSync('../web/index.html', 'utf8');
+    expect(html).toMatch(/<link rel="apple-touch-icon" href="\/icon-192\.png"/);
+    expect(fs.existsSync('../web/public/icon-192.png')).toBe(true);
+  });
+
+  it('noindex is said by three switches at once: meta, header, robots.txt', () => {
+    // пункт 7 аудита: тело robots.txt не сверялось ни одним тестом — набор из трёх
+    // независимых запретов должен ломаться заметно; заголовок проверяет phase1-headers.
+    const html = fs.readFileSync('../web/index.html', 'utf8');
+    expect(html).toMatch(/<meta name="robots" content="noindex, nofollow, noarchive, nosnippet" \/>/);
+    const robots = fs.readFileSync('../web/public/robots.txt', 'utf8');
+    expect(robots).toMatch(/^User-agent: \*$/m);
+    expect(robots).toMatch(/^Disallow: \/$/m);
+  });
 });

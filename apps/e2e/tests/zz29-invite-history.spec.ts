@@ -145,7 +145,12 @@ test.describe.serial('invitation history behind a button', () => {
      * осталось ровно о том же, о чём было: историю не вычеркивают, вид и подпись она показывает.
      */
     await expect(page.getByTestId(`invite-record-${legacyCodeId}`)).toBeVisible();
-    await expect(page.getByTestId(`invite-kind-${legacyCodeId}`)).toHaveText(/Код|Code|Kod|kodi/);
+    /*
+     * Язык интерфейса — состояние аккаунта, а не константа теста: zz15 оставляет учителя
+     * на английском, и тогда переводимый вид строки — «Class code». Регистр в шаблоне поэтому
+     * не важен; от сырых ключей (`classes.invite.kindCode`) по-прежнему защищает проверка ниже.
+     */
+    await expect(page.getByTestId(`invite-kind-${legacyCodeId}`)).toHaveText(/Код|Code|Kod|kodi/i);
     // код создавался без подписи — вместо пустой клетки обязан быть переводимый текст
     await expect(page.getByTestId(`invite-label-${legacyCodeId}`)).not.toHaveText('');
     /*
@@ -183,7 +188,15 @@ test.describe.serial('invitation history behind a button', () => {
     await openClass(page);
     const open = page.getByTestId('invite-history-open');
     await open.click();
-    await expect(page.getByTestId('invite-history')).toBeVisible();
+    const dialog = page.getByTestId('invite-history');
+    await expect(dialog).toBeVisible();
+    /*
+     * Tab не уходит за затемнение (аудит 2026-10-28, пункт 13): с ПЕРВОГО контрола окна
+     * Shift+Tab обязан остаться внутри, а не попасть на ссылку рейки, которую не видно.
+     */
+    await page.getByTestId('invite-history-close').focus();
+    await page.keyboard.press('Shift+Tab');
+    expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
     await page.getByTestId('invite-history-close').click();
     await expect(page.getByTestId('invite-history')).toHaveCount(0);
     await expect(page.locator('[data-testid^="invite-record-"]')).toHaveCount(0);
@@ -194,6 +207,8 @@ test.describe.serial('invitation history behind a button', () => {
     await expect(page.getByTestId(`invite-record-${legacyCodeId}`)).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('invite-history')).toHaveCount(0);
+    // Escape — тот же возврат фокуса, что и кнопкой
+    await expect(open).toBeFocused();
   });
 
   test('a class without invitations says so', async ({ page }) => {

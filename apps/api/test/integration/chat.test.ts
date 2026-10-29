@@ -303,6 +303,96 @@ suite('chat (item 8)', () => {
     expect(row!.lastMessage).toBeTruthy();
   });
 
+  /*
+   * 2026-10-28, аудит SEC-04. Архив класса обязан закрывать И чат: `resolveClass`, лента,
+   * материалы, доски и файлы для архивированного класса отвечают 404, а чат был единственной
+   * поверхностью без фильтра по `archived_at`. Проверяется обе стороны правила: закрыто всё
+   * (включая сокет) и не закрыто ничего лишнего — свой неархивированный класс остаётся рабочим,
+   * а снятие архива чат возвращает (строки сообщений при архивации не трогаются).
+   *
+   * Отдельный класс, а не общий `classId`: иначе проверка зависела бы от порядка файлов и
+   * мешала тесту каскада ниже.
+   */
+  it('archive closes the chat for every surface, and un-archiving opens it back', async () => {
+    const [teacherRow] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, 'cht@x.io'));
+    const [pupil] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, 'cha@x.io'));
+    const [arch] = await t.db.insert(classes).values({ teacherId: teacherRow!.id, name: 'Архив-чат' }).returning();
+    const archId = arch!.id;
+    await t.db.insert(classMembers).values({ classId: archId, userId: pupil!.id });
+
+    // контроль: живой класс работает как работал
+    expect((await post(studentATok, `/api/classes/${archId}/chat/messages`, { text: 'до архива' })).statusCode).toBe(201);
+
+    // тикет выдаётся ДО архивации — чтобы проверить и сокет, который подключается уже после
+    const tr = await post(teacherTok, `/api/classes/${archId}/chat/ticket`, {});
+    expect(tr.statusCode).toBe(200);
+    const ticket = tr.json().ticket as string;
+
+    expect((await post(teacherTok, `/api/classes/${archId}/archive`, {})).statusCode).toBe(200);
+
+    // чужие поверхности архива (лента, файлы, доски) были закрыты и раньше — здесь проверяются
+    // именно поверхности чата
+    const surfaces: Array<[string, string, unknown]> = [
+      ['GET', `/api/classes/${archId}/chat/messages`, undefined],
+      ['POST', `/api/classes/${archId}/chat/messages`, { text: 'после архива' }],
+      ['POST', `/api/classes/${archId}/chat/read`, {}],
+      ['POST', `/api/classes/${archId}/chat/ticket`, {}],
+    ];
+    for (const [method, url, body] of surfaces) {
+      const r = await app.inject({ method: method as 'GET', url, headers: a(teacherTok), ...(body ? { payload: body as object } : {}) });
+      expect(r.statusCode, `${method} ${url} архивированного класса`).toBe(404);
+      expect(r.json().error, `${method} ${url}: 404, а не 403 (§7)`).toBe('notFound');
+    }
+    // то же участником, а не владельцем: у студента путь ровно тот же
+    const asPupil = await get(studentATok, `/api/classes/${archId}/chat/messages`);
+    expect(asPupil.statusCode, 'участник архива тоже видит 404').toBe(404);
+
+    // модерация владельца: режим (PUT), список и постановка заглушений — 404, а не «настрой архив»
+    const mode = await app.inject({ method: 'PUT', url: `/api/classes/${archId}/chat/mode`, headers: a(teacherTok), payload: { mode: 'off' } });
+    expect(mode.statusCode, 'режим чата архива не переключается').toBe(404);
+    const mute = await post(teacherTok, `/api/classes/${archId}/chat/mutes`, { userId: pupil!.id, until: null });
+    expect(mute.statusCode, 'заглушение в архиве невозможно').toBe(404);
+    const mutes = await get(teacherTok, `/api/classes/${archId}/chat/mutes`);
+    expect(mutes.statusCode).toBe(404);
+    const unmute = await app.inject({
+      method: 'DELETE', url: `/api/classes/${archId}/chat/mutes/${pupil!.id}`, headers: a(teacherTok),
+    });
+    expect(unmute.statusCode).toBe(404);
+
+    // сокет: выданный заранее тикет всё ещё расходуется, но доступ к классу уже проверяется
+    // повторно — и получает 4404, а не «ready»
+    if (!app.server.listening) await app.listen({ port: 0, host: '127.0.0.1' });
+    const addr = app.server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    const closeCode = await new Promise<number>((res) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws/chat/${archId}?ticket=${encodeURIComponent(ticket)}`);
+      ws.on('close', (code) => res(code));
+      ws.on('error', () => res(-1));
+      ws.on('message', () => { ws.close(); res(-2); }); // -2 = сокет вообще открылся: регрессия
+      setTimeout(() => { try { ws.close(); } catch { /* */ } res(-3); }, 5000);
+    });
+    expect(closeCode, 'сокет чата архивированного класса закрыт 4404 (-2 значит, что открылся)').toBe(4404);
+
+    // снятие архива возвращает чат: фильтр читает состояние класса на каждый запрос
+    await t.db.update(classes).set({ archivedAt: null }).where(eq(classes.id, archId));
+    const back = await get(studentATok, `/api/classes/${archId}/chat/messages`);
+    expect(back.statusCode, 'архив снят — лента снова доступна').toBe(200);
+    expect((back.json() as { messages: unknown[] }).messages.length).toBe(1);
+    /*
+     * Запись проверяется ТЕМИ ЖЕ маршрутами, что выше давали 404, и тем же участником:
+     * `/chat/read` меняет состояние (отметка прочтения) и не упирается в окно 5 сообщений / 10 с,
+     * на котором держится весь файл тестов. Пост здесь был бы красным по лимиту, а не по правке.
+     */
+    expect((await post(studentATok, `/api/classes/${archId}/chat/read`, {})).statusCode,
+      'запись в чат архива снята — снова проходит').toBe(200);
+    const ticketAfter = await post(teacherTok, `/api/classes/${archId}/chat/ticket`, {});
+    expect(ticketAfter.statusCode, 'владелец снова получает WS-тикет').toBe(200);
+
+    // и живой класс-сосед это изменение не задело
+    expect((await get(studentATok, `/api/classes/${classId}/chat/messages`)).statusCode,
+      'неархивированный класс работает как работал').toBe(200);
+  });
+
   it('class deletion cascades messages', async () => {
     await t.db.delete(classes).where(eq(classes.id, classId));
     const left = await t.db.select().from(chatMessages).where(eq(chatMessages.classId, classId));

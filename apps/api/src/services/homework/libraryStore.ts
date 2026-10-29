@@ -318,7 +318,58 @@ export async function toggleDraftMaterial(
   return inserted.length ? 'added' : 'missing';
 }
 
-/** A material uploaded during the homework flow is chosen for that draft immediately. */
+/**
+ * Replace the whole material selection of a draft (Mini App step 3).
+ *
+ * The picker shows `eligibleMaterials`, and this function proves the same rule again: every
+ * requested row must be the owner's ACTIVE material and recommended for ALL currently selected
+ * groups. A client that sends someone else's material id, an archived row or a book attached
+ * to only one of three groups gets a refusal, not a partial selection.
+ */
+export type SetDraftMaterialsResult =
+  | { status: 'ok'; materials: HwDraftMaterialRow[] }
+  | { status: 'noGroups' }
+  | { status: 'notEligible' }
+  | { status: 'limit' };
+
+export async function setDraftMaterials(
+  db: DB, draftId: string, ownerId: string, materialIds: string[],
+): Promise<SetDraftMaterialsResult> {
+  const ids = [...new Set(materialIds)];
+  if (ids.length !== materialIds.length) return { status: 'notEligible' };
+  if (ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) return { status: 'notEligible' };
+  if (ids.length > MAX_DRAFT_MATERIALS) return { status: 'limit' };
+  const targets = await db.select({ groupId: tgDraftTargets.groupId }).from(tgDraftTargets)
+    .where(eq(tgDraftTargets.draftId, draftId));
+  const groupIds = targets.map((t) => t.groupId);
+  if (!groupIds.length) return { status: 'noGroups' };
+
+  const eligible = ids.length ? await eligibleMaterials(db, ownerId, groupIds, MAX_MATERIALS) : [];
+  const byId = new Map(eligible.map((m) => [m.id, m]));
+  if (ids.some((id) => !byId.has(id))) return { status: 'notEligible' };
+
+  await db.transaction(async (tx) => {
+    await tx.delete(tgDraftMaterials).where(eq(tgDraftMaterials.draftId, draftId));
+    if (ids.length) {
+      await tx.insert(tgDraftMaterials).values(ids.map((id, index) => {
+        const m = byId.get(id)!;
+        return {
+          draftId, materialId: m.id, position: index + 1,
+          title: m.title, kind: m.kind, telegramFileId: m.telegramFileId,
+          fileUniqueId: m.fileUniqueId, fileName: m.fileName,
+          mimeType: m.mimeType, fileSize: m.fileSize,
+          mediaType: m.mediaType, sourceChatId: m.sourceChatId,
+          sourceMessageId: m.sourceMessageId,
+        };
+      }));
+    }
+  });
+  return { status: 'ok', materials: await listDraftMaterials(db, draftId) };
+}
+
+/**
+ * A material uploaded during the homework flow is chosen for that draft immediately.
+ */
 export async function attachDraftMaterial(
   db: DB, draftId: string, material: HwMaterialRow,
 ): Promise<'added' | 'exists' | 'limit'> {

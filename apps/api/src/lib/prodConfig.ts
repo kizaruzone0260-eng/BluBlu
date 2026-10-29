@@ -11,6 +11,8 @@
  * add its pair of assertions there — do not inline a new `if (NODE_ENV === …)`.
  */
 
+import { ttlSeconds } from './tokenTtl.js';
+
 export type NodeEnv = 'development' | 'test' | 'production';
 
 /** The vite dev-server origin — a DEV convenience, never a production default. */
@@ -36,6 +38,51 @@ export function effectiveWebOrigin(configured: string | undefined, nodeEnv: Node
 export const PROD_REFRESH_GRACE_CEILING_MS = 5000;
 export function effectiveRefreshGrace(ms: number, nodeEnv: NodeEnv): number {
   return nodeEnv === 'production' ? Math.min(ms, PROD_REFRESH_GRACE_CEILING_MS) : ms;
+}
+
+/**
+ * SEC-15 (аудит 2026-10-28): нижние рамки стоимости Argon2 в production.
+ *
+ * Прежний разбор конфигурации защищал только секреты: владелец (или опечатка в Render) мог
+ * поставить `ARGON2_MEMORY_COST=1024`, и каждый пароль хешировался бы в разы дешевле — этого
+ * не видно ни в одном экране, потому что вход продолжает работать. Рамка поднимает СЛАБОЕ
+ * значение до минимума, а более сильное не трогает. Вне production значения остаются как есть:
+ * тесты намеренно считают дешёвыми параметрами (`test/setup.ts`), иначе прогон длился бы часы.
+ */
+export const PROD_ARGON2_MEMORY_FLOOR = 19456; // KiB — 19 MiB, рекомендация OWASP для Argon2id
+export const PROD_ARGON2_TIME_FLOOR = 2;
+export const PROD_ARGON2_PARALLELISM_FLOOR = 1;
+
+export interface Argon2Costs {
+  memoryCost: number;
+  timeCost: number;
+  parallelism: number;
+}
+
+export function effectiveArgon2Costs(costs: Argon2Costs, nodeEnv: NodeEnv): Argon2Costs {
+  if (nodeEnv !== 'production') return costs;
+  return {
+    memoryCost: Math.max(costs.memoryCost, PROD_ARGON2_MEMORY_FLOOR),
+    timeCost: Math.max(costs.timeCost, PROD_ARGON2_TIME_FLOOR),
+    parallelism: Math.max(costs.parallelism, PROD_ARGON2_PARALLELISM_FLOOR),
+  };
+}
+
+/**
+ * SEC-15: срок access-токена в production не ниже 60 с.
+ *
+ * Токен живёт в памяти вкладки; слишком короткий срок (или мусор в переменной, из-за которого
+ * `jose` бросит при подписи) превращает каждый вход в 500/мгновенный разлогин. Как и рамки
+ * Argon2, это защита от опечатки в конфигурации, а не продуктовое ограничение: 15m по умолчанию
+ * остаётся, более длинный осознанный срок тоже.
+ */
+export const PROD_ACCESS_TOKEN_TTL_FLOOR_SEC = 60;
+
+export function effectiveAccessTokenTtl(ttl: string, nodeEnv: NodeEnv): string {
+  if (nodeEnv !== 'production') return ttl;
+  return ttlSeconds(ttl) < PROD_ACCESS_TOKEN_TTL_FLOOR_SEC
+    ? `${PROD_ACCESS_TOKEN_TTL_FLOOR_SEC}s`
+    : ttl;
 }
 
 /**

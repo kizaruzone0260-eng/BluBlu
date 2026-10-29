@@ -241,19 +241,33 @@ export async function chatSummary(db: DB, userId: string, role: 'teacher' | 'stu
   return out.sort((a, b) => (b.lastAt ?? '').localeCompare(a.lastAt ?? ''));
 }
 
-/** participant check used by the routes: teacher-owner or member; null ⇒ 404 */
+/**
+ * Participant check used by the routes: teacher-owner or member; null ⇒ 404.
+ *
+ * 2026-10-28, аудит SEC-04: архив закрывает и чат. Это не «новый запрет», а приведение к правилу,
+ * которое весь проект уже держит: `resolveClass` (`services/classes.ts:22-39`), `listEventsInRange`,
+ * `chatSummary` и выдача файлов/доски/архива фильтруют `classes.archived_at`, поэтому для
+ * заархивированного класса feed, материалы, доски и файлы отвечают 404, а сам класс скрыт из
+ * `/api/classes`. Чат был ЕДИНСТВЕННОЙ поверхностью, которая этого фильтра не имела: выпускной
+ * класс продолжал переписку, которую учитель считает закрытой, и WS-сокет (`routes/chat.ts:232`)
+ * тоже её принимал. Разделение ответственности при этом то же: проверка остаётся «владелец или
+ * участник», поэтому поправка не даёт доступа никому чужому и ничего не отнимает у живого класса.
+ *
+ * Что сознано НЕ меняется: отмена архивации возвращает чат — строки сообщений не удаляются и
+ * фильтр читает состояние класса на каждый запрос, а не «закрыл навсегда».
+ */
 export async function chatAccess(
   db: DB, userId: string, role: 'teacher' | 'student', classId: string,
 ): Promise<{ chatMode: 'on' | 'off' | 'announce' } | null> {
   if (role === 'teacher') {
     const [c] = await db.select({ chatMode: classes.chatMode }).from(classes)
-      .where(and(eq(classes.id, classId), eq(classes.teacherId, userId))).limit(1);
+      .where(and(eq(classes.id, classId), eq(classes.teacherId, userId), isNull(classes.archivedAt))).limit(1);
     return c ?? null;
   }
   const [c] = await db
     .select({ chatMode: classes.chatMode })
     .from(classMembers)
-    .innerJoin(classes, eq(classes.id, classMembers.classId))
+    .innerJoin(classes, and(eq(classes.id, classMembers.classId), isNull(classes.archivedAt)))
     .where(and(eq(classMembers.classId, classId), eq(classMembers.userId, userId))).limit(1);
   return c ?? null;
 }

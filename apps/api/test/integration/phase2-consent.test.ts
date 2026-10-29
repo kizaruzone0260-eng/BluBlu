@@ -71,6 +71,32 @@ suite('Phase 2 consent', () => {
     expect((await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().policyAccepted).toBe(false);
   });
 
+  /*
+   * Аудит SEC-01/02/09 (2026-10-28): текст политики изменился, поэтому `POLICY_VERSION` поднят.
+   * Повторное согласие — не новая механика, а СЛЕДСТВИЕ версии: строка, принятая под прежней
+   * версией, остаётся в базе (это история), но `/api/me` больше не считает её действующей.
+   * Дальше ровно одно принятие текущей версии перезаписывает строку, а не плодит вторую.
+   *
+   * `2000-01-01` — намеренно «давняя» версия, а не конкретный прошлый релиз: тест обязан
+   * пережить следующее повышение `POLICY_VERSION` и не зависит от даты в тексте.
+   */
+  it('an acceptance of an older version no longer counts and is replaced on re-consent', async () => {
+    const tok = await newStudent(`c5${Date.now()}@x.io`);
+    const userId = (await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().id as string;
+    await t.db.insert(policyAcceptances)
+      .values({ userId, version: '2000-01-01', acceptedAt: new Date() });
+
+    expect((await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().policyAccepted).toBe(false);
+
+    const again = await app.inject({ method: 'POST', url: '/api/me/accept-policy', headers: bearer(tok), payload: { version: POLICY_VERSION } });
+    expect(again.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().policyAccepted).toBe(true);
+
+    const rows = await t.db.select().from(policyAcceptances).where(eq(policyAcceptances.userId, userId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.version).toBe(POLICY_VERSION);
+  });
+
   it('a malformed version is 400; anonymous cannot record consent', async () => {
     const tok = await newStudent(`c4${Date.now()}@x.io`);
     const bad = await app.inject({ method: 'POST', url: '/api/me/accept-policy', headers: bearer(tok), payload: { version: 'v1' } });

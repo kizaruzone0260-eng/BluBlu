@@ -43,3 +43,13 @@ export function wsBroadcast(sessionId: string, message: unknown, except?: WebSoc
 export function wsRoomSize(sessionId: string): number {
   return rooms.get(sessionId)?.size ?? 0;
 }
+
+/**
+ * Служебная комната «только учитель» (задача 2026-10-28, часть 3): в неё входят те же сокеты
+ * урока, но под вторым ключом, и туда уходят заявки гостей. Ученики не должны видеть ни имена
+ * гостей, ни сам факт заявки, а отдельного сервиса реального времени проект не заводит —
+ * это тот же wsHub, тот же сокет урока, просто другой адресат.
+ */
+export function teacherRoomKey(sessionId: string): string {
+  return `g:${sessionId}`;
+}

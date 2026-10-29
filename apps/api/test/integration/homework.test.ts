@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
-import { tgDrafts, tgGroups, tgPublications, telegramLinks, users } from '../../src/db/schema.js';
+import { tgDrafts, tgGroups, tgPublications, telegramLinks, users, auditLog } from '../../src/db/schema.js';
 import { handleUpdate, type BotDeps, type TgUpdate } from '../../src/services/bot.js';
 import { CapturingApi } from '../../src/services/botApi.js';
 import { hashPassword } from '../../src/lib/password.js';
@@ -181,6 +181,20 @@ suite('telegram homework assistant', () => {
   const draftRow = async (id: string) => {
     const [row] = await t.db.select().from(tgDrafts).where(eq(tgDrafts.id, id));
     return row!;
+  };
+  /**
+   * SEC-14 (2026-10-28): `audit()` пишется fire-and-forget, поэтому ждём строку, а не «немного
+   * времени»: тест должен проверять наличие следа, а не скорость машины.
+   */
+  const waitHomeworkAudit = async (draftId: string) => {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const rows = (await t.db.select().from(auditLog).where(eq(auditLog.action, 'homework_publish')))
+        .filter((r) => (r.target as { draftId?: string }).draftId === draftId);
+      if (rows.length) return rows;
+      if (Date.now() > deadline) throw new Error('в audit_log нет записи homework_publish для черновика');
+      await new Promise((r) => setTimeout(r, 25));
+    }
   };
   const pubsOf = (draftId: string) =>
     t.db.select().from(tgPublications).where(eq(tgPublications.draftId, draftId));
@@ -437,6 +451,17 @@ suite('telegram homework assistant', () => {
 
     const after = await draftRow(draft.id);
     expect(after.status).toBe('published');
+    /*
+     * SEC-14 (2026-10-28): «кто и когда раздал задание классам» обязано быть в журнале, и только
+     * фактом со счётчиками — ни текста задания, ни названия группы.
+     */
+    const audited = await waitHomeworkAudit(draft.id);
+    expect(audited, 'ровно одна запись на публикацию').toHaveLength(1);
+    expect(audited[0]!.actorId).toBe(teacherId);
+    expect(audited[0]!.target).toMatchObject({ draftId: draft.id, status: 'published', groups: 1, failed: 0 });
+    const wire = JSON.stringify(audited[0]!.target);
+    expect(wire, 'текст задания не копируется в журнал').not.toContain(ai.result.formatted);
+    expect(wire, 'названия групп не копируются в журнал').not.toContain('Группа А');
     const pubs = await pubsOf(draft.id);
     expect(pubs).toHaveLength(1);
     expect(pubs[0]!.status).toBe('sent');

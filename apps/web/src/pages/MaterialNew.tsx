@@ -128,6 +128,7 @@ export default function MaterialNew() {
           invalidAudience: t('material.badAudience'), invalidTopic: t('material.badTopic'),
           titleRequired: t('material.titleRequired'),
           tooLarge: t('material.tooLarge'), quotaExceeded: t('material.quota'),
+          uploadBusy: t('material.uploadBusy'),
           fileTypeRejected: t('material.badType'),
         };
         setErr(map[e.code ?? ''] ?? t('common.errorGeneric'));

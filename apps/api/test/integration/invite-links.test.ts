@@ -383,6 +383,82 @@ suite('A/B: одноразовые ссылки-приглашения', () => {
   });
 
   /**
+   * Задача 2026-10-28: «ученика удалили, а потом снова пригласили».
+   *
+   * Цикл проверялся только для ученика, который всё это время состоял в классе. Здесь — именно
+   * возврат: строку `class_members` удалили (жёсткое удаление, не флаг), аккаунт остался, и
+   * новая ссылка должна вернуть человека ровно одной строкой. Заодно фиксируются все способы
+   * НЕ вернуть: израсходованная, отозванная и истёкшая ссылки отвечают своими кодами и
+   * членства не создают, а два одновременных входа с одной ссылкой дают один успех.
+   */
+  it('удалённый ученик возвращается по новой ссылке тем же аккаунтом; повтор и отзыв не плодят членство', async () => {
+    const te = await makeTeacher(t.sql, `lk-re-${Date.now()}@x.io`);
+    const tok = await teacherToken(te.email);
+    const cls = await newClass(tok, 'Removed then reinvited');
+    const email = `lk-re-p-${Date.now()}@x.io`;
+
+    const first = await newLink(tok, cls);
+    const reg = await register({ token: first.token, firstName: 'Re', lastName: 'Join', email, password: PW });
+    expect(reg.statusCode, reg.body).toBe(200);
+    const [u] = await t.db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    const membership = () => t.db.select().from(classMembers)
+      .where(and(eq(classMembers.classId, cls), eq(classMembers.userId, u!.id)));
+
+    expect(await membership()).toHaveLength(1);
+
+    // учитель удаляет ученика из класса: строка исчезает, аккаунт и его пароль — нет
+    const del = await app.inject({
+      method: 'DELETE', url: `/api/classes/${cls}/members/${u!.id}`, headers: bearer(tok),
+    });
+    expect(del.statusCode, del.body).toBe(200);
+    expect(await membership(), 'удаление — это DELETE, а не флаг').toHaveLength(0);
+
+    // ученик входит тем же аккаунтом — ровно так экран /join идёт после «уже есть аккаунт? войти»
+    const login = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password: PW } });
+    expect(login.statusCode, login.body).toBe(200);
+    const pTok = login.json().accessToken as string;
+
+    const again = await newLink(tok, cls);
+    const back = await join(pTok, again.token);
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().classId).toBe(cls);
+    expect(back.json().alreadyMember, 'членства не было — это возврат, а не повтор').toBe(false);
+    expect(await membership(), 'ровно одна строка после возврата').toHaveLength(1);
+
+    // израсходованная ссылка второй раз не пускает и второй строки не создаёт
+    const replay = await join(pTok, again.token);
+    expect(replay.statusCode).toBe(400);
+    expect(replay.json().error).toBe('inviteUsed');
+    expect(await membership()).toHaveLength(1);
+
+    // отозванная ссылка не возвращает удалённого ученика
+    await app.inject({ method: 'DELETE', url: `/api/classes/${cls}/members/${u!.id}`, headers: bearer(tok) });
+    const revoked = await newLink(tok, cls);
+    await app.inject({ method: 'POST', url: `/api/classes/${cls}/invites/${revoked.id}/revoke`, headers: bearer(tok) });
+    const denied = await join(pTok, revoked.token);
+    expect(denied.statusCode).toBe(400);
+    expect(denied.json().error).toBe('inviteRevoked');
+    expect(await membership(), 'отозванная ссылка не создала членство').toHaveLength(0);
+
+    // истёкшая ссылка — тоже отказ, а не «почти сработало»
+    const expired = await newLink(tok, cls);
+    await t.db.update(inviteCodes).set({ expiresAt: new Date(Date.now() - 60_000) })
+      .where(eq(inviteCodes.id, expired.id));
+    const late = await join(pTok, expired.token);
+    expect(late.statusCode).toBe(400);
+    expect(late.json().error).toBe('inviteExpired');
+    expect(await membership()).toHaveLength(0);
+
+    // два одновременных входа с одной новой ссылкой: один расход, одна строка членства
+    const raceLink = await newLink(tok, cls);
+    const [a, b] = await Promise.all([join(pTok, raceLink.token), join(pTok, raceLink.token)]);
+    expect([a.statusCode, b.statusCode].sort(), 'ровно один прошёл').toEqual([200, 400]);
+    const refused = a.statusCode === 400 ? a : b;
+    expect(refused.json().error).toBe('inviteUsed');
+    expect(await membership()).toHaveLength(1);
+  });
+
+  /**
    * Задача 2026-10-26. Учитель, открывший ученическую ссылку, получает не безликое `forbidden`,
    * а код, по которому экран объясняет «нужен ученический аккаунт» и предлагает пересесть.
    * И — главное — отказ НЕ расходует ссылку: человек мог открыть её из любопытства, а ссылка

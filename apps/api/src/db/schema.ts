@@ -1,5 +1,5 @@
 import {
-  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, unique, bigserial, jsonb, boolean, bigint, integer,
+  pgTable, pgEnum, text, timestamp, uuid, primaryKey, index, unique, uniqueIndex, bigserial, jsonb, boolean, bigint, integer,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
@@ -326,7 +326,23 @@ export const lessonSessions = pgTable('lesson_sessions', {
   /** task 2 (2026-10-09): who may write comments during THIS lesson */
   commentsMode: commentsModeEnum('comments_mode').notNull().default('on'),
   createdBy: uuid('created_by').notNull().references(() => users.id),
-}, (t) => [index('lessons_class_idx').on(t.classId, t.startedAt)]);
+}, (t) => [
+  index('lessons_class_idx').on(t.classId, t.startedAt),
+  /*
+   * SEC-11 (2026-10-28): у класса не может быть двух АКТИВНЫХ уроков.
+   *
+   * До этого правило «одна активная сессия на класс» жило только в `startLesson`: SELECT
+   * существующей, затем INSERT. Между этими двумя запросами окно, и два одновременных «Начать
+   * урок» (двойной клик, две вкладки, повтор после таймаута) честно создавали две сессии — с
+   * разными комнатами LiveKit и разными досками. Отчёт аудита (SEC-11) отметил это как гонку.
+   *
+   * Инвариант теперь в базе, а не в договорённости: частичный уникальный индекс по `class_id`
+   * среди строк с `ended_at IS NULL`. Завершённые уроки не мешают — их у класса сколько угодно,
+   * и история сохраняется. `startLesson` при нарушении индекса перечитывает активную сессию и
+   * возвращает её, поэтому для клиента гонка выглядит как обычный идемпотентный ответ.
+   */
+  uniqueIndex('lesson_sessions_one_active_per_class').on(t.classId).where(sql`${t.endedAt} is null`),
+]);
 
 /**
  * Task 2 (2026-10-09) — comments written while a lesson runs. They belong to the SESSION, not to
@@ -392,6 +408,60 @@ export const lessonHands = pgTable('lesson_hands', {
 }, (t) => [
   unique('lesson_hands_session_user_key').on(t.sessionId, t.userId),
   index('lesson_hands_session_idx').on(t.sessionId, t.raisedAt),
+]);
+
+/**
+ * Гостевая ссылка на урок (задача 2026-10-28, часть 3): учитель делится уроком с человеком БЕЗ
+ * аккаунта, как ссылкой Google Meet.
+ *
+ * Ссылка принадлежит СЕССИИ, а не классу: «урок закончился» — и право входа исчезло вместе с ним,
+ * ничего не нужно чистить по расписанию. В базе лежит только хеш токена (`token_hash`), сам
+ * токен живёт ровно в ответе на создание; `expires_at` — верхняя граница на случай урока,
+ * который никто не завершил, а `revoked_at` — «учитель закрыл ссылку». Повторное создание
+ * отзывает прежнюю активную ссылку: у сессии одна актуальная дверь, а не коридор дверей.
+ *
+ * `created_by` — владелец урока, он же единственный, кто эту ссылку выдаёт и закрывает.
+ */
+export const lessonGuestLinks = pgTable('lesson_guest_links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  classId: uuid('class_id').notNull().references(() => classes.id, { onDelete: 'cascade' }),
+  createdBy: uuid('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (t) => [
+  uniqueIndex('lesson_guest_links_token_idx').on(t.tokenHash),
+  index('lesson_guest_links_session_idx').on(t.sessionId, t.createdAt),
+]);
+
+/**
+ * Заявка гостя (задача 2026-10-28, часть 3): имя, которое человек ввёл, и его собственный ключ.
+ *
+ * `key_hash` — хеш ключа, СГЕНЕРИРОВАННОГО браузером гостя. Он не является учётной записью и
+ * ничего не даёт сам по себе: по нему сервер отличает «это тот же человек после перезагрузки»
+ * от «новая заявка», поэтому уникальность — (`link_id`, `key_hash`), а не имя (двух гостей с
+ * именем «Азиз» никто не запрещал). Наружу ключ не возвращается никогда.
+ *
+ * `status` — решение учителя: pending → approved | rejected. Отозванная ссылка и закончившийся
+ * урок НЕ переписывают статус: это отдельные состояния, вычисляемые по ссылке/сессии, и
+ * перезапись стёрла бы историю («одобрил, потом закрыл ссылку»). Гость не получает ни строки в
+ * `lesson_attendance`, ни какого-либо членства — только viewing-токен LiveKit после одобрения.
+ */
+export const lessonGuestRequests = pgTable('lesson_guest_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  linkId: uuid('link_id').notNull().references(() => lessonGuestLinks.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id').notNull().references(() => lessonSessions.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  keyHash: text('key_hash').notNull(),
+  status: text('status').notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp('decided_at', { withTimezone: true }),
+  decidedBy: uuid('decided_by').references(() => users.id),
+}, (t) => [
+  uniqueIndex('lesson_guest_requests_key_idx').on(t.linkId, t.keyHash),
+  index('lesson_guest_requests_session_idx').on(t.sessionId, t.createdAt),
 ]);
 
 export type User = typeof users.$inferSelect;
@@ -769,10 +839,22 @@ export const tgDrafts = pgTable('tg_drafts', {
   aiWarnings: jsonb('ai_warnings').$type<string[]>().notNull().default([]),
   aiProvider: text('ai_provider').notNull().default(''),
   lastError: text('last_error').notNull().default(''),
+  /**
+   * Where the draft was created: `bot` (the /homework dialog in Telegram private chat)
+   * or `mini` (the Mini App). The two dialogs share every table and the same publish
+   * engine, but they must not hijack each other's «current draft», so lookups are scoped
+   * by origin. Existing rows are `bot`.
+   */
+  origin: text('origin').notNull().default('bot'),
+  /** Optional teacher-entered deadline. Shown in preview and appended to the message. */
+  dueAt: timestamp('due_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   publishedAt: timestamp('published_at', { withTimezone: true }),
-}, (t) => [index('tg_drafts_owner_status_idx').on(t.ownerId, t.status, t.updatedAt)]);
+}, (t) => [
+  index('tg_drafts_owner_status_idx').on(t.ownerId, t.status, t.updatedAt),
+  index('tg_drafts_owner_origin_idx').on(t.ownerId, t.origin, t.status, t.updatedAt),
+]);
 
 export const tgDraftTargets = pgTable('tg_draft_targets', {
   draftId: uuid('draft_id').notNull().references(() => tgDrafts.id, { onDelete: 'cascade' }),
@@ -807,7 +889,12 @@ export const tgDraftItems = pgTable('tg_draft_items', {
   mimeType: text('mime_type'),
   fileSize: bigint('file_size', { mode: 'number' }),
   caption: text('caption').notNull().default(''),
-  sourceMessageId: bigint('source_message_id', { mode: 'number' }).notNull(),
+  /**
+   * NULL for an «extra link» typed in the Mini App: such an item has no original Telegram
+   * message to copy, so publication sends `text`/`url` directly. Library materials keep
+   * their own snapshot row in `tg_draft_materials`.
+   */
+  sourceMessageId: bigint('source_message_id', { mode: 'number' }),
   sourceChatId: text('source_chat_id'),
   sourceMediaGroupId: text('source_media_group_id'),
   forwarded: boolean('forwarded').notNull().default(false),

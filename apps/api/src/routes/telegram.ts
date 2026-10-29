@@ -7,6 +7,7 @@ import { env } from '../env.js';
 import {
   createLinkToken, unlinkUser, getPrefs, telegramReady,
 } from '../services/notify.js';
+import { audit } from '../services/audit.js';
 import { notificationPrefs, classNotifyPrefs, classTelegramChats, classLinkTokens, users, telegramLinks } from '../db/schema.js';
 import { resolveClass } from '../services/classes.js';
 import { createBot } from '../services/telegramBot.js';
@@ -124,9 +125,17 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
   });
 
   // Profile: link/unlink personal Telegram, notification prefs
+  /*
+   * Журнал (2026-10-28, аудит SEC-08). Привязка личного Telegram — это согласие человека на то,
+   * чтобы ему писали в мессенджер, и снятие этого согласия тоже поступок, который обязан иметь
+   * дату и автора: без него «почему ученику перестали приходить уведомления» неразличимо с
+   * «почему они не приходили никогда». В цели — только канал и chat_id по прежнему образцу
+   * (`services/bot.ts:985`); одноразовый токен привязки и ссылка на бота туда не попадают никогда.
+   */
   app.post('/api/me/telegram-link', { preHandler: app.authenticate }, async (req, reply) => {
     const res = await createLinkToken(db, req.user!.id);
     if (!res) return reply.code(400).send({ error: 'telegramNotConfigured' }); // item 5: no invented bot names
+    audit(db, req.user!.id, 'telegram_link_request', { channel: 'personal' });
     return res;
   });
 
@@ -135,10 +144,13 @@ export async function telegramRoutes(app: FastifyInstance, opts: { db: DB }) {
       .where(eq(telegramLinks.userId, req.user!.id)).limit(1);
     await unlinkUser(db, req.user!.id);
     if (link) {
-      // §1: the role menu is revoked with the link
+      // §1: the role menu is revoked with the link — and so is the persistent Mini App
+      // button (F.1), otherwise the chat keeps a door that now only says «unlinked».
       await removeMenu(deps.api, link.chatId).catch(() => undefined);
       await applyMenu(deps.api, 'basic', link.chatId).catch(() => undefined);
+      await deps.api.setChatMenuButton(link.chatId, { type: 'default' }).catch(() => undefined);
     }
+    audit(db, req.user!.id, 'telegram_unlink', { channel: 'personal', hadLink: Boolean(link), chatId: link?.chatId });
     return { ok: true };
   });
 

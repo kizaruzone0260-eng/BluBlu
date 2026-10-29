@@ -218,8 +218,8 @@ describe('нативных полей даты в приложении не ос
       .filter((f) => readFileSync(f, 'utf8').includes('<DateTimeField'))
       .map(rel)
       .sort();
-    // событие (начало и «повторять до») и отложенная публикация материала
-    expect(used).toEqual(['pages/Calendar.tsx', 'pages/MaterialNew.tsx']);
+    // событие (начало и «повторять до»), отложенная публикация материала и срок в Mini App
+    expect(used).toEqual(['pages/Calendar.tsx', 'pages/MaterialNew.tsx', 'pages/Mini.tsx']);
   });
 
   it('строки про «формат поля как в браузере» нет ни в коде, ни в словарях', () => {

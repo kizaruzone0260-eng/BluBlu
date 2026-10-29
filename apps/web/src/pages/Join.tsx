@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { consumeJoinToken, JOIN_TOKEN_KEY, passwordPolicy, POLICY_VERSION } from '@klass/shared';
+import { passwordPolicy, POLICY_VERSION } from '@klass/shared';
 import { joinByInvite, login, logout, previewInvite, registerByInvite, acceptPolicy, requestEmailCode } from '../lib/api';
-import { forgetJoinToken } from '../lib/joinToken';
+import { currentJoinToken, forgetJoinToken } from '../lib/joinToken';
 import { clearJoinFlow, readJoinFlow, saveJoinFlow, type JoinFlowError } from '../lib/joinFlow';
 import { useAuth } from '../App';
 import AuthError from '../components/AuthError';
@@ -17,8 +17,9 @@ import { useFeatures } from '../lib/features';
  * Ссылка выглядит как `/join#<токен>`. Фрагмент уже вычищен из адреса первым оператором
  * `main.tsx` (`primeJoinToken` — раньше темы, раньше `ReactDOM` и раньше любого запроса
  * приложения; инлайн-скрипт в shell для этого не годится: его отбрасывает наша CSP
- * `script-src 'self'`), а сам токен оставлен в памяти страницы под `JOIN_TOKEN_KEY` — отсюда его
- * и берёт `consumeJoinToken` ниже.
+ * `script-src 'self'`). Сам токен остаётся в памяти страницы под `JOIN_TOKEN_KEY` и в
+ * `sessionStorage` этой вкладки (2026-10-28), поэтому перезагрузка на шаге входа больше не
+ * теряет приглашение — отсюда его и берёт `currentJoinToken` ниже.
  *
  * Что экран ОБЯЗАН делать по постановке:
  *  • показать класс ДО того, как что-либо запрашивать с токеном повторно, и не спалить токен
@@ -68,7 +69,8 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
   const nav = useNavigate();
   const win = window as unknown as Window & { [key: string]: unknown };
   const [token] = useState<string | null>(() => {
-    const fresh = consumeJoinToken(win.location, win.history, win[JOIN_TOKEN_KEY]);
+    // после перезагрузки на шаге входа токен придёт из sessionStorage этой же вкладки
+    const fresh = currentJoinToken(win);
     // новая ссылка важнее прошлой отметки об успехе: иначе повторное приглашение в тот же
     // браузер показало бы «вы уже в классе» вместо формы
     if (fresh) clearDoneMark();
@@ -146,6 +148,26 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
     return () => { alive = false; };
     // токен берётся один раз на жизнь страницы: повторный вызов только набил бы лимиты
   }, [token]);
+
+  /*
+   * Возврат после обязательной смены пароля (задача 2026-10-28). Ученик, вошедший временным
+   * паролем, получает от сервера `passwordChangeRequired` на попытке вступить в класс и экран
+   * смены пароля поверх приложения; после смены `/join` монтируется заново уже с `me`, а в
+   * снимке формы лежит та же ошибка. Раньше человек оставался на ней с ручной кнопкой «Войти в
+   * класс» — приглашение как бы «застревало». Теперь членство доводится само: ровно один раз
+   * за экземпляр и только в этом сценарии — вошедший ученик, открывший ссылку с нуля, сначала
+   * видит класс и кнопку, как и раньше.
+   */
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current || !token || !me || me.role !== 'student' || me.mustChangePassword) return;
+    if (saved?.error?.code !== 'passwordChangeRequired') return;
+    if (phase !== 'invited') return; // класс уже показан: его имя попадёт и на экран «Готово»
+    resumed.current = true;
+    void continueWithMe();
+    // continueWithMe читает актуальные token/preview/busy; в deps он перезапускал бы эффект
+    // на каждый рендер формы.
+  }, [token, me, saved, phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Переход в класс — ровно один раз и только после того, как `App` узнал о входе.
@@ -448,12 +470,16 @@ export default function Join({ onDone }: { onDone: () => void | Promise<void> })
                   {t('auth.resend')}
                 </button>
               )}
-              <p className="muted">
-                <button type="button" className="ghost link-button" data-testid="join-to-signin"
-                  style={{ marginTop: 0 }} onClick={goSignin}>
-                  {t('join.haveAccount')}
-                </button>
-              </p>
+              {/* при занятой почте подсказка под ошибкой уже ведёт во вход с перенесённой
+                  почтой; вторая такая же ссылка ниже — дубль и ложный выбор (2026-10-28) */}
+              {err?.code !== 'emailTaken' && (
+                <p className="muted">
+                  <button type="button" className="ghost link-button" data-testid="join-to-signin"
+                    style={{ marginTop: 0 }} onClick={goSignin}>
+                    {t('join.haveAccount')}
+                  </button>
+                </p>
+              )}
             </form>
           ) : (
             <form onSubmit={submitSignin} data-testid="join-signin-form">
