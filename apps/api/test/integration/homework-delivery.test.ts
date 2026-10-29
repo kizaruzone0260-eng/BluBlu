@@ -23,8 +23,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
+import { POLICY_VERSION, PRIVACY_VERSION, TERMS_VERSION } from '@klass/shared';
 import { TEST_DATABASE_URL, preparedDb, type TestDB } from './util.js';
-import { tgDraftItems, tgDrafts, tgMaterials, tgPublications, telegramLinks, users } from '../../src/db/schema.js';
+import {
+  policyAcceptances, tgDraftItems, tgDrafts, tgMaterials, tgPublications, telegramLinks, users,
+} from '../../src/db/schema.js';
 import { handleUpdate, type BotDeps, type TgUpdate } from '../../src/services/bot.js';
 import { CapturingApi, TEACHER_COMMANDS } from '../../src/services/botApi.js';
 import { hashPassword } from '../../src/lib/password.js';
@@ -173,6 +176,14 @@ suite('homework delivery, language and outcomes', () => {
     T_CHAT = 9100 + seq;
     uid = 30_000_000 + seq * 100_000;
     msgId = 100;
+    // Task G: the bot answers nothing but the documents until the current pair is accepted.
+    // This teacher has been using the bot for a while, so the fixtures record her acceptance —
+    // otherwise every `/homework` here would meet the gate instead of the flow under test.
+    await t.db.insert(policyAcceptances).values({
+      userId: teacherId, version: POLICY_VERSION,
+      privacyVersion: PRIVACY_VERSION, termsVersion: TERMS_VERSION,
+      locale: 'en', context: 'bot',
+    });
     await t.db.insert(telegramLinks).values({ userId: teacherId, chatId: String(T_CHAT) });
     await addGroup(t.db, teacherId, GROUP_A, 'Group A');
     await addGroup(t.db, teacherId, GROUP_B, 'Group B');

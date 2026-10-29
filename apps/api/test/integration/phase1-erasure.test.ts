@@ -12,6 +12,7 @@ import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { DELETED_NAME } from '../../src/services/account.js';
+import { PRIVACY_VERSION, TERMS_VERSION } from '@klass/shared';
 import { issueRefreshSession } from '../../src/services/auth.js';
 import { startLesson } from '../../src/services/lessons.js';
 import { hashPassword } from '../../src/lib/password.js';
@@ -67,7 +68,7 @@ suite('Part 1(в): account-deletion erasure', () => {
     await t.db.insert(icsTokens).values({ userId: stuId, tokenHash: 'ics-'+stuId });
     await t.db.insert(notificationPrefs).values({ userId: stuId });
     await t.db.insert(notifications).values({ kind: 'post', userId: stuId, classId, payload: { a: 1 }, dedupeKey: 'nd-'+stuId });
-    await t.db.insert(policyAcceptances).values({ userId: stuId, version: env.NODE_ENV === 'production' ? 'x' : '2026-10-06' });
+    await t.db.insert(policyAcceptances).values({ userId: stuId, version: PRIVACY_VERSION, privacyVersion: PRIVACY_VERSION, termsVersion: TERMS_VERSION, context: 'legacy' });
     await issueRefreshSession(t.db, stuId);
     await t.db.insert(wsTickets).values({ tokenHash: 'ws-'+stuId, userId: stuId, sessionId, expiresAt: new Date(Date.now()+30_000) });
     await t.db.insert(loginAttempts).values({ email: stuEmail, failCount: 3 });

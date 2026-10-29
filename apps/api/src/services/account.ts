@@ -5,8 +5,10 @@ import {
   studentNotes, teacherNotes, telegramLinks, telegramTokens, icsTokens, notificationPrefs,
   notifications, policyAcceptances, classMembers, loginAttempts, emailVerifications,
   botSessions, contactReports, contactBlocklist, classTelegramChats, auditLog,
+  tgBindTokens, tgCallbackTokens, tgDrafts, tgGroups, tgMaterials,
 } from '../db/schema.js';
 import type { DB } from '../db/index.js';
+import { getStorage } from '../storage/provider.js';
 
 /** Neutral, language-independent display name substituted on erasure. */
 export const DELETED_NAME = 'Deleted user';
@@ -45,6 +47,15 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
   const chatRows = await db.select({ chatId: telegramLinks.chatId })
     .from(telegramLinks).where(eq(telegramLinks.userId, userId));
   const chatIds = [...new Set(chatRows.map((c) => c.chatId))];
+  /*
+   * Task G (2026-10-29): Mini App library bytes. The DB rows below are deleted in the same
+   * transaction; the files on disk cannot participate in it, so their keys are captured first
+   * and removed after the commit. A failed file delete leaves no reachable row (the material is
+   * gone), and is reported through the returned count instead of silently pretended.
+   */
+  const storedKeys = (await db.select({ key: tgMaterials.storageKey }).from(tgMaterials)
+    .where(eq(tgMaterials.ownerId, userId)))
+    .map((r) => r.key).filter((k): k is string => Boolean(k));
 
   await db.transaction(async (tx) => {
     // chat — the person's own messages vanish; read/mute/ticket state too
@@ -89,6 +100,19 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
     await tx.delete(contactBlocklist).where(eq(contactBlocklist.blockedBy, userId));
     await tx.delete(classTelegramChats).where(eq(classTelegramChats.linkedBy, userId));
     /*
+     * Task G: the Mini App / homework bot surface. Drafts carry the teacher's own words
+     * (instruction, final text, AI questions), groups carry real Telegram chat ids and titles,
+     * materials carry file ids and (for Mini App uploads) a storage key, and signed callback
+     * rows carry button payloads. None of that is class content that classmates can still read;
+     * keeping it on an anonymized account would only preserve personal text and chat addresses.
+     * Order matters: publications reference groups WITHOUT a cascade, so drafts go first.
+     */
+    await tx.delete(tgDrafts).where(eq(tgDrafts.ownerId, userId));
+    await tx.delete(tgMaterials).where(eq(tgMaterials.ownerId, userId));
+    await tx.delete(tgGroups).where(eq(tgGroups.ownerId, userId));
+    await tx.delete(tgBindTokens).where(eq(tgBindTokens.ownerId, userId));
+    await tx.delete(tgCallbackTokens).where(eq(tgCallbackTokens.ownerId, userId));
+    /*
      * `audit_log` — не удаляется, а обезличивается: убрать само действие было бы подделкой
      * истории (право на забвение не отменяет, что действие совершалось). Остаются время и
      * вид операции; `actor_id` гасится, а из `target` вырезается ключ `userId` — единственный
@@ -129,4 +153,9 @@ export async function eraseAccount(db: DB, userId: string): Promise<void> {
       })
       .where(eq(users.id, userId));
   });
+  // Bytes of Mini App uploads live outside Postgres; remove them after the rows are gone.
+  if (storedKeys.length) {
+    const storage = getStorage();
+    await Promise.all(storedKeys.map((key) => storage.delete(key).catch(() => undefined)));
+  }
 }

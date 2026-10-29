@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import { POLICY_VERSION, PRIVACY_VERSION, TERMS_VERSION } from '@klass/shared';
 import * as schema from '../../src/db/schema';
 
 export const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST ?? '';
@@ -20,6 +21,22 @@ export async function preparedDb(url: string) {
   return t;
 }
 
+/**
+ * Записать действующее согласие с политикой и условиями (Task G).
+ *
+ * С 2026-10-29 согласие хранится не одним `version`, а парой `privacy_version` +
+ * `terms_version`; обе колонки NOT NULL. Бот и Mini App пускают к функциям только аккаунт
+ * с действующей парой, поэтому «взрослые» фикстуры (учитель, ученик в чате) обязаны её иметь —
+ * иначе тест проверял бы не свою функцию, а экран согласия.
+ */
+export async function acceptPolicy(sql: postgres.Sql, userId: string, locale = 'ru') {
+  await sql`insert into policy_acceptances (user_id, version, privacy_version, terms_version, locale, context, accepted_at)
+            values (${userId}, ${POLICY_VERSION}, ${PRIVACY_VERSION}, ${TERMS_VERSION}, ${locale}, 'legacy', now())
+            on conflict (user_id) do update set version = excluded.version,
+              privacy_version = excluded.privacy_version, terms_version = excluded.terms_version,
+              locale = excluded.locale, context = excluded.context, accepted_at = excluded.accepted_at`;
+}
+
 export async function makeTeacher(sql: postgres.Sql, email = 't@x.io', name = 'T') {
   const id = crypto.randomUUID();
   const lower = email.toLowerCase(); // register/login normalize to lowercase — helpers must too
@@ -29,6 +46,7 @@ export async function makeTeacher(sql: postgres.Sql, email = 't@x.io', name = 'T
   // English default", so an un-marked 'ru' row would answer in English.
   await sql`insert into users (id, role, name, email, password_hash, locale, locale_explicit, tz, created_at)
             values (${id}, 'teacher', ${name}, ${lower}, ${hash}, 'ru', true, 'Asia/Tashkent', now())`;
+  await acceptPolicy(sql, id);
   return { id, email: lower, password: 'Passw0rd123' };
 }
 

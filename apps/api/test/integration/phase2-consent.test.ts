@@ -84,7 +84,7 @@ suite('Phase 2 consent', () => {
     const tok = await newStudent(`c5${Date.now()}@x.io`);
     const userId = (await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().id as string;
     await t.db.insert(policyAcceptances)
-      .values({ userId, version: '2000-01-01', acceptedAt: new Date() });
+      .values({ userId, version: '2000-01-01', privacyVersion: '2000-01-01', termsVersion: '2000-01-01', context: 'legacy', acceptedAt: new Date() });
 
     expect((await app.inject({ method: 'GET', url: '/api/me', headers: bearer(tok) })).json().policyAccepted).toBe(false);
 

@@ -51,7 +51,15 @@ export const LANGUAGE_CHOICES = [
  * the texts) whenever the legal documents change; every user is then asked to
  * re-accept ONCE on next login because their stored version differs.
  */
-export const POLICY_VERSION = '2026-10-28';
+/**
+ * Task G (2026-10-29): the two legal documents are versioned separately. Acceptance stores
+ * both versions, so correcting one document re-asks for exactly that agreement — while the
+ * legacy aggregate tag stays in the same place (older clients and the E2E helpers read it).
+ */
+export const PRIVACY_VERSION = '2026-10-29';
+export const TERMS_VERSION = '2026-10-29';
+/** Legacy aggregate tag: must equal the pair above while they move together. */
+export const POLICY_VERSION = '2026-10-29';
 
 /**
  * Product name shown to users. NOT translated (BluBlu in all three languages)

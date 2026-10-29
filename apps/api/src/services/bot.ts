@@ -34,7 +34,8 @@ import { libraryCommand } from './homework/library.js';
 import { isHomeworkCallback } from './homework/tokens.js';
 import type { HomeworkAi } from './homework/types.js';
 import { audit } from './audit.js';
-import { DEFAULT_LOCALE } from '@klass/shared';
+import { acceptLegal, legalStatus } from './legal.js';
+import { DEFAULT_LOCALE, PRIVACY_VERSION, TERMS_VERSION } from '@klass/shared';
 
 export interface BotDeps {
   db: DB;
@@ -112,6 +113,35 @@ export const T: Record<string, Loc> = {
     ru: 'Мини-приложение пока не подключено: для него нужен адрес сайта по HTTPS. Пока домашнее задание можно отправить прямо в боте — /homework.',
     uz: 'Mini ilova hali ulanmagan: unga saytning HTTPS manzili kerak. Hozircha uy vazifasini botning o‘zida yuborish mumkin — /homework.',
     en: 'The Mini App is not connected yet: it needs the site’s HTTPS address. For now, send homework right in the bot with /homework.',
+  },
+  // Task G (2026-10-29): the legal gate. It is the first thing a linked account sees when the
+  // current documents were not accepted yet — on /start, on any command, on any old button.
+  legalGateTitle: {
+    ru: 'Сначала подтвердите документы',
+    uz: 'Avval hujjatlarni tasdiqlang',
+    en: 'Please confirm the documents first',
+  },
+  legalGateBody: {
+    ru: 'Политика конфиденциальности и Условия использования обновились. Пока вы их не примете, команды и мини-приложение недоступны. Открыть документы можно кнопками ниже, язык — командой /language.',
+    uz: 'Maxfiylik siyosati va Foydalanish shartlari yangilandi. Ularni qabul qilmaguningizcha buyruqlar va mini ilova ishlamaydi. Hujjatlarni quyidagi tugmalar orqali oching, til — /language buyrug‘i.',
+    en: 'The Privacy Policy and Terms of Service have changed. Commands and the Mini App stay closed until you accept them. Open the documents with the buttons below; the language is changed with /language.',
+  },
+  legalPrivacy: { ru: 'Политика конфиденциальности', uz: 'Maxfiylik siyosati', en: 'Privacy Policy' },
+  legalTerms: { ru: 'Условия использования', uz: 'Foydalanish shartlari', en: 'Terms of Service' },
+  legalAccept: {
+    ru: 'Я принимаю Условия и подтверждаю Политику',
+    uz: 'Shartlarni qabul qilaman va Siyosatni tasdiqlayman',
+    en: 'I agree to the Terms and acknowledge the Privacy Policy',
+  },
+  legalAccepted: {
+    ru: 'Спасибо, документы приняты. Можно пользоваться ботом.',
+    uz: 'Rahmat, hujjatlar qabul qilindi. Botdan foydalanishingiz mumkin.',
+    en: 'Thank you — the documents are accepted. You can use the bot now.',
+  },
+  legalDocLink: {
+    ru: 'Документ: %{url}',
+    uz: 'Hujjat: %{url}',
+    en: 'Document: %{url}',
   },
   linked: { ru: 'Telegram привязан к аккаунту BluBlu.', uz: 'Telegram BluBlu hisobiga bog‘landi.', en: 'Telegram is linked to your BluBlu account.' },
   badLink: { ru: 'Ссылка недействительна или устарела. Создайте новую в профиле.', uz: 'Havola yaroqsiz yoki eskirgan. Proilda yangisini yarating.', en: 'This link is invalid or expired. Create a new one in your profile.' },
@@ -447,6 +477,26 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
   const sess = await loadSession(db, chatId);
   const id = await identify(db, chatId, (sess?.data.lang as Lang) ?? DEFAULT_LOCALE);
 
+  /*
+   * Task G legal gate (2026-10-29). It runs before dialogs and before the command switch, so
+   * no remembered state, no old button and no shortcut can be used by an account that has not
+   * accepted the CURRENT documents. Only three doors stay open while gated: /start (it may
+   * also finish linking), /language (the gate must be readable in the chosen language) and
+   * /privacy or /terms (the documents themselves). Everything else gets the gate again.
+   */
+  const earlyCmd = ((text.split('@')[0] ?? '').split(/\s+/)[0] ?? '').toLowerCase();
+  if (id.userId) {
+    const legal = await legalStatus(db, id.userId);
+    if (!legal.accepted) {
+      if (earlyCmd === '/language') { await sendLangPicker(deps, chatId, id); return; }
+      if (earlyCmd === '/privacy') { await sendLegalDoc(deps, chatId, id, 'privacy'); return; }
+      if (earlyCmd === '/terms') { await sendLegalDoc(deps, chatId, id, 'terms'); return; }
+      if (earlyCmd !== '/start') { await sendLegalGate(deps, chatId, id); return; }
+      // /start falls through: it may consume a link token, and its greeting is gated by
+      // sendHello — the person never sees «you're in» before accepting.
+    }
+  }
+
   // homework edit mode owns its messages: plain text replaces the final text, /cancel
   // leaves the preview unchanged. Existing dialogs are untouched (state prefix is unique).
   if (sess?.state.startsWith('hw:')) {
@@ -546,13 +596,46 @@ export async function syncTeacherMiniMenus(
 }
 
 /**
+ * Task G: the gate itself. Both documents are ordinary https links (the same pages the web app
+ * serves), and the acceptance is one signed button bound to THIS account — a forwarded screen
+ * cannot accept for somebody else, and no command is hidden behind a callback that bypasses it.
+ */
+async function sendLegalGate(deps: BotDeps, chatId: string, id: Identity) {
+  const base = siteUrl().replace(/\/+$/, '');
+  const lang = id.lang;
+  await deps.api.sendMessage(chatId, `${t('legalGateTitle', lang)}\n\n${t('legalGateBody', lang)}`, {
+    buttons: [
+      [{ text: t('legalPrivacy', lang), url: `${base}/privacy` }],
+      [{ text: t('legalTerms', lang), url: `${base}/terms` }],
+      [{ text: t('legalAccept', lang), cb: signCb({ u: id.userId ?? '', a: 'legal' }) }],
+    ],
+  });
+}
+
+/** `/privacy` and `/terms` in the chat: a link, not a copy that could drift from the page. */
+async function sendLegalDoc(deps: BotDeps, chatId: string, id: Identity, which: 'privacy' | 'terms') {
+  const base = siteUrl().replace(/\/+$/, '');
+  const label = which === 'privacy' ? 'legalPrivacy' : 'legalTerms';
+  await deps.api.sendMessage(chatId, t('legalDocLink', id.lang, { url: `${base}/${which}` }), {
+    buttons: [[{ text: t(label, id.lang), url: `${base}/${which}` }]],
+  });
+}
+
+/**
  * Task F/F.1: the teacher's greeting carries the inline Mini App button when the public site is
  * https, and the button is also installed as the persistent menu button of the chat. A student
  * never gets it (the Mini App is a teacher surface), and an http deployment gets an honest,
  * actionable sentence instead — Telegram refuses a `web_app` button with an http URL, and a
  * button that does nothing is worse than no button.
+ *
+ * Task G: a linked account that has not accepted the CURRENT documents gets the gate instead of
+ * the greeting — on /start, after linking, and after any path that would have said «you're in».
  */
 async function sendHello(deps: BotDeps, chatId: string, id: Identity) {
+  if (id.userId && !(await legalStatus(deps.db, id.userId)).accepted) {
+    await sendLegalGate(deps, chatId, id);
+    return;
+  }
   const key = id.role === 'teacher' ? 'helloTeacher' : id.role === 'student' ? 'helloStudent' : 'helloBasic';
   const url = id.role === 'teacher' ? miniAppUrl() : null;
   await syncMiniMenu(deps, chatId, id);
@@ -972,6 +1055,11 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
     // silent, as it does for every other update there.
     if (cbq.message?.chat.type && cbq.message.chat.type !== 'private') return;
     if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, id.lang); return; }
+    // Task G: a button rendered before the documents changed must not act as a bypass.
+    if (id.userId && !(await legalStatus(db, id.userId)).accepted) {
+      await sendLegalGate(deps, chatId, id);
+      return;
+    }
     await homeworkCallback(deps, chatId, id, data, cbq.message?.message_id);
     return;
   }
@@ -979,6 +1067,26 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
   if (!rateOk(`cmd:${chatId}`, 20, 60_000)) { await send(deps, chatId, 'rateLimited', {}, id.lang); return; }
   // the signed payload must belong to the acting account (§1)
   if ((payload.u || '') !== (id.userId ?? '')) { await api.sendMessage(chatId, t('badCallback', id.lang)); return; }
+
+  // Task G: the acceptance button is the ONE callback a gated account may use.
+  if (payload.a === 'legal') {
+    if (!id.userId) { await send(deps, chatId, 'needLink', {}, id.lang); return; }
+    const accepted = await acceptLegal(db, id.userId, {
+      privacyVersion: PRIVACY_VERSION,
+      termsVersion: TERMS_VERSION,
+      locale: id.lang,
+      context: 'bot',
+    });
+    if (accepted !== 'ok') { await sendLegalGate(deps, chatId, id); return; }
+    await send(deps, chatId, 'legalAccepted', {}, id.lang);
+    await sendHello(deps, chatId, id);
+    return;
+  }
+  // Everything else (except choosing a language) stays closed until acceptance.
+  if (id.userId) {
+    const legal = await legalStatus(db, id.userId);
+    if (!legal.accepted && payload.a !== 'lang') { await sendLegalGate(deps, chatId, id); return; }
+  }
 
   switch (payload.a) {
     case 'lang': {
@@ -995,6 +1103,10 @@ async function onCallback(deps: BotDeps, cbq: NonNullable<TgUpdate['callback_que
         await saveSession(db, chatId, s?.state ?? '', { ...(s?.data ?? {}), lang }, 15);
       }
       await api.sendMessage(chatId, t('langSet', lang));
+      // Task G: after a language change the gate is repeated in the NEW language.
+      if (id.userId && !(await legalStatus(db, id.userId)).accepted) {
+        await sendLegalGate(deps, chatId, { ...id, lang });
+      }
       return;
     }
     case 'sch':

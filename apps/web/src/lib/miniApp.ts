@@ -12,6 +12,8 @@
  *    ids, because the server never sends them to this surface.
  */
 
+import { applyTheme, getThemeChoice, type ThemeChoice } from './theme';
+
 export type MiniDraftStatus =
   | 'selecting' | 'choosing_materials' | 'awaiting_instruction' | 'collecting' | 'formatting'
   | 'needs_clarification' | 'preview' | 'publishing' | 'published' | 'failed'
@@ -78,6 +80,16 @@ export interface MiniMaterialHit {
   id: string; title: string; kind: 'book' | 'workbook' | 'other';
   fileName: string; fileSize: number | null; recommendedFor: string[];
 }
+/** Task G: the server's answer to «has this person accepted the current documents?». */
+export interface MiniLegalStatus {
+  accepted: boolean;
+  privacyVersion: string;
+  termsVersion: string;
+  currentPrivacyVersion: string;
+  currentTermsVersion: string;
+  acceptedAt: string | null;
+  locale: string | null;
+}
 export interface MiniBootstrap {
   teacher: { name: string; locale: string; tz: string };
   groups: MiniGroup[];
@@ -90,6 +102,10 @@ export interface MiniBootstrap {
   };
   ai: { remote: boolean };
   bot: { username: string | null };
+  /** Task G: the Mini App gate reads the same status the server enforces on every route. */
+  legal: MiniLegalStatus;
+  /** Canonical public pages, so the gate never invents its own URLs. */
+  links: { privacy: string; terms: string };
 }
 /** `/api/mini/history`: more rows than the home bootstrap carries (20 drafts / 40 sends). */
 export interface MiniHistory {
@@ -116,6 +132,37 @@ export interface MiniFormatResponse {
   /** Present only on the 502 answer: the plain version the teacher may accept or edit. */
   fallback?: string;
 }
+
+/** Task G: a file that became a real library row after Telegram accepted it. */
+export interface MiniUploadMaterial {
+  id: string;
+  title: string;
+  kind: 'book' | 'workbook' | 'other';
+  fileName: string;
+  fileSize: number | null;
+  mediaType: string | null;
+}
+export interface MiniUploadResponse {
+  material: MiniUploadMaterial;
+  draft: MiniDraft | null;
+  draftAttached: boolean;
+  replaced: boolean;
+}
+
+/** Task G: one-time code shown by the Mini App; the server only reports what Telegram did. */
+export interface MiniConnectStart {
+  id: string;
+  code: string;
+  expiresAt: string;
+  botUsername: string | null;
+  botLink: string | null;
+}
+export type MiniGroupHealth = 'ok' | 'needsRights' | 'botMissing' | 'unknown';
+export type MiniConnectState =
+  | { status: 'pending'; id: string; expiresAt: string }
+  | { status: 'connected'; id: string; group: { id: string; title: string }; health: MiniGroupHealth }
+  | { status: 'expired'; id: string }
+  | { status: 'notFound' };
 
 export interface MiniApiResult<T> {
   ok: boolean;
@@ -166,6 +213,71 @@ export async function miniApi<T = unknown>(
     ? String((data as { error: string }).error)
     : res.ok ? '' : 'serverError';
   return { ok: res.ok, status: res.status, data: data as T | null, error };
+}
+
+export interface MiniUploadArgs {
+  file: File;
+  title: string;
+  kind: 'book' | 'workbook' | 'other';
+  groupIds: string[];
+  draftId?: string;
+  /** 0–100 for the request body only; the server still talks to Telegram after 100 %. */
+  onProgress?: (percent: number) => void;
+}
+export interface MiniUploadOutcome {
+  ok: boolean;
+  status: number;
+  data: MiniUploadResponse | null;
+  error: string;
+}
+
+/**
+ * Task G: the one request that carries bytes. `fetch` cannot report upload progress in every
+ * webview Telegram uses, so this deliberately uses XHR; everything else in the Mini App keeps
+ * using `miniApi`. The token travels in the header (never a query string), and no automatic
+ * retry is attempted — a repeated upload must be the teacher's explicit decision.
+ */
+export function uploadMiniFile(args: MiniUploadArgs): Promise<MiniUploadOutcome> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome: MiniUploadOutcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+    try {
+      const form = new FormData();
+      form.append('title', args.title);
+      form.append('kind', args.kind);
+      form.append('groupIds', JSON.stringify(args.groupIds));
+      if (args.draftId) form.append('draftId', args.draftId);
+      form.append('file', args.file, args.file.name);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/mini/materials/upload');
+      xhr.withCredentials = false;
+      const token = readMiniToken();
+      if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable || e.total <= 0) return;
+        args.onProgress?.(Math.min(100, Math.round((e.loaded / e.total) * 100)));
+      };
+      xhr.onerror = () => finish({ ok: false, status: 0, data: null, error: 'networkError' });
+      xhr.onabort = () => finish({ ok: false, status: 0, data: null, error: 'networkError' });
+      xhr.onload = () => {
+        let data: MiniUploadResponse | null = null;
+        try { data = JSON.parse(xhr.responseText) as MiniUploadResponse; } catch { data = null; }
+        const body = data as unknown as { error?: unknown } | null;
+        const error = body && typeof body.error === 'string'
+          ? String(body.error)
+          : xhr.status >= 200 && xhr.status < 300 ? '' : 'serverError';
+        finish({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data, error });
+      };
+      xhr.send(form);
+    } catch {
+      finish({ ok: false, status: 0, data: null, error: 'networkError' });
+    }
+  });
 }
 
 // ─── Telegram SDK ────────────────────────────────────────────────────────────
@@ -267,10 +379,28 @@ export function resetMiniSdk(): void {
   sdkPromise = null;
 }
 
+export const TELEGRAM_THEME_VARS = [
+  '--tg-bg', '--tg-bg-2', '--tg-text', '--tg-hint', '--tg-link', '--tg-button', '--tg-button-text',
+] as const;
+
+/**
+ * Task G: an explicit Light/Dark choice must win over Telegram's colours, so the inline
+ * `--tg-*` values (and the marker that tells `theme.ts` «Telegram owns this document») are
+ * removed before the ordinary theme is applied.
+ */
+export function clearTelegramTheme(): void {
+  const root = document.documentElement;
+  for (const cssVar of TELEGRAM_THEME_VARS) root.style.removeProperty(cssVar);
+  delete root.dataset.themeSource;
+}
+
 /** Telegram's own theme, applied only to this document; the rest of the app keeps its choice. */
 export function applyTelegramTheme(wa: TelegramWebApp): void {
   const root = document.documentElement;
   root.dataset.theme = wa.colorScheme === 'dark' ? 'dark' : 'light';
+  // `theme.ts` listens to the OS preference; inside Telegram the app theme is authoritative,
+  // so the listener must not repaint the document behind Telegram's back.
+  root.dataset.themeSource = 'telegram';
   const p = wa.themeParams ?? {};
   const map: Record<string, string> = {
     bg_color: '--tg-bg',
@@ -291,6 +421,22 @@ export function applyTelegramTheme(wa: TelegramWebApp): void {
     if (p.bg_color) wa.setBackgroundColor?.(p.bg_color);
     if (p.secondary_bg_color) wa.setHeaderColor?.(p.secondary_bg_color);
   } catch { /* older clients: the colours above still apply to the page */ }
+}
+
+/**
+ * Task G, three themes:
+ *  • `system` inside Telegram follows `themeParams`/`themeChanged` (not the OS directly);
+ *  • `system` outside Telegram follows the browser/OS preference;
+ *  • an explicit `light`/`dark` is stored in the same `klass_theme` key the web app uses and
+ *    always wins — Telegram's inline colours are removed so they cannot leak through.
+ */
+export function applyMiniTheme(wa: TelegramWebApp | null, choice: ThemeChoice = getThemeChoice()): void {
+  if (wa && choice === 'system') {
+    applyTelegramTheme(wa);
+    return;
+  }
+  clearTelegramTheme();
+  applyTheme(choice);
 }
 
 export function haptic(wa: TelegramWebApp | null, kind: 'tap' | 'success' | 'error'): void {

@@ -57,6 +57,14 @@ function bootstrap() {
     limits: { groups: 10, materials: 8, links: 5, title: 120, instruction: 4000, text: 4000, items: 50 },
     ai: { remote: false },
     bot: { username: BOT },
+    // Task G: the gate is decided by this object; these tests are about navigation, so the
+    // teacher has already accepted the current documents.
+    legal: {
+      accepted: true, privacyVersion: '2026-10-29', termsVersion: '2026-10-29',
+      currentPrivacyVersion: '2026-10-29', currentTermsVersion: '2026-10-29',
+      acceptedAt: '2026-10-29T08:00:00.000Z', locale: 'en',
+    },
+    links: { privacy: 'https://blublu.example/privacy', terms: 'https://blublu.example/terms' },
   };
 }
 
@@ -76,6 +84,7 @@ function newDraft() {
  */
 function sdkScript(): string {
   return `window.__miniBack = null; window.__miniBackVisible = false;
+  window.__miniMain = null; window.__miniMainText = ''; window.__tgThemeChange = null;
   window.Telegram = { WebApp: {
     initData: 'query_id=AAE&user=%7B%22id%22%3A42%7D&auth_date=1700000000&hash=deadbeef',
     initDataUnsafe: { user: { id: 42, first_name: 'E2E' } },
@@ -85,7 +94,9 @@ function sdkScript(): string {
       hint_color: '#999999', link_color: '#7aa2f7', button_color: '#7aa2f7',
       button_text_color: '#ffffff'
     },
-    ready() {}, expand() {}, close() {}, onEvent() {}, offEvent() {},
+    ready() {}, expand() {}, close() {},
+    onEvent(ev, cb) { if (ev === 'themeChanged') window.__tgThemeChange = cb; },
+    offEvent(ev, cb) { if (window.__tgThemeChange === cb) window.__tgThemeChange = null; },
     disableVerticalSwipes() {}, isVersionAtLeast() { return true; },
     BackButton: {
       show() { window.__miniBackVisible = true; },
@@ -93,8 +104,12 @@ function sdkScript(): string {
       onClick(cb) { window.__miniBack = cb; },
       offClick(cb) { if (window.__miniBack === cb) window.__miniBack = null; }
     },
-    MainButton: { text: '', show() {}, hide() {}, enable() {}, disable() {},
-      setText() {}, onClick() {}, offClick() {} },
+    MainButton: { text: '', visible: false, enabled: false,
+      show() { this.visible = true; }, hide() { this.visible = false; },
+      enable() { this.enabled = true; }, disable() { this.enabled = false; },
+      setText(t) { this.text = t; window.__miniMainText = t; },
+      onClick(cb) { window.__miniMain = cb; },
+      offClick(cb) { if (window.__miniMain === cb) window.__miniMain = null; } },
     HapticFeedback: { impactOccurred() {}, notificationOccurred() {}, selectionChanged() {} },
     setHeaderColor() {}, setBackgroundColor() {}
   } };`;
@@ -128,6 +143,11 @@ async function stubMini(page: Page): Promise<MiniCalls> {
     if (path === '/api/mini/bootstrap') return json(200, bootstrap());
     if (path === '/api/mini/history') {
       return json(200, { drafts: [], publications: PUBLICATIONS });
+    }
+    // Task G: the health endpoint answers from Bot API on the server; the stand-in reports a
+    // group the bot can actually send to.
+    if (path === '/api/mini/groups/health') {
+      return json(200, { groups: [{ id: 'g-1', health: 'ok' }] });
     }
     if (path === '/api/mini/materials') {
       const q = (url.searchParams.get('q') ?? '').trim().toLowerCase();

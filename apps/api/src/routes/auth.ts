@@ -5,7 +5,7 @@ import {
   loginSchema, profileUpdateSchema,
   emailCodeRequestSchema, POLICY_VERSION,
 } from '@klass/shared';
-import { users, refreshTokens, policyAcceptances } from '../db/schema.js';
+import { users, refreshTokens } from '../db/schema.js';
 import type { DB } from '../db/index.js';
 import { env } from '../env.js';
 import {
@@ -19,6 +19,7 @@ import { errorBody } from '../lib/requestId.js';
 import { retiredEnrollment } from '../lib/retired.js';
 import type { EmailTransport } from '../services/email.js';
 import { requestEmailCode } from '../services/emailVerify.js';
+import { acceptLegal, legalStatus } from '../services/legal.js';
 
 /**
  * One credential-scoped throttle key (task B, 2026-10-23).
@@ -196,8 +197,7 @@ export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance
     app.get('/api/me', { preHandler: app.authenticate }, async (req, reply) => {
       const [user] = await db.select().from(users).where(and(eq(users.id, req.user!.id), isNull(users.deletedAt))).limit(1);
       if (!user) return reply.code(401).send(errorBody(req.id, 'unauthorized'));
-      const [acc] = await db.select({ version: policyAcceptances.version })
-        .from(policyAcceptances).where(eq(policyAcceptances.userId, user.id)).limit(1);
+      const legal = await legalStatus(db, user.id);
       return {
         id: user.id, role: user.role, name: user.name, lastName: user.lastName, email: user.email,
         locale: user.locale, tz: user.tz, profileCompleted: user.profileCompletedAt != null,
@@ -205,8 +205,10 @@ export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance
         // when somebody actually picked it.
         localeExplicit: user.localeExplicit,
         mustChangePassword: user.mustChangePassword,
-        // Legal (Phase 2): the SPA shows the accept gate when this is false.
-        policyAccepted: acc?.version === POLICY_VERSION,
+        // Legal (Phase 2 / Task G): the SPA shows the accept gate while this is false. The
+        // detailed record lets a stale tab explain that the documents' version has changed.
+        policyAccepted: legal.accepted,
+        legal,
       };
     });
 
@@ -243,20 +245,33 @@ export function authRoutes(db: DB, email: EmailTransport): (app: FastifyInstance
       return { ok: true };
     });
 
-    // Legal (Phase 2): record acceptance of the current privacy+terms bundle.
-    // Idempotent upsert; the client only reaches the app once this is set, so
-    // registration step 2, teacher first login and every existing user's next
-    // login all funnel through here.
+    // Legal (Phase 2, versioned in Task G): record acceptance of the current Privacy + Terms.
+    // Idempotent upsert; the client only reaches the app once this is set, so registration
+    // step 2, teacher first login and every existing user's next login all funnel through here.
+    // The legacy `{version}` body is still accepted — its value is the aggregate bundle tag —
+    // while new clients send the two document versions explicitly.
     app.post('/api/me/accept-policy', { preHandler: app.authenticate }, async (req, reply) => {
-      const b = z.object({ version: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).safeParse(req.body);
+      const b = z.object({
+        version: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        privacyVersion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        termsVersion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        locale: z.enum(['ru', 'uz', 'en']).optional(),
+      }).refine(
+        (v) => Boolean(v.version || (v.privacyVersion && v.termsVersion)),
+        { message: 'version required' },
+      ).safeParse(req.body);
       if (!b.success) return reply.code(400).send(errorBody(req.id, 'invalidInput'));
-      if (b.data.version !== POLICY_VERSION) return reply.code(409).send(errorBody(req.id, 'policyVersionStale'));
-      await db.insert(policyAcceptances)
-        .values({ userId: req.user!.id, version: POLICY_VERSION, acceptedAt: new Date() })
-        .onConflictDoUpdate({ target: policyAcceptances.userId, set: { version: POLICY_VERSION, acceptedAt: new Date() } });
+      const privacyVersion = b.data.privacyVersion ?? b.data.version!;
+      const termsVersion = b.data.termsVersion ?? b.data.version!;
+      const result = await acceptLegal(db, req.user!.id, {
+        privacyVersion, termsVersion, locale: b.data.locale, context: 'web',
+      });
+      if (result === 'stale') return reply.code(409).send(errorBody(req.id, 'policyVersionStale'));
       const { audit } = await import('../services/audit.js');
-      audit(db, req.user!.id, 'policy_accepted', { version: POLICY_VERSION });
-      return { ok: true, version: POLICY_VERSION };
+      audit(db, req.user!.id, 'policy_accepted', {
+        version: POLICY_VERSION, privacyVersion, termsVersion, context: 'web',
+      });
+      return { ok: true, version: POLICY_VERSION, privacyVersion, termsVersion };
     });
 
     app.patch('/api/me/profile', { preHandler: app.authenticate }, async (req, reply) => {

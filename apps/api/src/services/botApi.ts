@@ -8,6 +8,7 @@
  * and every handler STILL re-checks rights on the server.
  */
 import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
+import { InputFile } from 'grammy';
 import { env } from '../env.js';
 
 /**
@@ -34,6 +35,26 @@ export type ChatMenuButton =
  */
 export type FileCheck = 'ok' | 'missing' | 'unknown';
 
+/**
+ * Task G (2026-10-29): the result of uploading bytes the teacher picked in the Mini App.
+ *
+ * Telegram is the delivery channel, so the upload is not an implementation detail: the ids
+ * below are what `copyMessage` will use later, and the message id is where the original
+ * attachment lives. Callers must treat a thrown upload as "nothing was created".
+ */
+export interface UploadedTelegramFile {
+  messageId: number;
+  fileId: string;
+  fileUniqueId: string;
+  mediaType: 'photo' | 'document';
+}
+
+/** Telegram's membership vocabulary, plus `unknown` for a failed check (never a success). */
+export type ChatMemberStatus =
+  | 'creator' | 'administrator' | 'member' | 'restricted' | 'left' | 'kicked' | 'unknown';
+
+export interface BotIdentity { id: string; username: string | null }
+
 export interface BotApi {
   /** Returns Telegram's message_id when known (publication history), otherwise null. */
   sendMessage(chatId: string, text: string, opts?: SendOpts): Promise<number | null>;
@@ -54,6 +75,17 @@ export interface BotApi {
   copyMessages(chatId: string, fromChatId: string, messageIds: number[]): Promise<number[]>;
   /** Preflight of a stored `file_id` before a publication sends anything. */
   checkFile(fileId: string): Promise<FileCheck>;
+  /**
+   * Task G: put REAL bytes into the teacher's private chat with this bot. This is the only
+   * honest way a Mini App upload becomes a Telegram attachment — a `file_id` cannot be invented
+   * for a file Telegram has never seen. Returns what the send produced, throws otherwise.
+   */
+  uploadPhoto(chatId: string, bytes: Buffer, filename: string, caption?: string): Promise<UploadedTelegramFile>;
+  uploadDocument(chatId: string, bytes: Buffer, filename: string, caption?: string): Promise<UploadedTelegramFile>;
+  /** The bot's own identity — needed to ask «is the bot an admin of this group?». */
+  getMe(): Promise<BotIdentity>;
+  /** Membership of one user (the bot itself) in one chat. `unknown` on any failed check. */
+  getChatMember(chatId: string, userId: string): Promise<ChatMemberStatus>;
   /** scope: undefined = default (global) scope, a chat id = per-chat menu */
   setMyCommands(commands: { command: string; description: string }[], languageCode: string, chatId?: string): Promise<void>;
   deleteMyCommands(languageCode: string, chatId?: string): Promise<void>;
@@ -66,6 +98,7 @@ export interface BotApi {
 
 /** Wraps a grammY bot api; failures bubble to the caller which logs them. */
 export function grammyApi(bot: { api: any }): BotApi {
+  let identity: BotIdentity | null = null;
   return {
     async sendMessage(chatId, text, opts) {
       const m = await bot.api.sendMessage(chatId, text, extra(opts));
@@ -111,6 +144,37 @@ export function grammyApi(bot: { api: any }): BotApi {
         return code === 400 ? 'missing' : 'unknown';
       }
     },
+    async uploadPhoto(chatId, bytes, filename, caption) {
+      const m = await bot.api.sendPhoto(
+        chatId, new InputFile(bytes, filename), caption ? { caption } : {},
+      );
+      return uploadedFrom(m, 'photo');
+    },
+    async uploadDocument(chatId, bytes, filename, caption) {
+      const m = await bot.api.sendDocument(
+        chatId, new InputFile(bytes, filename), caption ? { caption } : {},
+      );
+      return uploadedFrom(m, 'document');
+    },
+    async getMe() {
+      if (identity) return identity;
+      const me = await bot.api.getMe();
+      // Telegram's bot id is a number; the rest of the codebase uses strings for chat/user ids.
+      identity = { id: String(me.id), username: typeof me.username === 'string' ? me.username : null };
+      return identity;
+    },
+    async getChatMember(chatId, userId) {
+      try {
+        const member = await bot.api.getChatMember(chatId, userId);
+        const status = member?.status;
+        return status === 'creator' || status === 'administrator' || status === 'member'
+          || status === 'restricted' || status === 'left' || status === 'kicked'
+          ? status : 'unknown';
+      } catch {
+        // A failed check is not a proof of anything: the UI must show «could not check».
+        return 'unknown';
+      }
+    },
     async setMyCommands(commands, languageCode, chatId) {
       const scope = chatId ? { type: 'chat', chat_id: Number(chatId) } : { type: 'all_private_chats' };
       await bot.api.setMyCommands(commands, { scope, language_code: languageCode });
@@ -130,8 +194,22 @@ export function grammyApi(bot: { api: any }): BotApi {
   };
 }
 
-function extra(opts?: SendOpts) {
-  const e: Record<string, unknown> = {};
+/** A Telegram upload that produced no file id is a failure, not a material. */
+function uploadedFrom(m: any, kind: 'photo' | 'document'): UploadedTelegramFile {
+  const file = kind === 'photo'
+    ? (Array.isArray(m?.photo) ? m.photo[m.photo.length - 1] : null)
+    : m?.document;
+  if (typeof m?.message_id !== 'number'
+    || typeof file?.file_id !== 'string' || typeof file?.file_unique_id !== 'string') {
+    throw new Error('telegram upload returned no file identifiers');
+  }
+  return {
+    messageId: m.message_id, fileId: file.file_id,
+    fileUniqueId: file.file_unique_id, mediaType: kind,
+  };
+}
+
+function extra(opts?: SendOpts) {  const e: Record<string, unknown> = {};
   if (opts?.html) { e.parse_mode = 'HTML'; e.disable_web_page_preview = true; }
   if (opts?.buttons?.length) {
     e.reply_markup = {
@@ -150,7 +228,7 @@ export class CapturingApi implements BotApi {
   calls: {
     kind: string; chatId: string; text?: string; messageId?: number; opts?: SendOpts;
     commands?: unknown; lang?: string; fileId?: string; fromChatId?: string; messageIds?: number[];
-    menu?: ChatMenuButton;
+    menu?: ChatMenuButton; fileName?: string; fileSize?: number; userId?: string;
   }[] = [];
   failNext = false;
   /** Chat ids whose sends throw — used to prove per-group publication outcomes. */
@@ -172,7 +250,36 @@ export class CapturingApi implements BotApi {
   missingSources = new Set<string>();
   /** Copies that die in transit (no answer at all): the outcome must stay unknown. */
   failCopyChats = new Set<string>();
+  /** Byte uploads that die: no material may be created from them. */
+  failUploadChats = new Set<string>();
+  /** Byte uploads refused by Telegram with 4xx (e.g. file too large). */
+  rejectUploadChats = new Set<string>();
+  /** Pre-uploaded bytes actually received — a test reads sizes, never the content. */
+  uploads: { kind: 'photo' | 'document'; chatId: string; fileName: string; size: number; fileId: string }[] = [];
+  /** The bot's own membership per group, as Telegram would answer. Default: administrator. */
+  memberStatus = new Map<string, ChatMemberStatus>();
+  /** `getChatMember` failures: the honest answer is `unknown`, never success. */
+  memberUnknownChats = new Set<string>();
+  botIdentity: BotIdentity = { id: '7000000001', username: 'classbu_test_bot' };
+  private nextFileId = 0;
   private nextMessageId = 7000;
+
+  private upload(chatId: string, bytes: Buffer, filename: string,
+    kind: 'photo' | 'document'): UploadedTelegramFile {
+    if (this.rejectUploadChats.has(chatId)) {
+      throw Object.assign(new Error('Bad Request: file is too big'), { error_code: 400 });
+    }
+    if (this.failUploadChats.has(chatId) || this.failChats.has(chatId)) {
+      throw new Error('fictitious telegram upload failure');
+    }
+    const n = ++this.nextFileId;
+    const fileId = `file-${n}`;
+    this.uploads.push({ kind, chatId, fileName: filename, size: bytes.length, fileId });
+    this.calls.push({ kind: `upload-${kind}`, chatId, fileName: filename, fileSize: bytes.length, fileId });
+    return {
+      messageId: ++this.nextMessageId, fileId, fileUniqueId: `uniq-${n}`, mediaType: kind,
+    };
+  }
 
   private fail(chatId: string, photosOnly = false, docsOnly = false) {
     if (this.rejectChats.has(chatId)) {
@@ -229,6 +336,18 @@ export class CapturingApi implements BotApi {
   }
   async checkFile(fileId: string) {
     return this.missingFiles.has(fileId) ? 'missing' : 'ok';
+  }
+  async uploadPhoto(chatId: string, bytes: Buffer, filename: string) {
+    return this.upload(chatId, bytes, filename, 'photo');
+  }
+  async uploadDocument(chatId: string, bytes: Buffer, filename: string) {
+    return this.upload(chatId, bytes, filename, 'document');
+  }
+  async getMe() { return this.botIdentity; }
+  async getChatMember(chatId: string, userId: string) {
+    this.calls.push({ kind: 'member', chatId, userId });
+    if (this.memberUnknownChats.has(chatId)) return 'unknown' as const;
+    return this.memberStatus.get(chatId) ?? 'administrator';
   }
   async setMyCommands(commands: unknown, lang: string, chatId?: string) { this.calls.push({ kind: 'cmds', chatId: chatId ?? '', commands, lang }); }
   async deleteMyCommands(lang: string, chatId?: string) { this.calls.push({ kind: 'delcmds', chatId: chatId ?? '', lang }); }

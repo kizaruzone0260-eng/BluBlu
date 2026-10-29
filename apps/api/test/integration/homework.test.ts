@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, acceptPolicy, type TestDB } from './util.js';
 import { tgDrafts, tgGroups, tgPublications, telegramLinks, users, auditLog } from '../../src/db/schema.js';
 import { handleUpdate, type BotDeps, type TgUpdate } from '../../src/services/bot.js';
 import { CapturingApi } from '../../src/services/botApi.js';
@@ -229,6 +229,7 @@ suite('telegram homework assistant', () => {
       locale: 'ru', localeExplicit: true, profileCompletedAt: new Date(),
     }).returning();
     studentId = stu!.id;
+    await acceptPolicy(t.sql, studentId);
     await t.db.insert(telegramLinks).values([
       { userId: studentId, chatId: String(S_CHAT) },
       { userId: foreignId, chatId: String(F_CHAT) },

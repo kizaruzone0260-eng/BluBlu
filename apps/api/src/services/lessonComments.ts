@@ -206,9 +206,20 @@ export async function setCommentsMode(db: DB, sessionId: string, mode: 'on' | 'o
 }
 
 // ── unread counter ───────────────────────────────────────────────────────────
+/*
+ * The cursor is written with the DATABASE clock, not with `new Date()`.
+ *
+ * `lesson_comments.created_at` comes from the same PostgreSQL clock and keeps microseconds,
+ * while a JS Date is truncated to milliseconds. Two events inside one millisecond then stored
+ * a `last_read_at` slightly EARLIER than the comment just shown, and the next refresh counted
+ * that comment as unread again — the red test seen on 2026-10-28 and once more on 2026-10-29.
+ * Measured on 2026-10-29 by inserting a comment and immediately writing the marker: 444 of 3000
+ * read-backs inverted with the JS clock, 0 of 3000 with `now()`. The INSERT omits the column so
+ * its own `default now()` applies.
+ */
 export async function markCommentsRead(db: DB, userId: string, sessionId: string): Promise<void> {
-  await db.insert(lessonCommentReads).values({ userId, sessionId, lastReadAt: new Date() })
-    .onConflictDoUpdate({ target: [lessonCommentReads.userId, lessonCommentReads.sessionId], set: { lastReadAt: new Date() } });
+  await db.insert(lessonCommentReads).values({ userId, sessionId })
+    .onConflictDoUpdate({ target: [lessonCommentReads.userId, lessonCommentReads.sessionId], set: { lastReadAt: sql`now()` } });
 }
 
 /** comments by OTHERS that arrived after this person last read them. */

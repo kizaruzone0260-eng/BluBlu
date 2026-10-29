@@ -669,7 +669,7 @@
   },
   "privacy": {
     "title": "Privacy Policy",
-    "version": "Document version: 2026-10-28",
+    "version": "Document version: 2026-10-29",
     "intro": "BluBlu is a learning platform installed and administered by its owner (a school or a teacher). This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {
@@ -686,7 +686,11 @@
           "Optionally — your Telegram chat identifier (chat_id) for notifications.",
           "The build number and technical identifiers (uuid) are not personal data by themselves.",
           "Lesson attendance: for every finished lesson the server keeps who joined and when they left (a user id and two timestamps). Students never see this list — it is open to the teacher of that class in the lesson archive.",
-          "Email address confirmation: at registration a six-digit code is sent to the address; the code itself is stored only as an irreversible hash and is valid for 15 minutes. If registration is not completed, the address record is deleted automatically after one day."
+          "Email address confirmation: at registration a six-digit code is sent to the address; the code itself is stored only as an irreversible hash and is valid for 15 minutes. If registration is not completed, the address record is deleted automatically after one day.",
+          "Telegram Mini App: when you open it from the bot, the server verifies Telegram’s signed launch data (identifier, name and language) and issues a limited 8-hour session; it is kept only in the tab’s memory.",
+          "Materials uploaded from the Mini App: the file itself, its name, size and type, and the selected groups. For Telegram delivery to work, the file is sent once to your bot in a private chat and stored in the instance’s file storage.",
+          "Connected Telegram groups: their titles, identifiers and the state of the bot’s rights.",
+          "Acceptance of the Policy and Terms: document versions, acceptance time, interface language and the surface (website, bot or Mini App)."
         ]
       },
       {
@@ -710,7 +714,9 @@
           "LiveKit — the video-conferencing server; LiveKit Cloud is used in demo mode, and with a self-hosted setup media stays on the owner’s server.",
           "Telegram Bot API — receives the chat_id and notification text only if the user links Telegram themselves.",
           "E-mail delivery — Brevo, Resend or the owner’s own SMTP server, chosen by the owner. It receives the recipient’s address, name and the text of the letter, including the confirmation code, and only when e-mail confirmation is enabled.",
-          "External AI service — an OpenAI-compatible API chosen by the owner. It receives only the teacher’s instruction, the titles of attachments and the text the teacher typed for a Telegram homework message; the contents of files (PDF, DOCX, photos) are never sent. It is off by default and works only when the owner turns it on."
+          "External AI service — an OpenAI-compatible API chosen by the owner. It receives only the teacher’s instruction, the titles of attachments and the text the teacher typed for a Telegram homework message; the contents of files (PDF, DOCX, photos) are never sent. It is off by default and works only when the owner turns it on.",
+          "Telegram Bot API, besides notifications, receives uploaded materials: the file goes to the teacher’s private chat with the bot to obtain a delivery identifier, and to the selected groups only when homework is sent.",
+          "The instance’s file storage — a directory on the server disk (STORAGE_DIR). Whether it survives a restart and redeployment depends on the owner’s configuration: the owner enables a persistent disk."
         ]
       },
       {
@@ -718,7 +724,8 @@
         "b": [
           "Hosting infrastructure is located in Frankfurt (EU).",
           "Outbound requests from the interface are limited and happen only on user action: for example, an embedded YouTube video opens via youtube-nocookie.com only after a click.",
-          "E-mail and AI providers are chosen and enabled by the owner; when they are on, the data listed above is sent from the owner’s server to those providers. Their location depends on the owner’s configuration."
+          "E-mail and AI providers are chosen and enabled by the owner; when they are on, the data listed above is sent from the owner’s server to those providers. Their location depends on the owner’s configuration.",
+          "Uploaded materials go to Telegram (Bot API): delivery is impossible without it, so uploading is available only when Telegram is linked."
         ]
       },
       {
@@ -727,7 +734,9 @@
           "Account data and learning content are kept while the account or class is active.",
           "The action log (audit_log) and chat messages are kept until the corresponding account or class is deleted.",
           "On full account deletion personal data is anonymized (the email is reset), and student notes, sheets, class memberships, the Telegram link and session tokens are removed by cascade. Materials and announcements created by a teacher stay available to the class they were created for.",
-          "The lesson archive (its boards, comments and attendance record) is kept until the teacher deletes the entry, or until BOARD_ARCHIVE_RETENTION_DAYS have passed if the owner switches that retention on. The default is 0: nothing is ever deleted by itself."
+          "The lesson archive (its boards, comments and attendance record) is kept until the teacher deletes the entry, or until BOARD_ARCHIVE_RETENTION_DAYS have passed if the owner switches that retention on. The default is 0: nothing is ever deleted by itself.",
+          "Library materials and their files are kept until the teacher deletes them; on account deletion the records and files uploaded through the Mini App are removed.",
+          "Homework drafts and connected groups are removed together with the account."
         ]
       },
       {
@@ -742,7 +751,9 @@
           "Only what is necessary: the login session (a secure cookie not readable by scripts), the chosen language and theme, and local interface settings (sidebar and floating camera window position, selected camera, microphone and speaker).",
           "Text typed before saving is kept as a local draft in the browser: notes, sheets and rich-text documents. The draft is removed after a successful save, and it can also be cleared with the browser’s site-data controls.",
           "The offline shell (a service worker) stores copies of pages and static files in the browser cache; API responses are not cached.",
-          "There is no analytics or advertising tracking, so a cookie banner is not required."
+          "There is no analytics or advertising tracking, so a cookie banner is not required.",
+          "The Mini App keeps a limited session token in the tab’s sessionStorage: it disappears when the tab closes and does not replace the website’s login cookie.",
+          "The chosen theme and interface language are kept in localStorage and applied on the next launch."
         ]
       },
       {
@@ -760,7 +771,8 @@
       {
         "h": "Changes to these documents",
         "b": [
-          "When a new version appears, re-consent is requested on the next login; the accepted version is stored together with its timestamp."
+          "When a new version appears, re-consent is requested on the next login; the accepted version is stored together with its timestamp.",
+          "The current version is checked by the server on every action in the bot and the Mini App; one record with versions and time applies to every surface."
         ]
       }
     ]
@@ -875,7 +887,7 @@
   },
   "terms": {
     "title": "Terms of Service",
-    "version": "Document version: 2026-10-28",
+    "version": "Document version: 2026-10-29",
     "intro": "Terms for using the BluBlu platform. This text is a draft: legal review is the owner’s responsibility.",
     "sections": [
       {
@@ -924,6 +936,14 @@
         "h": "Changes and contacts",
         "b": [
           "You will learn of material changes at your next login (by re-accepting the version). Owner contact: [enter]."
+        ]
+      },
+      {
+        "h": "Telegram Mini App and external AI",
+        "b": [
+          "The Mini App is available to a teacher whose Telegram is linked to a BluBlu account. It does not add the bot to groups itself: the connection is confirmed by a one-time code that an administrator sends to the group.",
+          "Uploaded materials are delivered through Telegram and stored in the library; before sending homework you confirm the final text and the list of groups.",
+          "If the owner enabled an external AI, it receives only the task text, link addresses and file names; file contents are not sent. AI output may contain errors: review and edit it before sending."
         ]
       }
     ]
@@ -1111,7 +1131,98 @@
     "errorLocked": "This homework can no longer be edited — it is being sent or has already been sent.",
     "errorEmpty": "Add the task text or at least one link.",
     "errorNotReady": "The homework is not ready to send yet. Go back and check the groups and the text.",
-    "errorInvalidLink": "The link must start with http:// or https://."
+    "errorInvalidLink": "The link must start with http:// or https://.",
+    "appearance": "Appearance",
+    "language": "Language",
+    "settings": "Appearance and language",
+    "legalGateTitle": "Accept the documents first",
+    "legalGateBody": "Mini App functions open after you accept the Privacy Policy and the Terms. The server checks this on every action, so the screen cannot be bypassed.",
+    "legalGateVersions": "Policy: {{privacy}} · Terms: {{terms}}",
+    "legalGateReadHint": "Open both documents — they will open in a new tab.",
+    "legalGateCheck": "I accept the Terms and confirm that I have read the Privacy Policy",
+    "legalGateAccept": "Accept and continue",
+    "legalGateSaving": "Saving acceptance…",
+    "legalGateStale": "The documents changed while you were reading. Check the new version and accept it.",
+    "legalGateError": "Could not save your acceptance. Check the connection and try again.",
+    "legalGateUnavailable": "The server did not report document versions. Reload the page.",
+    "uploadTitle": "Upload material",
+    "uploadIntro": "The file will go to your library and become available for homework. The server checks the file content, not the extension.",
+    "uploadPick": "Choose a file",
+    "uploadNoFile": "No file chosen",
+    "uploadFileChosen": "{{name}} · {{size}}",
+    "uploadName": "Title (optional)",
+    "uploadNamePlaceholder": "For example: Round-up 4",
+    "uploadKind": "Material type",
+    "uploadGroups": "For which groups",
+    "uploadNoGroups": "Connect at least one group first — the material must be available to your groups.",
+    "uploadStart": "Upload",
+    "uploadRetry": "Retry upload",
+    "uploadProgress": "Uploading: {{n}}%",
+    "uploadDone": "Material “{{title}}” was added to the library.",
+    "uploadAttached": "It was attached to this homework right away.",
+    "uploadReplaced": "This file was already in the library — its record was updated.",
+    "uploadWizardHint": "The file will be attached to this homework right away.",
+    "uploadKept": "The chosen file is kept — you can retry without picking it again.",
+    "uploadInProgress": "An upload is running — wait for it to finish.",
+    "uploadTooLarge": "The file is too large to upload from the Mini App.",
+    "uploadUnsupported": "This file type is not supported. Upload a PDF, a document, an image, audio or video.",
+    "uploadTelegramFailed": "Telegram did not accept the file. The library did not change — try again.",
+    "uploadNoChat": "The bot could not send the file to your private chat. Open @{{bot}}, send /start and retry.",
+    "uploadQuota": "Storage is full. Delete unnecessary materials in the web app.",
+    "uploadLimit": "The library limit has been reached.",
+    "uploadBusy": "Too many uploads at once. Wait a few seconds.",
+    "uploadInvalid": "The server did not accept the file. Try again.",
+    "connectTitle": "Connect a Telegram group",
+    "connectIntro": "The Mini App cannot add the bot to a group by itself — Telegram gives bots no such command. We will issue a one-time code, and you will confirm it in the group.",
+    "connectNoBot": "The bot name is not configured on the server — connecting is unavailable.",
+    "connectStart": "Get a code",
+    "connectStarting": "Creating the code…",
+    "connectCodeLabel": "One-time code",
+    "connectCopy": "Copy the code",
+    "connectCopied": "Copied",
+    "connectCopyFailed": "Could not copy — select the code manually.",
+    "connectOpenBot": "Open @{{bot}}",
+    "connectSteps": "1. Add @{{bot}} to the group. 2. Make the bot an administrator allowed to send messages. 3. Send /bind {{code}} to the group.",
+    "connectCodeHint": "The code works for 30 minutes, can be used once and belongs to your account.",
+    "connectWaiting": "Waiting for confirmation from the group…",
+    "connectExpires": "The code is valid until {{when}}.",
+    "connectExpired": "The code has expired. Create a new one — this one will no longer work.",
+    "connectNew": "New code",
+    "connectDone": "Group “{{title}}” is connected.",
+    "connectDoneHealth": "The bot’s rights were checked: all good.",
+    "connectError": "Could not create a code. Try again.",
+    "connectPollError": "Could not check the state. We will retry automatically.",
+    "connectHealthOk": "All good",
+    "connectHealthNeedsRights": "Administrator rights needed",
+    "connectHealthBotMissing": "The bot is not in the group",
+    "connectHealthUnknown": "Could not check",
+    "connectHealthHint": "The bot must be a group administrator able to send messages.",
+    "connectHealthTitle": "The bot’s rights in groups",
+    "connectRefresh": "Check groups",
+    "connectRefreshing": "Checking…",
+    "connectLimit": "The group limit has been reached.",
+    "connectNeedAdmin": "The bot is in the group but has no administrator rights. Grant it permission to send messages and refresh the list.",
+    "connectBotMissing": "The bot is no longer in the group. Add it again and send /bind with a new code.",
+    "connectUnknown": "Telegram did not answer — the group’s state is unknown. This is not a success: check again later.",
+    "aiStatusOff": "AI is not configured on the server: AI formatting is unavailable, but plain text and manual editing always work.",
+    "aiStatusOn": "AI is connected on the server. Only your text, links and file names go to the model — never file contents.",
+    "aiProgress": "The AI is processing the text…",
+    "aiFailedKeep": "The AI did not answer. Your text is kept unchanged. You can continue manually or take the plain version below.",
+    "aiNoAutoRetry": "No retry will happen automatically — the decision is yours.",
+    "aiUseFallback": "Use the plain version",
+    "aiFallbackUsed": "The plain version was placed in the field. Review and edit it before continuing.",
+    "aiRestore": "Restore my text",
+    "aiRestored": "Your text from before formatting was restored.",
+    "errorPolicy": "The documents have changed. Reload the page and accept the new version.",
+    "errorFileType": "This file type is not supported.",
+    "errorFileLarge": "The file is too large.",
+    "errorQuota": "Storage is full.",
+    "errorLibraryLimit": "The library limit has been reached.",
+    "errorTelegramLink": "Open the bot and send /start first: without a private chat the file cannot be delivered.",
+    "errorTelegramUpload": "Telegram did not accept the file. Try again.",
+    "errorUploadBusy": "Too many uploads at once. Wait a few seconds.",
+    "errorGroupsLimit": "The group limit has been reached.",
+    "errorNotFound": "Not found. The record may already have been deleted."
   },
   "titles": {
     "app": "BluBlu",

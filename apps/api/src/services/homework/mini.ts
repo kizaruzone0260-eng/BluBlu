@@ -23,6 +23,8 @@ import {
 } from '../../db/schema.js';
 import { env } from '../../env.js';
 import type { BotApi } from '../botApi.js';
+import { legalStatus, type LegalStatus } from '../legal.js';
+import { siteUrl } from '../notify.js';
 import {
   localFormat,
 } from './ai.js';
@@ -205,6 +207,10 @@ export interface MiniBootstrap {
   };
   ai: { remote: boolean };
   bot: { username: string | null };
+  /** Task G: the Mini App's own gate reads this; the server refuses functions until accepted. */
+  legal: LegalStatus;
+  /** Canonical public pages, so the gate never invents its own URLs. */
+  links: { privacy: string; terms: string };
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -396,6 +402,30 @@ export async function miniBootstrap(
   deps: MiniDeps, session: MiniSession,
 ): Promise<MiniBootstrap> {
   const { db } = deps;
+  const legal = await legalStatus(db, session.userId);
+  const base = siteUrl().replace(/\/+$/, '');
+  const links = { privacy: `${base}/privacy`, terms: `${base}/terms` };
+  const limits = {
+    groups: MAX_GROUPS,
+    materials: MAX_DRAFT_MATERIALS,
+    links: MINI_MAX_LINKS,
+    title: MINI_MAX_TITLE,
+    instruction: MAX_INSTRUCTION_TEXT,
+    text: MAX_EDIT_TEXT,
+    items: MAX_ITEMS,
+  };
+  /*
+   * Task G: before acceptance the screen gets identity + the gate ONLY. It is not a cosmetic
+   * lock: the remaining endpoints answer 403 independently, so a direct URL or a hand-made
+   * request cannot read the library or write a draft through this one.
+   */
+  if (!legal.accepted) {
+    return {
+      teacher: { name: session.name, locale: session.locale, tz: session.tz },
+      groups: [], drafts: [], publications: [], materialsCount: 0,
+      limits, ai: { remote: false }, bot: { username: env.TELEGRAM_BOT_NAME || null }, legal, links,
+    };
+  }
   const [groups, drafts, pubs, materialsCount] = await Promise.all([
     groupDtos(db, session.userId, false),
     listDrafts(db, session.userId, { origin: 'mini', limit: 8 }),
@@ -430,17 +460,11 @@ export async function miniBootstrap(
       updatedAt: p.updatedAt.toISOString(),
     })),
     materialsCount,
-    limits: {
-      groups: MAX_GROUPS,
-      materials: MAX_DRAFT_MATERIALS,
-      links: MINI_MAX_LINKS,
-      title: MINI_MAX_TITLE,
-      instruction: MAX_INSTRUCTION_TEXT,
-      text: MAX_EDIT_TEXT,
-      items: MAX_ITEMS,
-    },
+    limits,
     ai: { remote: deps.aiRemote },
     bot: { username: env.TELEGRAM_BOT_NAME || null },
+    legal,
+    links,
   };
 }
 

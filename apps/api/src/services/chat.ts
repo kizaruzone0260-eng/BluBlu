@@ -197,8 +197,12 @@ export async function clearMute(db: DB, classId: string, userId: string): Promis
 }
 
 export async function markRead(db: DB, userId: string, classId: string): Promise<void> {
-  await db.insert(chatReads).values({ userId, classId, lastReadAt: new Date() })
-    .onConflictDoUpdate({ target: [chatReads.userId, chatReads.classId], set: { lastReadAt: new Date() } });
+  // Same cursor rule as `markCommentsRead`: the marker must share the PostgreSQL clock with
+  // `chat_messages.created_at` (microseconds vs a millisecond-truncated JS Date), otherwise a
+  // message written in the same millisecond stays «unread» after being shown. INSERT takes the
+  // column default `now()`.
+  await db.insert(chatReads).values({ userId, classId })
+    .onConflictDoUpdate({ target: [chatReads.userId, chatReads.classId], set: { lastReadAt: sql`now()` } });
 }
 
 export interface ChatSummary {

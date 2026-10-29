@@ -669,7 +669,7 @@
   },
   "privacy": {
     "title": "Maxfiylik siyosati",
-    "version": "Hujjatlar versiyasi: 2026-10-28",
+    "version": "Hujjatlar versiyasi: 2026-10-29",
     "intro": "BluBlu — egasi (o‘quv muassasasi yoki o‘qituvchi) o‘rnatadigan va boshqaradigan o‘quv platformasi. Ushbu matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
     "sections": [
       {
@@ -686,7 +686,11 @@
           "Ixtiyoriy — xabarnomalar uchun Telegram chat identifikatori (chat_id).",
           "Build raqami va texnik identifikatorlar (uuid) o‘z-o‘ziga shaxsiy ma‘lumot hisoblanmaydi.",
           "Darslardagi qatnash: har tugallangan dars uchun server kim kelganini va qachon ketganini saqlaydi (foydalanuvchi identifikatori va ikkita vaqt belgisi). Oʻquvchilar bu roʻyxatni koʻrmaydi — u sinf oʻqituvchisiga darslar arxivida ochiq.",
-          "Elektron pochta manzilini tasdiqlash: roʻyxatdan oʻtayotganda manzilga olti xonali kod yuboriladi; kodning ozi faqat qaytarib boʻlmaydigan hash koʻrinishida saqlanadi va u 15 daqiqa amal qiladi. Roʻyxat yakunlanmasa, manzil yozuvi bir kundan soʻng avtomatik oʻchiriladi."
+          "Elektron pochta manzilini tasdiqlash: roʻyxatdan oʻtayotganda manzilga olti xonali kod yuboriladi; kodning ozi faqat qaytarib boʻlmaydigan hash koʻrinishida saqlanadi va u 15 daqiqa amal qiladi. Roʻyxat yakunlanmasa, manzil yozuvi bir kundan soʻng avtomatik oʻchiriladi.",
+          "Telegram Mini App: botdan ochilganda server Telegram imzolagan ishga tushirish ma‘lumotlarini (identifikator, ism va til) tekshiradi va 8 soatlik cheklangan sessiya beradi; u faqat varaq xotirasida saqlanadi.",
+          "Mini App’dan yuklangan materiallar: faylning o‘zi, nomi, hajmi va turi, shuningdek tanlangan guruhlar. Telegram yetkazib berish ishlashi uchun fayl bir marta botingizga shaxsiy chatga yuboriladi va nusxaning fayl xotirasida saqlanadi.",
+          "Ulangan Telegram guruhlari: nomlari, identifikatorlari va bot huquqlarining holati.",
+          "Siyosat va Shartlarni qabul qilish: hujjatlar versiyalari, qabul vaqti, interfeys tili va yuzasi (sayt, bot yoki Mini App)."
         ]
       },
       {
@@ -710,7 +714,9 @@
           "LiveKit — video aloqa serveri; demo rejimida LiveKit Cloud ishlatiladi, o‘zi o‘rnatilganda media egasi serverida qoladi.",
           "Telegram Bot API — foydalanuvchi Telegramni o‘zi bog‘lagandagina chat_id va xabarnoma matnini oladi.",
           "Xat yetkazish xizmati — Brevo, Resend yoki egasining shaxsiy SMTP serveri; egasi tanlaydi. Qabul qiluvchining manzili, ismi va xat matnini, shu jumladan tasdiqlash kodini oladi — faqat manzilni tasdiqlash yoqilgan bo‘lsa.",
-          "Tashqi AI xizmati — OpenAI bilan mos API; egasi tanlaydi. Faqat o‘qituvchi ko‘rsatmasi, ilovalar nomlari va o‘qituvchi Telegram uy vazifasi xabari uchun yozgan matnni oladi; fayllar (PDF, DOCX, suratlar) mazmuni hech qachon yuborilmaydi. Standart holatda o‘chirilgan va faqat egasi yoqsa ishlaydi."
+          "Tashqi AI xizmati — OpenAI bilan mos API; egasi tanlaydi. Faqat o‘qituvchi ko‘rsatmasi, ilovalar nomlari va o‘qituvchi Telegram uy vazifasi xabari uchun yozgan matnni oladi; fayllar (PDF, DOCX, suratlar) mazmuni hech qachon yuborilmaydi. Standart holatda o‘chirilgan va faqat egasi yoqsa ishlaydi.",
+          "Telegram Bot API xabarnomalardan tashqari yuklangan materiallarni ham oladi: fayl yetkazish identifikatorini olish uchun o‘qituvchining bot bilan shaxsiy chatiga, guruhlarga esa faqat vazifa yuborilganda boradi.",
+          "Nusxaning fayl xotirasi — server diskidagi katalog (STORAGE_DIR). Qayta ishga tushirish va qayta joylashtirishdan keyin saqlanib qolishi egasi sozlamalariga bog‘liq: doimiy diskni egasi yoqadi."
         ]
       },
       {
@@ -718,7 +724,8 @@
         "b": [
           "Joylashtirish infratuzilmasi Frankfurtda (YE).",
           "Interfeysdan tashqi so‘rovlar cheklangan va faqat foydalanuvchi harakati bilan bo‘ladi: masalan, YouTube videosi bosilgandan keyingina youtube-nocookie.com orqali ochiladi.",
-          "Pochta va AI provayderlarini egasi tanlaydi va yoqadi; ular yoqilganda yuqorida sanab o‘tilgan ma‘lumotlar egasining serveridan shu provayderlarga yuboriladi. Ularning joylashuvi egasi sozlamalariga bog‘liq."
+          "Pochta va AI provayderlarini egasi tanlaydi va yoqadi; ular yoqilganda yuqorida sanab o‘tilgan ma‘lumotlar egasining serveridan shu provayderlarga yuboriladi. Ularning joylashuvi egasi sozlamalariga bog‘liq.",
+          "Yuklangan materiallar Telegram’ga (Bot API) yuboriladi: usiz vazifani yetkazish mumkin emas, shuning uchun yuklash faqat Telegram ulangan bo‘lsa mavjud."
         ]
       },
       {
@@ -727,7 +734,9 @@
           "Hisob ma‘lumotlari va o‘quv kontenti hisob yoki sinf faol bo‘lguncha saqlanadi.",
           "Amallar jurnali (audit_log) va chat xabarlari tegishli hisob yoki sinf o‘chirilgungacha saqlanadi.",
           "Hisob to‘liq o‘chirilganda shaxsiy ma‘lumotlar nomlashadi (pochta bekor qilinadi), o‘quvchi eslatmalari, varaqalari, sinf a‘zoligi, Telegram bog‘lanishi va sessiya tokenlari kaskad o‘chiriladi. O‘qituvchi yaratgan material va e‘lonlar o‘sha sinf uchun ochiq qoladi.",
-          "Darslar arxivi (doskalari, izohlari va qatnashganlar yozuvi) oʻqituvchi yozuvni oʻchiraguncha, yoqilsa BOARD_ARCHIVE_RETENTION_DAYS oʻtguncha saqlanadi. Standart holat 0: oʻzi hech narsa oʻchirilmaydi."
+          "Darslar arxivi (doskalari, izohlari va qatnashganlar yozuvi) oʻqituvchi yozuvni oʻchiraguncha, yoqilsa BOARD_ARCHIVE_RETENTION_DAYS oʻtguncha saqlanadi. Standart holat 0: oʻzi hech narsa oʻchirilmaydi.",
+          "Kutubxona materiallari va ularning fayllari o‘qituvchi o‘chirguncha saqlanadi; hisob o‘chirilganda Mini App orqali yuklangan yozuvlar va fayllar o‘chiriladi.",
+          "Vazifa qoralamalari va ulangan guruhlar hisob bilan birga o‘chiriladi."
         ]
       },
       {
@@ -742,7 +751,9 @@
           "Faqat zarur narsalar: kirish sessiyasi (skriptlar kira olmaydigan himoyalangan cookie), tanlangan til va mavzu, interfeys sozlamalari (yon panel va suzuvchi kamera oynasi joylashuvi, tanlangan kamera, mikrofon va dinamik).",
           "Saqlashdan oldin kiritilgan matn brauzerda mahalliy qoralama sifatida saqlanadi: eslatmalar, varaqlar va formatlangan hujjatlar. Qoralama muvaffaqiyatli saqlangandan keyin o‘chiriladi; uni brauzer sayt ma‘lumotlari orqali ham tozalash mumkin.",
           "Tarmoqsiz ishlash qobig‘i (service worker) sahifalar va statik fayllarning nusxalarini brauzer keshida saqlaydi; API javoblari keshlanmaydi.",
-          "Analitika va reklama trekerlari yo‘q, shuning uchun cookie banneri talab qilinmaydi."
+          "Analitika va reklama trekerlari yo‘q, shuning uchun cookie banneri talab qilinmaydi.",
+          "Mini App cheklangan sessiya tokenini varaqning sessionStorage’ida saqlaydi: u yopilganda yo‘qoladi va saytning kirish cookie’sini almashtirmaydi.",
+          "Tanlangan mavzu va interfeys tili localStorage’da saqlanadi va keyingi ochilishda qo‘llanadi."
         ]
       },
       {
@@ -760,7 +771,8 @@
       {
         "h": "Hujjatlarni o‘zgartirish",
         "b": [
-          "Yangi versiya paydo bo‘lganda keyingi kirishda qayta rozilik so‘raladi; versiya qabul qilinish vaqti belgisi bilan saqlanadi."
+          "Yangi versiya paydo bo‘lganda keyingi kirishda qayta rozilik so‘raladi; versiya qabul qilinish vaqti belgisi bilan saqlanadi.",
+          "Joriy versiya bot va Mini App’dagi har bir amalda server tomonidan tekshiriladi; versiyalar va vaqt yozuvi barcha yuzalarda amal qiladi."
         ]
       }
     ]
@@ -875,7 +887,7 @@
   },
   "terms": {
     "title": "Foydalanish shartlari",
-    "version": "Hujjatlar versiyasi: 2026-10-28",
+    "version": "Hujjatlar versiyasi: 2026-10-29",
     "intro": "BluBlu platformasidan foydalanish shartlari. Matn — qoralama: huquqiy tekshiruvni egasi bajaradi.",
     "sections": [
       {
@@ -924,6 +936,14 @@
         "h": "Shartlarni o‘zgartirish va kontaktlar",
         "b": [
           "Muhim o‘zgarishlar haqida foydalanuvchilar keyingi kirishda biladi (versiyani qayta qabul qilish). Ega kontaktilari: [kiriting]."
+        ]
+      },
+      {
+        "h": "Telegram Mini App va tashqi AI",
+        "b": [
+          "Mini App Telegram’i BluBlu hisobiga bog‘langan o‘qituvchi uchun mavjud. U botni guruhlarga o‘zi qo‘shmaydi: ulanish administrator guruhga yuboradigan bir martalik kod bilan tasdiqlanadi.",
+          "Yuklangan materiallar Telegram orqali yetkaziladi va kutubxonada saqlanadi; vazifani yuborishdan oldin yakuniy matn va guruhlar ro‘yxatini tasdiqlaysiz.",
+          "Agar egasi tashqi AI’ni yoqqan bo‘lsa, unga faqat vazifa matni, havola manzillari va fayl nomlari boradi; fayllar mazmuni yuborilmaydi. AI natijasida xatolar bo‘lishi mumkin: yuborishdan oldin tekshirib, tahrirlang."
         ]
       }
     ]
@@ -1111,7 +1131,98 @@
     "errorLocked": "Bu vazifani endi tahrirlab bo‘lmaydi — u yuborilmoqda yoki allaqachon yuborilgan.",
     "errorEmpty": "Vazifa matnini yoki kamida bitta havolani qo‘shing.",
     "errorNotReady": "Vazifa hali yuborishga tayyor emas. Orqaga qaytib, guruhlar va matnni tekshiring.",
-    "errorInvalidLink": "Havola http:// yoki https:// bilan boshlanishi kerak."
+    "errorInvalidLink": "Havola http:// yoki https:// bilan boshlanishi kerak.",
+    "appearance": "Ko‘rinish",
+    "language": "Til",
+    "settings": "Ko‘rinish va til",
+    "legalGateTitle": "Avval hujjatlarni qabul qiling",
+    "legalGateBody": "Mini ilova funksiyalari Maxfiylik siyosati va Shartlar qabul qilingandan keyin ochiladi. Server buni har bir amalda tekshiradi, shuning uchun ekranni aylanib o‘tib bo‘lmaydi.",
+    "legalGateVersions": "Siyosat: {{privacy}} · Shartlar: {{terms}}",
+    "legalGateReadHint": "Ikkala hujjatni oching — ular yangi varaqda ochiladi.",
+    "legalGateCheck": "Men Shartlarni qabul qilaman va Maxfiylik siyosati bilan tanishganimni tasdiqlayman",
+    "legalGateAccept": "Qabul qilish va davom etish",
+    "legalGateSaving": "Qabul saqlanmoqda…",
+    "legalGateStale": "Siz o‘qiyotganingizda hujjatlar yangilandi. Yangi versiyani ko‘rib chiqib, qabul qiling.",
+    "legalGateError": "Qabulni saqlab bo‘lmadi. Aloqani tekshirib, qayta urinib ko‘ring.",
+    "legalGateUnavailable": "Server hujjat versiyalarini ko‘rsatmadi. Sahifani yangilang.",
+    "uploadTitle": "Material yuklash",
+    "uploadIntro": "Fayl kutubxonaga tushadi va vazifalar uchun mavjud bo‘ladi. Server kengaytmani emas, fayl mazmunini tekshiradi.",
+    "uploadPick": "Fayl tanlash",
+    "uploadNoFile": "Fayl tanlanmagan",
+    "uploadFileChosen": "{{name}} · {{size}}",
+    "uploadName": "Nomi (majburiy emas)",
+    "uploadNamePlaceholder": "Masalan: Round-up 4",
+    "uploadKind": "Material turi",
+    "uploadGroups": "Qaysi guruhlar uchun",
+    "uploadNoGroups": "Avval kamida bitta guruhni ulang — material guruhlaringiz uchun mavjud bo‘lishi kerak.",
+    "uploadStart": "Yuklash",
+    "uploadRetry": "Yuklashni qayta urinish",
+    "uploadProgress": "Yuklanmoqda: {{n}}%",
+    "uploadDone": "«{{title}}» materiali kutubxonaga qo‘shildi.",
+    "uploadAttached": "U darhol bu vazifaga biriktirildi.",
+    "uploadReplaced": "Bunday fayl kutubxonada bor edi — yozuvi yangilandi.",
+    "uploadWizardHint": "Fayl darhol bu vazifaga biriktiriladi.",
+    "uploadKept": "Tanlangan fayl saqlanadi — qayta tanlamasdan urinish mumkin.",
+    "uploadInProgress": "Yuklash ketmoqda — tugashini kuting.",
+    "uploadTooLarge": "Fayl Mini App’dan yuklash uchun juda katta.",
+    "uploadUnsupported": "Bu fayl turi qo‘llab-quvvatlanmaydi. PDF, hujjat, rasm, audio yoki video yuklang.",
+    "uploadTelegramFailed": "Telegram faylni qabul qilmadi. Kutubxona o‘zgarmadi — qayta urinib ko‘ring.",
+    "uploadNoChat": "Bot faylni shaxsiy chatingizga yubora olmadi. @{{bot}} ni ochib, /start yuboring va qayta urinib ko‘ring.",
+    "uploadQuota": "Xotira to‘ldi. Keraksiz materiallarni veb-ilovada o‘chiring.",
+    "uploadLimit": "Kutubxona chegarasiga yetildi.",
+    "uploadBusy": "Bir vaqtda juda ko‘p yuklash. Bir necha sekund kuting.",
+    "uploadInvalid": "Server faylni qabul qilmadi. Qayta urinib ko‘ring.",
+    "connectTitle": "Telegram guruhini ulash",
+    "connectIntro": "Mini ilova botni guruhga o‘zi qo‘sha olmaydi — Telegram botlarga bunday buyruq bermaydi. Biz bir martalik kod beramiz, siz esa uni guruhda tasdiqlaysiz.",
+    "connectNoBot": "Serverda bot nomi sozlanmagan — ulash mavjud emas.",
+    "connectStart": "Kod olish",
+    "connectStarting": "Kod yaratilmoqda…",
+    "connectCodeLabel": "Bir martalik kod",
+    "connectCopy": "Kodni nusxalash",
+    "connectCopied": "Nusxalandi",
+    "connectCopyFailed": "Nusxalab bo‘lmadi — kodni qo‘lda belgilang.",
+    "connectOpenBot": "@{{bot}} ni ochish",
+    "connectSteps": "1. @{{bot}} ni guruhga qo‘shing. 2. Botni xabar yuborish huquqiga ega administrator qiling. 3. Guruhga /bind {{code}} buyrug‘ini yuboring.",
+    "connectCodeHint": "Kod 30 daqiqa amal qiladi, bir marta ishlatiladi va hisobingizga bog‘langan.",
+    "connectWaiting": "Guruhdan tasdiq kutilmoqda…",
+    "connectExpires": "Kod {{when}} gacha amal qiladi.",
+    "connectExpired": "Kod muddati tugadi. Yangisini yarating — bu endi ishlamaydi.",
+    "connectNew": "Yangi kod",
+    "connectDone": "«{{title}}» guruhi ulandi.",
+    "connectDoneHealth": "Bot huquqlari tekshirildi: hammasi joyida.",
+    "connectError": "Kod yaratib bo‘lmadi. Qayta urinib ko‘ring.",
+    "connectPollError": "Holatni tekshirib bo‘lmadi. Avtomatik qayta urinamiz.",
+    "connectHealthOk": "Hammasi joyida",
+    "connectHealthNeedsRights": "Administrator huquqlari kerak",
+    "connectHealthBotMissing": "Bot guruhda emas",
+    "connectHealthUnknown": "Tekshirib bo‘lmadi",
+    "connectHealthHint": "Bot guruh administratori bo‘lishi va xabar yubora olishi kerak.",
+    "connectHealthTitle": "Botning guruhlardagi huquqlari",
+    "connectRefresh": "Guruhlarni tekshirish",
+    "connectRefreshing": "Tekshirilmoqda…",
+    "connectLimit": "Guruhlar soni chegarasiga yetildi.",
+    "connectNeedAdmin": "Bot guruhda, lekin administrator huquqlari yo‘q. Unga xabar yuborish huquqini bering va ro‘yxatni yangilang.",
+    "connectBotMissing": "Bot endi guruhda emas. Uni qayta qo‘shib, yangi kod bilan /bind yuboring.",
+    "connectUnknown": "Telegram javob bermadi — guruh holati noma’lum. Bu muvaffaqiyat tasdiqi emas: keyinroq qayta tekshiring.",
+    "aiStatusOff": "Serverda AI sozlanmagan: AI bilan formatlash mavjud emas, ammo oddiy matn va qo‘lda tahrirlash doim ishlaydi.",
+    "aiStatusOn": "Serverda AI ulangan. Modelga faqat matningiz, havolalar va fayl nomlari boradi — fayllar mazmuni hech qachon.",
+    "aiProgress": "AI matnni qayta ishlamoqda…",
+    "aiFailedKeep": "AI javob bermadi. Matningiz o‘zgarishsiz saqlandi. Qo‘lda davom etishingiz yoki quyidagi oddiy variantni olishingiz mumkin.",
+    "aiNoAutoRetry": "Avtomatik qayta so‘rov bo‘lmaydi — qaror sizniki.",
+    "aiUseFallback": "Oddiy variantni olish",
+    "aiFallbackUsed": "Oddiy variant maydonga qo‘yildi. Davom etishdan oldin tekshirib, tahrirlang.",
+    "aiRestore": "Matnimni qaytarish",
+    "aiRestored": "Formatlashdan oldingi matningiz qaytarildi.",
+    "errorPolicy": "Hujjatlar yangilandi. Sahifani yangilab, yangi versiyani qabul qiling.",
+    "errorFileType": "Bu fayl turi qo‘llab-quvvatlanmaydi.",
+    "errorFileLarge": "Fayl juda katta.",
+    "errorQuota": "Xotira to‘ldi.",
+    "errorLibraryLimit": "Kutubxona chegarasiga yetildi.",
+    "errorTelegramLink": "Avval botni ochib, /start yuboring: shaxsiy chat bo‘lmasa faylni yetkazib bo‘lmaydi.",
+    "errorTelegramUpload": "Telegram faylni qabul qilmadi. Qayta urinib ko‘ring.",
+    "errorUploadBusy": "Bir vaqtda juda ko‘p yuklash. Bir necha sekund kuting.",
+    "errorGroupsLimit": "Guruhlar soni chegarasiga yetildi.",
+    "errorNotFound": "Topilmadi. Yozuv allaqachon o‘chirilgan bo‘lishi mumkin."
   },
   "titles": {
     "app": "BluBlu",

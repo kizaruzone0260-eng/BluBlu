@@ -1456,6 +1456,115 @@ a.invite-tg:hover { border-color: var(--accent); }
 .mini-retry { display: flex; flex-direction: column; gap: var(--sp-2); }
 .mini-retry button { margin: 0; }
 
+/* ═══ Task G (2026-10-29): настройки, правовой гейт, загрузка, подключение ══
+   Everything below is inside `.mini-app`, so colours come from --mini-* and the
+   theme tokens — never from a hardcoded palette. All clickable rows are ≥ 44 px. */
+
+/* появление и язык: два сегмента в карточке, один и тот же контрол */
+.mini-settings { display: flex; flex-direction: column; gap: var(--sp-3); margin: 0; }
+.mini-settings-row { display: flex; flex-direction: column; gap: 6px; }
+.mini-settings-label { font-size: .82rem; font-weight: 600; color: var(--mini-muted); }
+.mini-seg {
+  display: flex; overflow: hidden;
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: var(--mini-surface);
+}
+.mini-seg-btn {
+  flex: 1 1 0; min-width: 0; min-height: var(--tap); margin: 0; padding: 8px 6px;
+  border: 0; border-radius: 0; background: transparent; color: var(--mini-text);
+  font-size: .84rem; font-weight: 550; text-align: center;
+}
+.mini-seg-btn + .mini-seg-btn { border-left: 1px solid var(--border); }
+.mini-seg-btn.is-on {
+  background: var(--accent-soft); color: var(--text); font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.mini-seg-btn:hover:not(:disabled):not(.is-on) { background: color-mix(in srgb, var(--accent) 8%, var(--mini-surface)); }
+.mini-settings-row .error { margin: 0; }
+
+/* гейт: ссылки на документы — настоящие цели нажатия, а не строка текста */
+.mini-legal-links { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.mini-link-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap); padding: 10px 14px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: var(--mini-surface); color: var(--mini-text);
+  font-size: .88rem; font-weight: 600; text-decoration: none; text-align: center;
+  overflow-wrap: anywhere;
+}
+.mini-link-button:hover { border-color: var(--accent); color: var(--mini-text); }
+
+/* загрузка материала из Mini App */
+.mini-upload { display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.mini-upload h2 { margin: 0 0 var(--sp-1); }
+.mini-upload label { margin: var(--sp-2) 0 0; }
+.mini-upload p { margin: 4px 0 0; }
+.mini-upload button { margin-top: var(--sp-2); }
+.mini-upload-groups {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 0; margin: var(--sp-2) 0 0; padding: 0;
+}
+.mini-upload-groups legend { padding: 0; font-size: .82rem; font-weight: 550; color: var(--mini-muted); }
+.mini-upload-groups .mini-check { margin-top: 0; padding: 6px 0; }
+
+/* подключение группы: код — самый крупный элемент экрана, шаги — рядом с ним */
+.mini-connect { display: flex; flex-direction: column; gap: var(--sp-2); margin: 0; }
+.mini-connect h2 { margin: 0; }
+.mini-connect-box {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-3); border-radius: var(--r-md);
+  border: 1px solid var(--border); background: var(--mini-surface);
+}
+.mini-code {
+  display: block; padding: var(--sp-3) var(--sp-2);
+  border-radius: var(--r-md); border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft); color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 1.45rem;
+  font-weight: 700; letter-spacing: .12em; text-align: center;
+  overflow-wrap: anywhere; user-select: all;
+}
+.mini-connect-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.mini-connect-actions button, .mini-connect-actions .mini-link-button { flex: 1 1 140px; margin: 0; }
+.mini-connect-steps {
+  margin: 0; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--text); font-size: .84rem; line-height: 1.45;
+}
+.mini-connect-box > p { margin: 0; }
+
+.mini-health { margin: 0; font-size: .86rem; font-weight: 600; }
+.mini-health--ok { color: var(--ok); }
+.mini-health--needsRights { color: var(--warn); }
+.mini-health--botMissing { color: var(--danger); }
+.mini-health--unknown { color: var(--mini-muted); }
+.mini-health-section { display: flex; flex-direction: column; gap: var(--sp-2); }
+.mini-head-inline { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.mini-head-inline h2 { margin: 0; }
+.mini-head-inline button { margin: 0; padding: 8px 10px; }
+.mini-row-main .mini-badge { margin-top: 3px; }
+
+/* AI: честный статус и запасной текст, который применяется только явным нажатием */
+.mini-ai-status { font-size: .86rem; }
+.mini-ai-fallback {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-3); border-radius: var(--r-md);
+  background: var(--accent-soft); color: var(--text); font-size: .86rem;
+}
+.mini-ai-fallback p { margin: 0; }
+.mini-ai-fallback .row { margin: 0; }
+.mini-ai-fallback button { margin: 0; }
+.mini-fallback-text {
+  margin: 0; max-height: 30vh; overflow: auto;
+  padding: var(--sp-2); border-radius: var(--r-sm);
+  background: var(--mini-surface); border: 1px solid var(--border);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  font: inherit; font-size: .84rem; line-height: 1.45;
+}
+.mini-ai-restore { align-self: flex-start; margin: 0; }
+
+/* Back only: when Telegram draws the MainButton, the page must not stretch Back to half width */
+.mini-nav--single { justify-content: flex-start; }
+.mini-nav--single button { flex: 0 0 auto; min-width: 120px; }
+
 /* на большом экране окно Telegram тоже бывает широким: мастер не растягиваем */
 @media (min-width: 640px) {
   .mini-screen { max-width: 600px; }
@@ -1466,5 +1575,6 @@ a.invite-tg:hover { border-color: var(--accent); }
 @media (max-width: 360px) {
   .mini-link-row { flex-direction: column; }
   .mini-link-remove { align-self: flex-end; }
+  .mini-connect-actions button, .mini-connect-actions .mini-link-button { flex-basis: 100%; }
   .mini-nav button { font-size: .84rem; padding: 10px 8px; }
 }

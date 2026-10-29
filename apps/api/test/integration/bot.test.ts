@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { and, eq, isNull } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, acceptPolicy, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import {
   auditLog, botSessions, classes, classMembers, contactBlocklist, contactReports,
@@ -71,6 +71,7 @@ suite('telegram bot (mocked api)', () => {
       locale: 'ru', localeExplicit: true,
     }).returning().then((r) => [r[0]]);
     studentId = stu!.id;
+    await acceptPolicy(t.sql, studentId);
     await t.db.insert(classMembers).values({ classId, userId: studentId });
     await t.db.insert(telegramLinks).values({ userId: studentId, chatId: String(S_CHAT) });
     api = new CapturingApi();
@@ -362,6 +363,7 @@ suite('telegram bot (mocked api)', () => {
       role: 'student', name: 'Меню', lastName: 'Тест', email: `botm${Date.now()}@x.io`,
       passwordHash: await hashPassword('Secret1234'), profileCompletedAt: new Date(),
     }).returning();
+    await acceptPolicy(t.sql, stu2!.id);
     const token = newOpaqueToken();
     await t.db.insert(telegramTokens).values({ tokenHash: hashToken(token), userId: stu2!.id, expiresAt: new Date(Date.now() + 60_000) });
     clear();
@@ -397,6 +399,7 @@ suite('telegram bot (mocked api)', () => {
       role: 'student', name: 'Дефолт', lastName: 'Тил', email: `botdef${Date.now()}@x.io`,
       passwordHash: await hashPassword('Secret1234'), profileCompletedAt: new Date(),
     }).returning();
+    await acceptPolicy(t.sql, fresh!.id, 'en');
     await t.db.insert(telegramLinks).values({ userId: fresh!.id, chatId: String(chat) });
 
     clear();

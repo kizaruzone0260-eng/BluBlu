@@ -2,10 +2,18 @@
  * Persistence for the teacher's material library (part B, 2026-10-22).
  *
  * A material is a FILE the teacher uploads once (a textbook, a workbook) and re-uses as an
- * attachment. Only Telegram's `file_id` and metadata are stored — never the bytes, and never
- * anything extracted from the document. Every read and write here is keyed by the owner id:
- * one teacher can never list, rename, archive or delete another teacher's material, and the
- * caller cannot reach a group that is not hers.
+ * attachment. Bot-era rows store only Telegram's `file_id` and metadata — never the bytes,
+ * and never anything extracted from the document.
+ *
+ * Task G (2026-10-29) adds one exception, and it is explicit: a file uploaded through the
+ * Mini App is ALSO written to the server storage (`storage_key`), because the Mini App has no
+ * chat message of its own to copy from and a `file_id` cannot be invented. Those stored bytes
+ * are the source for re-uploading to Telegram when needed; they are never read by the AI,
+ * never extracted and never previewed. `deleteMaterial` and account erasure remove them.
+ *
+ * Every read and write here is keyed by the owner id: one teacher can never list, rename,
+ * archive or delete another teacher's material, and the caller cannot reach a group that is
+ * not hers.
  *
  * The draft copy (`tg_draft_materials`) is a snapshot on purpose: renaming or deleting a
  * library entry must not rewrite a draft that is being written, and must never change the
@@ -16,6 +24,7 @@ import type { DB } from '../../db/index.js';
 import {
   botSessions, tgDraftMaterials, tgDraftTargets, tgGroups, tgMaterialGroups, tgMaterials,
 } from '../../db/schema.js';
+import { getStorage } from '../../storage/provider.js';
 import {
   LIBRARY_SESSION_TTL_MIN, MAX_DRAFT_MATERIALS, MAX_MATERIALS, MAX_MATERIAL_TITLE,
 } from './constants.js';
@@ -44,6 +53,8 @@ export interface MaterialInput {
   mediaType?: 'photo' | 'document' | null;
   sourceChatId?: string | null;
   sourceMessageId?: number | null;
+  /** Task G: key of the bytes in server storage. Absent for bot-era rows. */
+  storageKey?: string | null;
 }
 
 export type SaveMaterialResult =
@@ -101,6 +112,7 @@ export async function saveMaterial(
     mediaType: input.mediaType ?? null,
     sourceChatId: input.sourceChatId ?? null,
     sourceMessageId: input.sourceMessageId ?? null,
+    storageKey: input.storageKey ?? null,
     status: 'active' as const, updatedAt: now,
   };
   // A re-upload is a NEW message in a NEW place: the copy coordinates move with the file.
@@ -110,10 +122,17 @@ export async function saveMaterial(
       fileName: values.fileName, mimeType: values.mimeType, fileSize: values.fileSize,
       mediaType: values.mediaType, sourceChatId: values.sourceChatId,
       sourceMessageId: values.sourceMessageId, status: 'active', updatedAt: now,
+      // A bot-era row keeps its NULL; a Mini upload replaces the key it supersedes.
+      ...(input.storageKey ? { storageKey: input.storageKey } : {}),
     }).where(eq(tgMaterials.id, existing.id)).returning()
     : await db.insert(tgMaterials).values(values).returning();
   const row = saved[0];
   if (!row) return { status: 'noGroups' };
+
+  if (existing?.storageKey && input.storageKey && existing.storageKey !== input.storageKey) {
+    // The row now points at the new bytes; the superseded copy must not linger.
+    await getStorage().delete(existing.storageKey).catch(() => undefined);
+  }
 
   if (groupIds.length) {
     await db.insert(tgMaterialGroups).values(
@@ -259,8 +278,30 @@ export async function setMaterialStatus(
 export async function deleteMaterial(db: DB, materialId: string, ownerId: string): Promise<boolean> {
   const rows = await db.delete(tgMaterials)
     .where(and(eq(tgMaterials.id, materialId), eq(tgMaterials.ownerId, ownerId)))
-    .returning({ id: tgMaterials.id });
-  return rows.length > 0;
+    .returning({ id: tgMaterials.id, storageKey: tgMaterials.storageKey });
+  if (!rows.length) return false;
+  // Task G: emptying the row is not deleting the file. Best-effort — a lost disk object must
+  // not resurrect the row, and a failed cleanup must not make the UI say «not deleted».
+  if (rows[0]?.storageKey) await getStorage().delete(rows[0].storageKey).catch(() => undefined);
+  return true;
+}
+
+/** Bytes this owner keeps in server storage (Mini App uploads only). */
+export async function storedBytes(db: DB, ownerId: string): Promise<number> {
+  const [row] = await db.select({ n: sql<number>`coalesce(sum(${tgMaterials.fileSize}), 0)::bigint` })
+    .from(tgMaterials)
+    .where(and(eq(tgMaterials.ownerId, ownerId), sql`${tgMaterials.storageKey} is not null`));
+  return Number(row?.n ?? 0);
+}
+
+/** Existing row for the same Telegram file, used to retire the bytes it supersedes. */
+export async function materialByUniqueId(
+  db: DB, ownerId: string, fileUniqueId: string,
+): Promise<HwMaterialRow | null> {
+  const [row] = await db.select().from(tgMaterials)
+    .where(and(eq(tgMaterials.ownerId, ownerId), eq(tgMaterials.fileUniqueId, fileUniqueId)))
+    .limit(1);
+  return row ?? null;
 }
 
 /** «Последнее использование» — only what a publication actually reached a group with. */

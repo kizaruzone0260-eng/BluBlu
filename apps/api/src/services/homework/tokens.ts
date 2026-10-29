@@ -76,10 +76,13 @@ export function newBindCode(): { code: string; hash: string; expiresAt: Date } {
   return { code, hash: hashToken(code), expiresAt: new Date(Date.now() + 30 * 60_000) };
 }
 
-export async function createBindCode(db: DB, ownerId: string): Promise<string> {
+export async function createBindCode(
+  db: DB, ownerId: string,
+): Promise<{ id: string; code: string; expiresAt: Date }> {
   const { code, hash, expiresAt } = newBindCode();
-  await db.insert(tgBindTokens).values({ tokenHash: hash, ownerId, expiresAt });
-  return code;
+  const [row] = await db.insert(tgBindTokens).values({ tokenHash: hash, ownerId, expiresAt })
+    .returning({ id: tgBindTokens.id });
+  return { id: row!.id, code, expiresAt };
 }
 
 /** Consume a bind code atomically. The wrong linked account does NOT burn the code. */
@@ -88,7 +91,7 @@ export type BindClaim =
   | { status: 'wrongAccount'; ownerId: string };
 
 export async function claimBindCode(
-  db: DB, rawCode: string, expectedOwnerId?: string,
+  db: DB, rawCode: string, expectedOwnerId?: string, chatId?: string,
 ): Promise<BindClaim | null> {
   const code = rawCode.trim().toUpperCase();
   if (!/^[A-Z2-9]{8}$/.test(code)) return null;
@@ -103,7 +106,8 @@ export async function claimBindCode(
   if (expectedOwnerId && row.ownerId !== expectedOwnerId) {
     return { status: 'wrongAccount', ownerId: row.ownerId };
   }
-  const claimed = await db.update(tgBindTokens).set({ usedAt: new Date() })
+  const claimed = await db.update(tgBindTokens)
+    .set(chatId ? { usedAt: new Date(), usedChatId: chatId } : { usedAt: new Date() })
     .where(and(
       eq(tgBindTokens.tokenHash, hash),
       isNull(tgBindTokens.usedAt),

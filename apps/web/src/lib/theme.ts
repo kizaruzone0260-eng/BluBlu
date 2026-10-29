@@ -28,6 +28,9 @@ export function setTheme(choice: ThemeChoice): void {
 
 if (typeof window !== 'undefined') {
   window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+    // Task G: inside Telegram the Mini App follows `themeParams`/`themeChanged`, not the OS;
+    // `applyTelegramTheme` marks the document so this listener cannot repaint it.
+    if (document.documentElement.dataset.themeSource === 'telegram') return;
     if (getThemeChoice() === 'system') applyTheme('system');
   });
 }

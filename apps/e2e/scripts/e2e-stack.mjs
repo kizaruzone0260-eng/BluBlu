@@ -9,7 +9,7 @@
  * suite logs in far more than 10 times a minute, so 3123 stays non-production for the rest.
  */
 import EmbeddedPostgres from 'embedded-postgres';
-import { readPolicyVersion } from './policyVersion.mjs';
+import { readLegalVersions } from './policyVersion.mjs';
 import { initUtf8Cluster } from '../../api/scripts/pg-init-utf8.mjs';
 import postgres from 'postgres';
 import { spawn } from 'node:child_process';
@@ -160,11 +160,13 @@ await admin.unsafe(`
 // the current policy version, so specs that log in reach the app (and the name
 // gate for the intentionally-incomplete accounts) instead of the policy gate.
 // Accounts REGISTERED during a run accept via the register-step-2 checkbox.
-const POLICY_VERSION = readPolicyVersion();
+const LEGAL = readLegalVersions();
 await admin`
-  insert into policy_acceptances (user_id, version, accepted_at)
-  select id, ${POLICY_VERSION}, now() from users
-  on conflict (user_id) do update set version = ${POLICY_VERSION}, accepted_at = now()`;
+  insert into policy_acceptances (user_id, version, privacy_version, terms_version, locale, context, accepted_at)
+  select id, ${LEGAL.policy}, ${LEGAL.privacy}, ${LEGAL.terms}, 'ru', 'web', now() from users
+  on conflict (user_id) do update set version = ${LEGAL.policy},
+    privacy_version = ${LEGAL.privacy}, terms_version = ${LEGAL.terms},
+    locale = 'ru', context = 'web', accepted_at = now()`;
 // The DEPLOYED-shape API (NODE_ENV=production) is NOT started here: it belongs to the single spec
 // that needs it (tests/zz9-prod-shape.spec.ts → scripts/prod-shape-api.mjs). Two API processes with
 // their own pg-boss workers for the whole suite cost enough CPU on a small dev box to push the

@@ -148,6 +148,11 @@ export const H = {
     uz: 'Kod boshqa hisob tomonidan yaratilgan. Uni yaratgan hisobga kiring.',
     en: 'This code was created by another account. Use the account that created it.',
   },
+  bindLegalRequired: {
+    ru: 'Сначала примите действующие Политику конфиденциальности и Условия в личном чате с ботом: отправьте /start.',
+    uz: 'Avval bot bilan shaxsiy chatda amaldagi Maxfiylik siyosati va Shartlarni qabul qiling: /start yuboring.',
+    en: 'First accept the current Privacy Policy and Terms in the private chat with the bot: send /start.',
+  },
 
   collectTitle: {
     ru: 'Сбор материалов. Сохранено: %{n}.',

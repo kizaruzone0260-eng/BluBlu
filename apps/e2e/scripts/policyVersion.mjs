@@ -22,3 +22,22 @@ export function readPolicyVersion() {
   if (!hit?.[1]) throw new Error('POLICY_VERSION не найден в packages/shared/src/constants.ts');
   return hit[1];
 }
+
+function readOne(name) {
+  const hit = new RegExp(`\\b${name}\\s*=\\s*'([^']+)'`).exec(readFileSync(CONSTANTS, 'utf8'));
+  if (!hit?.[1]) throw new Error(`${name} не найден в packages/shared/src/constants.ts`);
+  return hit[1];
+}
+
+/**
+ * Task G (2026-10-29): согласие теперь это ПАРА версий (`privacy_version` + `terms_version`), и
+ * обе колонки NOT NULL. Фикстуре нужны все три значения: `version` остаётся агрегатом для
+ * старых читателей, пара — для серверной проверки.
+ */
+export function readLegalVersions() {
+  return {
+    policy: readOne('POLICY_VERSION'),
+    privacy: readOne('PRIVACY_VERSION'),
+    terms: readOne('TERMS_VERSION'),
+  };
+}

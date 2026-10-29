@@ -288,6 +288,13 @@
       "when": 1793210568635,
       "tag": "0040_mini_app_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793249047046,
+      "tag": "0041_task_g_mini_app",
+      "breakpoints": true
     }
   ]
 }

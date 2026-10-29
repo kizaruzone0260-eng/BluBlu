@@ -24,6 +24,7 @@ import {
   claimBindCode, claimHomeworkCallback, createBindCode, makeHomeworkCallback,
 } from './tokens.js';
 import { h, kindLabel } from './texts.js';
+import { legalStatus } from '../legal.js';
 import {
   eligibleMaterials, listDraftMaterials, pruneDraftMaterials, toggleDraftMaterial,
   HW_LIB_STATE, clearLibrarySession, type HwDraftMaterialRow,
@@ -1100,7 +1101,8 @@ async function showBindCode(
     await send(deps.api, chatId, h('tooManyGroups', actor.lang, { n: MAX_GROUPS }));
     return;
   }
-  const code = await createBindCode(deps.db, ownerId);
+  const bind = await createBindCode(deps.db, ownerId);
+  const code = bind.code;
   const draft = await getDraft(deps.db, draftId, ownerId);
   const buttons: Btn[][] = [];
   if (draft) buttons.push([b(h('back', actor.lang), await cb(deps, ownerId, { a: 'bk', d: draft.id }))]);
@@ -1147,7 +1149,17 @@ export async function homeworkGroupBind(
     await send(deps.api, chatId, h('bindWrongAccount', fallback));
     return true;
   }
-  const claim = await claimBindCode(deps.db, code, senderId);
+  /*
+   * Task G: /bind is a product function, so it obeys the same legal gate as the private chat.
+   * The code itself can only be created by an accepted account, but a code minted before a
+   * version bump must not connect a group for someone who has not accepted the new documents.
+   */
+  const legal = await legalStatus(deps.db, senderId);
+  if (!legal.accepted) {
+    await send(deps.api, chatId, h('bindLegalRequired', fallback));
+    return true;
+  }
+  const claim = await claimBindCode(deps.db, code, senderId, chatId);
   if (!claim) {
     await send(deps.api, chatId, h('bindInvalid', fallback));
     return true;

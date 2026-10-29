@@ -737,7 +737,19 @@ export const chatWsTickets = pgTable('chat_ws_tickets', {
  */
 export const policyAcceptances = pgTable('policy_acceptances', {
   userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  /** Legacy aggregate tag (`POLICY_VERSION`). Kept so every pre-2026-10-29 reader keeps working. */
   version: text('version').notNull(),
+  /**
+   * Task G (2026-10-29): the two documents are accepted as one action but versioned separately,
+   * because a correction to one of them must re-ask only that one — and the record must say
+   * exactly what was agreed to, not merely "some policy".
+   */
+  privacyVersion: text('privacy_version').notNull(),
+  termsVersion: text('terms_version').notNull(),
+  /** UI language the person was reading at acceptance time; audit metadata, not a preference. */
+  locale: text('locale'),
+  /** Surface that recorded it: web | bot | mini | legacy (backfilled rows). */
+  context: text('context').notNull().default('legacy'),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -811,10 +823,22 @@ export const tgGroups = pgTable('tg_groups', {
 /** One-time code typed as `/bind CODE` in a group. Only the hash is stored. */
 export const tgBindTokens = pgTable('tg_bind_tokens', {
   tokenHash: text('token_hash').primaryKey(),
+  /**
+   * Task G: a public handle for polling the code's state from the Mini App. The hash cannot
+   * serve that role (it is the secret itself, only hashed on disk); this id says nothing about
+   * the code and is scoped to the owner on every read.
+   */
+  id: uuid('id').notNull().defaultRandom().unique(),
   ownerId: uuid('owner_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   usedAt: timestamp('used_at', { withTimezone: true }),
+  /**
+   * The group that actually spent the code. Written by the same atomic claim that sets
+   * `used_at`, so the Mini App can show WHICH real group was bound — and never has to trust a
+   * `chat_id` sent by the client.
+   */
+  usedChatId: text('used_chat_id'),
 }, (t) => [index('tg_bind_tokens_expiry_idx').on(t.expiresAt)]);
 
 /**
@@ -983,6 +1007,13 @@ export const tgMaterials = pgTable('tg_materials', {
   /** Where the original message still lives: `copyMessage` reads the file from here. */
   sourceChatId: text('source_chat_id'),
   sourceMessageId: bigint('source_message_id', { mode: 'number' }),
+  /**
+   * Task G (2026-10-29): key of the uploaded bytes in the server storage, for materials that
+   * arrived through the Mini App. Bot-era rows keep NULL: their only copy is Telegram's.
+   * The bytes exist so the file can be re-sent when Telegram's own copy disappears; they are
+   * deleted together with the material and with the account.
+   */
+  storageKey: text('storage_key'),
   status: tgMaterialStatusEnum('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

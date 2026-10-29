@@ -33,7 +33,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, acceptPolicy, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { CapturingApi } from '../../src/services/botApi.js';
@@ -1037,6 +1037,7 @@ suite('Telegram Mini App', () => {
         passwordHash: await hashPassword('Secret1234'), locale: 'ru', localeExplicit: true,
         profileCompletedAt: new Date(),
       }).returning();
+      await acceptPolicy(t.sql, student!.id);
       await t.db.insert(telegramLinks).values({ userId: student!.id, chatId: String(studentChat) });
       await handleUpdate(deps, msg(studentChat, '/mini'));
       expect(lastCall(studentChat)?.text).toContain('только учителю');

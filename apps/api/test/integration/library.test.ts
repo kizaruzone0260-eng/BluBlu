@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { and, eq } from 'drizzle-orm';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, acceptPolicy, type TestDB } from './util.js';
 import {
   tgDraftMaterials, tgDrafts, tgGroups, tgMaterialGroups, tgMaterials, tgPublications,
   telegramLinks, users,
@@ -251,6 +251,7 @@ suite('telegram material library', () => {
       passwordHash: await hashPassword('Secret1234'),
       locale: 'ru', localeExplicit: true, profileCompletedAt: new Date(),
     }).returning();
+    await acceptPolicy(t.sql, stu!.id);
     await t.db.insert(telegramLinks).values([
       { userId: stu!.id, chatId: String(S_CHAT) },
       { userId: foreignId, chatId: String(F_CHAT) },

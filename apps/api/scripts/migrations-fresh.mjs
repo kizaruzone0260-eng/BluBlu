@@ -15,6 +15,7 @@
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -124,9 +125,63 @@ try {
        and c.confrelid = 'tg_materials'::regclass`;
   if (String(snapshotFk?.confdeltype) !== 'n') throw new Error('deleting a material must SET NULL, not cascade');
 
+  /*
+   * Task G (2026-10-29): an UPGRADE, not only a creation. 0041 adds columns to tables that
+   * already hold rows on a live server. Building the schema from zero creates those columns
+   * together with the tables and therefore proves nothing about the ALTERs. So: put the three
+   * touched tables back into their pre-0041 shape, insert a row that predates the migration,
+   * replay exactly the 0041 statements and check what they produced.
+   */
+  const upgradeUser = '00000000-0000-4000-8000-00000000a041';
+  await target.unsafe(`
+    alter table "policy_acceptances" drop column "privacy_version", drop column "terms_version",
+      drop column "locale", drop column "context";
+    alter table "tg_bind_tokens" drop column "id", drop column "used_chat_id";
+    alter table "tg_materials" drop column "storage_key";
+  `);
+  await target`
+    insert into users (id, role, name, last_name, email, password_hash, locale, locale_explicit, tz, created_at, profile_completed_at)
+    values (${upgradeUser}, 'teacher', 'Upgrade', 'Check', 'upgrade@check.local',
+            'not-a-real-hash', 'ru', true, 'Asia/Tashkent', now(), now())`;
+  await target`
+    insert into policy_acceptances (user_id, version, accepted_at)
+    values (${upgradeUser}, '2026-10-06', now())`;
+  await target`
+    insert into tg_bind_tokens (token_hash, owner_id, expires_at)
+    values ('upgrade-check-hash', ${upgradeUser}, now() + interval '30 minutes')`;
+
+  const file0041 = readFileSync(path.join(migrationsFolder, '0041_task_g_mini_app.sql'), 'utf8');
+  for (const statement of file0041.split('--> statement-breakpoint')) {
+    if (statement.trim()) await target.unsafe(statement);
+  }
+
+  const [upgraded] = await target`
+    select privacy_version, terms_version, context, locale
+      from policy_acceptances where user_id = ${upgradeUser}`;
+  if (upgraded?.privacy_version !== '2026-10-06' || upgraded?.terms_version !== '2026-10-06') {
+    throw new Error('0041 must backfill both document versions from the legacy version');
+  }
+  if (upgraded?.context !== 'legacy') throw new Error('0041 must mark backfilled rows as legacy');
+  if (upgraded?.locale !== null) throw new Error('0041 must not invent an acceptance locale');
+
+  const [bindUpgraded] = await target`
+    select id, used_chat_id from tg_bind_tokens where token_hash = 'upgrade-check-hash'`;
+  if (!bindUpgraded?.id) throw new Error('0041 must give an existing bind code a public id');
+  if (bindUpgraded?.used_chat_id !== null) throw new Error('an old bind code was never spent in a group');
+  const [bindUnique] = await target`
+    select count(*)::int as n from pg_indexes where indexname = 'tg_bind_tokens_id_unique'`;
+  if (bindUnique?.n !== 1) throw new Error('tg_bind_tokens.id must stay unique after the upgrade');
+
+  const [storageKey] = await target`
+    select is_nullable from information_schema.columns
+     where table_schema = 'public' and table_name = 'tg_materials' and column_name = 'storage_key'`;
+  if (storageKey?.is_nullable !== 'YES') {
+    throw new Error('tg_materials.storage_key must be nullable: bot-era rows have no bytes');
+  }
+
   console.log(`[migrations-fresh] ok: ${migrations[0].n} migrations, ${tables[0].n} tables, `
-    + `${required.length} required tables present, RLS on the library and guest tables, draft statuses and `
-    + `the snapshot key verified on a database created for this run`);
+    + `${required.length} required tables present, RLS on the library and guest tables, draft statuses, `
+    + `the snapshot key, and the 0041 upgrade replayed on a row that predates it`);
 } finally {
   await target.end({ timeout: 5 });
   const cleaner = postgres(adminUrl, { max: 1 });

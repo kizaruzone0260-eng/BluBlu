@@ -79,7 +79,8 @@ describe('языки: один порядок и один источник (ча
       .filter((f) => codeOnly(readFileSync(f, 'utf8')).includes('LANGUAGE_CHOICES'))
       .map(rel)
       .sort();
-    // сайдбар + мобильная шапка + входы/регистрация идут через Nav, профиль — своим селектом
-    expect(users).toEqual(['components/Nav.tsx', 'pages/Profile.tsx']);
+    // сайдбар + мобильная шапка + входы/регистрация идут через Nav, профиль — своим селектом,
+    // а переключатель Mini App (Task G) — тем же списком из shared, а не своей копией
+    expect(users).toEqual(['components/Nav.tsx', 'pages/Profile.tsx', 'pages/mini/controls.tsx']);
   });
 });

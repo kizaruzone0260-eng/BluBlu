@@ -14,14 +14,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { applyLocale } from '../i18n';
 import { DateTimeField } from '../components/DateTimeField';
+import { getThemeChoice } from '../lib/theme';
 import {
-  applyTelegramTheme, haptic, loadTelegramWebApp, miniApi, readMiniToken, resetMiniSdk,
+  applyMiniTheme, haptic, loadTelegramWebApp, miniApi, readMiniToken, resetMiniSdk,
   writeMiniToken,
   type MiniAuthResponse, type MiniBootstrap, type MiniDraft, type MiniDraftSummary,
-  type MiniFormatResponse, type MiniGroup, type MiniHistory as MiniHistoryDto,
+  type MiniFormatResponse, type MiniGroup, type MiniGroupHealth, type MiniHistory as MiniHistoryDto,
   type MiniMaterialHit, type MiniMaterialSnapshot,
-  type MiniPublication, type MiniPublishResponse, type TelegramWebApp,
+  type MiniPublication, type MiniPublishResponse, type MiniUploadResponse, type TelegramWebApp,
 } from '../lib/miniApp';
+import {
+  GroupHealthBadge, MiniConnectCard, MiniFrame, MiniLegalGate, MiniSettings, MiniUploader,
+  errorText,
+} from './mini/controls';
 
 type Phase = 'loading' | 'ready' | 'outside' | 'sdkFailed' | 'unlinked'
   | 'teacherOnly' | 'password' | 'error';
@@ -66,7 +71,8 @@ function bootMiniApp(): Promise<Boot> {
       wa.expand();
       wa.disableVerticalSwipes?.();
     } catch { /* older clients: the page still works */ }
-    applyTelegramTheme(wa);
+    // Task G: «System» follows Telegram's themeParams; an explicit Light/Dark wins over it.
+    applyMiniTheme(wa);
 
     // A token from this tab is tried first: an ordinary reload inside Telegram must not mint a
     // new session, and an unlinked account must lose it immediately (the server re-checks).
@@ -141,12 +147,13 @@ function useTelegramBack(wa: TelegramWebApp | null, handler: () => void, visible
 
 function useTelegramMain(
   wa: TelegramWebApp | null,
-  button: { text: string; enabled: boolean; onClick: () => void } | null,
+  button: { text: string; enabled: boolean; onClick: () => void; progress?: boolean } | null,
 ): void {
   const ref = useRef<() => void>(() => {});
   ref.current = button?.onClick ?? (() => {});
   const text = button?.text ?? '';
   const enabled = button?.enabled ?? false;
+  const progress = button?.progress ?? false;
   const visible = button !== null;
   useEffect(() => {
     const mb = wa?.MainButton;
@@ -157,12 +164,13 @@ function useTelegramMain(
       mb.setText(text);
       mb.onClick(cb);
       if (enabled) mb.enable(); else mb.disable();
+      if (progress) mb.showProgress?.(true); else mb.hideProgress?.();
       mb.show();
     } catch { /* ignore */ }
     return () => {
       try { mb.offClick(cb); mb.hide(); } catch { /* ignore */ }
     };
-  }, [wa, visible, text, enabled]);
+  }, [wa, visible, text, enabled, progress]);
 }
 
 // ─── root ────────────────────────────────────────────────────────────────────
@@ -196,6 +204,19 @@ export default function Mini() {
 
   useEffect(() => { void run(); }, [run]);
 
+  /*
+   * Task G: inside Telegram «System» means the Telegram app theme, and Telegram announces a
+   * change with `themeChanged`. An explicit Light/Dark choice must not be overridden by it.
+   */
+  useEffect(() => {
+    if (!wa) return;
+    const onTheme = () => {
+      if (getThemeChoice() === 'system') applyMiniTheme(wa);
+    };
+    try { wa.onEvent?.('themeChanged', onTheme); } catch { /* older client */ }
+    return () => { try { wa.offEvent?.('themeChanged', onTheme); } catch { /* ignore */ } };
+  }, [wa]);
+
   const retry = useCallback(() => {
     retryBoot();
     void run();
@@ -204,6 +225,9 @@ export default function Mini() {
   const refreshBootstrap = useCallback(async () => {
     const r = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
     if (r.ok && r.data) { setBootstrap(r.data); setHomeError(''); return; }
+    // The documents changed under this session: only a fresh bootstrap carries the gate's
+    // current versions, and every functional request will keep answering 403 until accepted.
+    if (r.error === 'policyRequired') { retry(); return; }
     if (r.error === 'sessionExpired' || r.error === 'miniNotLinked') { retry(); return; }
     setHomeError(r.error || 'serverError');
   }, [retry]);
@@ -302,17 +326,28 @@ export default function Mini() {
     );
   }
 
+  /*
+   * Task 5: the gate is decided by the server's `legal`, not by a local flag. Until it says
+   * «accepted», no functional view is rendered at all — and the server refuses the same
+   * requests with 403 `policyRequired`, so a direct link cannot jump ahead.
+   */
+  if (bootstrap.legal?.accepted === false) {
+    return <MiniLegalGate wa={wa} bootstrap={bootstrap} onRefresh={() => void refreshBootstrap()} />;
+  }
+
   if (view.kind === 'groups') {
     return (
       <MiniGroups wa={wa} bootstrap={bootstrap} onHome={goHome}
-        onNew={() => void startNew()} busy={homeBusy} actionError={homeError} />
+        onNew={() => void startNew()} busy={homeBusy} actionError={homeError}
+        onGroupsChanged={() => void refreshBootstrap()} />
     );
   }
 
   if (view.kind === 'materials') {
     return (
       <MiniMaterials wa={wa} bootstrap={bootstrap} onHome={goHome}
-        onNew={() => void startNew()} busy={homeBusy} actionError={homeError} />
+        onNew={() => void startNew()} busy={homeBusy} actionError={homeError}
+        onLibraryChanged={() => void refreshBootstrap()} />
     );
   }
 
@@ -329,6 +364,7 @@ export default function Mini() {
         initial={view.draft}
         initialStep={view.step}
         onExit={() => { setView({ kind: 'home' }); void refreshBootstrap(); }}
+        onLibraryChanged={() => void refreshBootstrap()}
         onPublished={(draft, resultKind) => {
           setView({ kind: 'result', draft, resultKind });
           void refreshBootstrap();
@@ -352,6 +388,7 @@ export default function Mini() {
 
   return (
     <MiniHome
+      wa={wa}
       bootstrap={bootstrap}
       busy={homeBusy}
       error={homeError}
@@ -360,15 +397,6 @@ export default function Mini() {
       onRefresh={() => void refreshBootstrap()}
       onSection={(kind) => { setHomeError(''); setView({ kind }); }}
     />
-  );
-}
-
-/** Small shared shell: safe areas, max width, a brand line, one `<main>`. */
-function MiniFrame({ testid, children }: { testid: string; children: React.ReactNode }) {
-  return (
-    <div className="mini-app">
-      <main className="mini-screen" data-testid={testid}>{children}</main>
-    </div>
   );
 }
 
@@ -384,8 +412,9 @@ function bootErrorText(code: string, t: (key: string) => string): string {
 // ─── home ───────────────────────────────────────────────────────────────────
 
 function MiniHome({
-  bootstrap, busy, error, onNew, onOpen, onRefresh, onSection,
+  wa, bootstrap, busy, error, onNew, onOpen, onRefresh, onSection,
 }: {
+  wa: TelegramWebApp | null;
   bootstrap: MiniBootstrap;
   busy: boolean;
   error: string;
@@ -445,6 +474,8 @@ function MiniHome({
         <p className="card mini-note" role="status">{t('mini.noGroups')}</p>
       )}
 
+      <MiniSettings wa={wa} onLocaleChanged={onRefresh} />
+
       {drafts.length > 0 && (
         <section aria-labelledby="mini-drafts-title">
           <h2 id="mini-drafts-title">{t('mini.draftsTitle')}</h2>
@@ -464,18 +495,42 @@ function MiniHome({
 
 // ─── sections (Task F.1) ────────────────────────────────────────────────────
 
-/** Read-only truth about every group; the actual choice happens in step 1 of the wizard. */
-function MiniGroups({ wa, bootstrap, onHome, onNew, busy, actionError }: {
+/**
+ * Groups: the real list, the bot's REAL rights in each one, and the connect flow. A group is
+ * never painted as «connected» from a client guess — health comes from Bot API only.
+ */
+function MiniGroups({ wa, bootstrap, onHome, onNew, busy, actionError, onGroupsChanged }: {
   wa: TelegramWebApp | null;
   bootstrap: MiniBootstrap;
   onHome: () => void;
   onNew: () => void;
   busy: boolean;
   actionError: string;
+  onGroupsChanged: () => void;
 }) {
   const { t } = useTranslation();
   useTelegramBack(wa, onHome);
   const active = bootstrap.groups.filter((g) => g.status === 'active');
+  const [health, setHealth] = useState<Record<string, MiniGroupHealth>>({});
+  const [healthBusy, setHealthBusy] = useState(false);
+  const [healthError, setHealthError] = useState('');
+
+  const loadHealth = useCallback(async () => {
+    setHealthBusy(true); setHealthError('');
+    const r = await miniApi<{ groups: { id: string; health: MiniGroupHealth }[] }>('/api/mini/groups/health');
+    setHealthBusy(false);
+    if (!r.ok || !r.data) { setHealthError(r.error || 'serverError'); return; }
+    const map: Record<string, MiniGroupHealth> = {};
+    for (const g of r.data.groups) map[g.id] = g.health;
+    setHealth(map);
+  }, []);
+  useEffect(() => { void loadHealth(); }, [loadHealth]);
+
+  const onConnected = useCallback(() => {
+    void loadHealth();
+    onGroupsChanged();
+  }, [loadHealth, onGroupsChanged]);
+
   return (
     <MiniFrame testid="mini-groups">
       <header className="mini-head">
@@ -501,6 +556,7 @@ function MiniGroups({ wa, bootstrap, onHome, onNew, busy, actionError }: {
                     {' · '}{t('mini.groupMaterials', { n: g.materialCount })}
                     {g.chatShort ? ` · ${g.chatShort}` : ''}
                   </small>
+                  {g.status === 'active' && <GroupHealthBadge health={health[g.id]} />}
                 </span>
                 <span className={`mini-badge ${g.status === 'active' ? 'mini-badge--sent' : 'mini-badge--failed'}`}>
                   {g.status === 'active' ? t('mini.groupStatusActive') : t('mini.groupStatusRemoved')}
@@ -510,7 +566,21 @@ function MiniGroups({ wa, bootstrap, onHome, onNew, busy, actionError }: {
           </ul>
         )}
 
+      <section className="mini-health-section" aria-labelledby="mini-health-title">
+        <div className="mini-head-inline">
+          <h2 id="mini-health-title">{t('mini.connectHealthTitle')}</h2>
+          <button type="button" className="ghost" data-testid="mini-groups-refresh"
+            disabled={healthBusy} onClick={() => void loadHealth()}>
+            {healthBusy ? t('mini.connectRefreshing') : t('mini.connectRefresh')}
+          </button>
+        </div>
+        <p className="muted">{t('mini.connectHealthHint')}</p>
+        {healthError && <p className="error" role="alert">{errorText(healthError, t, bootstrap)}</p>}
+      </section>
+
       <p className="muted">{t('mini.groupsHowTo')}</p>
+
+      <MiniConnectCard wa={wa} botUsername={bootstrap.bot.username} onConnected={onConnected} />
 
       <nav className="mini-nav">
         <button type="button" className="secondary" data-testid="mini-groups-home" onClick={onHome}>
@@ -524,14 +594,19 @@ function MiniGroups({ wa, bootstrap, onHome, onNew, busy, actionError }: {
   );
 }
 
-/** The real library, searchable, with the one action the brief asks for: go create homework. */
-function MiniMaterials({ wa, bootstrap, onHome, onNew, busy, actionError }: {
+/**
+ * The real library, searchable, with the Task G upload panel. Uploading here creates a library
+ * row for the chosen groups; attaching it to homework happens in the wizard (or immediately,
+ * when the flow is entered from step 3).
+ */
+function MiniMaterials({ wa, bootstrap, onHome, onNew, busy, actionError, onLibraryChanged }: {
   wa: TelegramWebApp | null;
   bootstrap: MiniBootstrap;
   onHome: () => void;
   onNew: () => void;
   busy: boolean;
   actionError: string;
+  onLibraryChanged: () => void;
 }) {
   const { t } = useTranslation();
   useTelegramBack(wa, onHome);
@@ -539,6 +614,10 @@ function MiniMaterials({ wa, bootstrap, onHome, onNew, busy, actionError }: {
   const [items, setItems] = useState<MiniMaterialHit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reload, setReload] = useState(0);
+  const activeGroups = bootstrap.groups
+    .filter((g) => g.status === 'active')
+    .map((g) => ({ id: g.id, title: g.title }));
 
   useEffect(() => {
     let cancelled = false;
@@ -555,7 +634,12 @@ function MiniMaterials({ wa, bootstrap, onHome, onNew, busy, actionError }: {
       setItems(r.data.materials);
     }, query ? 250 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query]);
+  }, [query, reload]);
+
+  const onUploaded = (_result: MiniUploadResponse) => {
+    setReload((n) => n + 1);
+    onLibraryChanged();
+  };
 
   return (
     <MiniFrame testid="mini-materials">
@@ -568,6 +652,8 @@ function MiniMaterials({ wa, bootstrap, onHome, onNew, busy, actionError }: {
 
       {/* the draft action's failure is a different error from the library request's own */}
       {actionError && <p className="error" role="alert">{errorText(actionError, t, bootstrap)}</p>}
+
+      <MiniUploader wa={wa} bootstrap={bootstrap} groups={activeGroups} onUploaded={onUploaded} />
 
       <label htmlFor="mini-library-search">{t('mini.searchMaterials')}</label>
       <input id="mini-library-search" data-testid="mini-library-search" type="search"
@@ -689,13 +775,14 @@ function DraftRow({ draft, busy, onOpen }: { draft: MiniDraftSummary; busy: bool
 // ─── wizard ─────────────────────────────────────────────────────────────────
 
 function MiniWizard({
-  wa, bootstrap, initial, initialStep, onExit, onPublished,
+  wa, bootstrap, initial, initialStep, onExit, onLibraryChanged, onPublished,
 }: {
   wa: TelegramWebApp | null;
   bootstrap: MiniBootstrap;
   initial: MiniDraft;
   initialStep?: Step;
   onExit: () => void;
+  onLibraryChanged: () => void;
   onPublished: (draft: MiniDraft, kind: MiniPublishResponse['kind']) => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -723,6 +810,14 @@ function MiniWizard({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [cancelArmed, setCancelArmed] = useState(false);
+  const [materialReload, setMaterialReload] = useState(0);
+  // Task G, step 4: an AI run must never overwrite the teacher's text on failure. The text
+  // before the call is kept for «restore»; the server's plain fallback is offered separately.
+  const [formatBusy, setFormatBusy] = useState<'ai' | 'manual' | null>(null);
+  const [aiOff, setAiOff] = useState(!bootstrap.ai.remote);
+  const [aiBackup, setAiBackup] = useState<string | null>(null);
+  const [aiFallback, setAiFallback] = useState<string | null>(null);
+  const hasMainButton = Boolean(wa?.MainButton);
 
   const activeGroups = bootstrap.groups.filter((g) => g.status === 'active');
 
@@ -738,15 +833,23 @@ function MiniWizard({
   }, [onExit]);
 
   useTelegramBack(wa, goBack);
+  /*
+   * Task G: one primary action, not two. When the Telegram client gives us its MainButton, the
+   * page does NOT draw another Next/Publish at the bottom — that duplicate was exactly the
+   * defect the brief names. The in-page bar then keeps only Back; without MainButton (old
+   * clients) the page shows its own primary button instead.
+   */
   useTelegramMain(wa, step === 5
     ? {
-        text: t('mini.publishCount', { n: groupIds.length }),
+        text: busy ? t('mini.publishing') : t('mini.publishCount', { n: groupIds.length }),
         enabled: confirmChecked && !busy,
+        progress: busy,
         onClick: () => { void publish(); },
       }
     : {
-        text: t('mini.next'),
+        text: busy ? t('mini.saving') : t('mini.next'),
         enabled: nextEnabled(step, groupIds, busy, materialReason),
+        progress: busy,
         onClick: () => { void goNext(); },
       });
 
@@ -809,17 +912,29 @@ function MiniWizard({
   };
 
   const formatText = async (mode: 'ai' | 'manual') => {
-    setBusy(true); setError(''); setNotice('');
+    if (busy) return;
+    setBusy(true); setFormatBusy(mode); setError(''); setNotice(''); setAiFallback(null);
+    // The exact text before an AI call is preserved: on any failure the field is untouched,
+    // and after a success the teacher can put her own wording back with one tap.
+    if (mode === 'ai') setAiBackup(text);
     const r = await miniApi<MiniFormatResponse>(`/api/mini/drafts/${draft.id}/format`, {
       method: 'POST', body: { mode },
     });
-    setBusy(false);
+    setBusy(false); setFormatBusy(null);
     if (!r.ok || !r.data) {
-      if (r.status === 502 && r.data && typeof r.data.fallback === 'string') {
-        // The server did NOT save anything on an AI failure. The plain version is offered for
-        // the teacher to accept or edit, and it will be saved only by her next explicit step.
-        setText(r.data.fallback);
-        setNotice(t('mini.noticeAiFailed'));
+      if (mode === 'ai' && r.status === 502 && r.data && typeof r.data.fallback === 'string') {
+        // The server did NOT save anything on an AI failure. The teacher's text stays exactly
+        // as it was; the plain version is offered below and is applied only by an explicit tap.
+        setAiFallback(r.data.fallback);
+        setNotice(t('mini.aiFailedKeep'));
+        haptic(wa, 'error');
+        return;
+      }
+      if (mode === 'ai' && r.error === 'aiUnavailable') {
+        // Configured in the UI but unavailable on the server right now: say so, keep the draft,
+        // keep manual formatting available.
+        setAiOff(true);
+        setNotice(t('mini.aiStatusOff'));
         return;
       }
       setError(r.error || 'serverError');
@@ -830,8 +945,35 @@ function MiniWizard({
     setWarnings(r.data.warnings);
     setQuestions(r.data.questions);
     if (!title.trim()) setTitle(r.data.draft.title);
+    if (mode === 'manual') setAiBackup(null);
     setNotice(t('mini.noticeFormatted', { provider: r.data.provider || 'local' }));
     haptic(wa, 'success');
+  };
+
+  const useFallback = () => {
+    if (aiFallback === null) return;
+    setText(aiFallback);
+    setAiFallback(null);
+    setNotice(t('mini.aiFallbackUsed'));
+    haptic(wa, 'tap');
+  };
+
+  const restoreText = () => {
+    if (aiBackup === null) return;
+    setText(aiBackup);
+    setNotice(t('mini.aiRestored'));
+    haptic(wa, 'tap');
+  };
+
+  const onMaterialUploaded = (result: MiniUploadResponse) => {
+    if (result.draft) {
+      setDraft(result.draft);
+      setMaterialIds(result.draft.materials
+        .map((m) => m.materialId)
+        .filter((id): id is string => Boolean(id)));
+    }
+    setMaterialReload((n) => n + 1);
+    onLibraryChanged();
   };
 
   const toConfirm = async (): Promise<boolean> => {
@@ -907,7 +1049,7 @@ function MiniWizard({
       setMaterialReason(r.data.reason ?? '');
     }, materialQuery ? 250 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [step, materialQuery, draft.id]);
+  }, [step, materialQuery, draft.id, materialReload]);
 
   const toggleMaterial = (id: string) => {
     haptic(wa, 'tap');
@@ -1000,6 +1142,9 @@ function MiniWizard({
       {step === 3 && (
         <section className="mini-section" data-testid="mini-step-3">
           <p className="muted">{t('mini.materialsHint')}</p>
+          <MiniUploader wa={wa} bootstrap={bootstrap}
+            groups={draft.groups.map((g) => ({ id: g.id, title: g.title }))}
+            draftId={draft.id} onUploaded={onMaterialUploaded} />
           <label htmlFor="mini-material-search">{t('mini.searchMaterials')}</label>
           <input id="mini-material-search" data-testid="mini-material-search" type="search"
             value={materialQuery} onChange={(e) => setMaterialQuery(e.target.value)} />
@@ -1023,15 +1168,44 @@ function MiniWizard({
           <div className="row">
             <button type="button" className="secondary" data-testid="mini-format-manual"
               disabled={busy} onClick={() => void formatText('manual')}>
-              {busy ? t('mini.formatting') : t('mini.formatManual')}
+              {formatBusy === 'manual' ? t('mini.formatting') : t('mini.formatManual')}
             </button>
             <button type="button" className="secondary" data-testid="mini-format-ai"
-              disabled={busy || !bootstrap.ai.remote}
-              title={bootstrap.ai.remote ? undefined : t('mini.aiUnavailable')}
+              disabled={busy || aiOff}
+              title={aiOff ? t('mini.aiStatusOff') : undefined}
               onClick={() => void formatText('ai')}>
-              {t('mini.formatAi')}
+              {formatBusy === 'ai' ? t('mini.aiProgress') : t('mini.formatAi')}
             </button>
           </div>
+
+          {/* Honest availability, not a silently disabled button: the teacher always knows
+              whether AI is configured and that manual text works regardless. */}
+          <p className={aiOff ? 'mini-notice' : 'muted mini-ai-status'}
+            role="status" data-testid="mini-ai-status">
+            {aiOff ? t('mini.aiStatusOff') : t('mini.aiStatusOn')}
+          </p>
+          {formatBusy === 'ai' && (
+            <p className="muted" role="status" data-testid="mini-ai-progress">{t('mini.aiProgress')}</p>
+          )}
+          {aiFallback !== null && (
+            <div className="mini-ai-fallback" role="note" data-testid="mini-ai-fallback">
+              <p>{t('mini.aiFailedKeep')}</p>
+              <p className="muted">{t('mini.aiNoAutoRetry')}</p>
+              <pre className="mini-fallback-text">{aiFallback}</pre>
+              <div className="row">
+                <button type="button" className="secondary" data-testid="mini-ai-use-fallback"
+                  onClick={useFallback}>{t('mini.aiUseFallback')}</button>
+                {aiBackup !== null && (
+                  <button type="button" className="ghost" data-testid="mini-ai-restore"
+                    onClick={restoreText}>{t('mini.aiRestore')}</button>
+                )}
+              </div>
+            </div>
+          )}
+          {aiBackup !== null && aiFallback === null && (
+            <button type="button" className="ghost mini-ai-restore" data-testid="mini-ai-restore"
+              onClick={restoreText}>{t('mini.aiRestore')}</button>
+          )}
 
           <label htmlFor="mini-text">{t('mini.finalTextLabel')}</label>
           <textarea id="mini-text" data-testid="mini-text" rows={10} value={text}
@@ -1070,18 +1244,21 @@ function MiniWizard({
         </section>
       )}
 
-      <nav className="mini-nav" aria-label={t('mini.navigation')}>
+      <nav className={`mini-nav${hasMainButton ? ' mini-nav--single' : ''}`}
+        aria-label={t('mini.navigation')}>
         <button type="button" className="secondary" data-testid="mini-back" disabled={busy} onClick={goBack}>
           {t('mini.back')}
         </button>
-        {step < 5 && (
+        {/* The Telegram MainButton is the primary action whenever it exists; drawing a second
+            identical button here would be the duplication the brief forbids. */}
+        {!hasMainButton && step < 5 && (
           <button type="button" data-testid="mini-next"
             disabled={busy || !nextEnabled(step, groupIds, busy, materialReason)}
             onClick={() => void goNext()}>
             {busy ? t('mini.saving') : t('mini.next')}
           </button>
         )}
-        {step === 5 && (
+        {!hasMainButton && step === 5 && (
           <button type="button" data-testid="mini-publish"
             disabled={busy || !confirmChecked}
             onClick={() => void publish()}>
@@ -1324,30 +1501,4 @@ function PublicationRow({ publication }: { publication: MiniPublication }) {
 function PubBadge({ status }: { status: MiniPublication['status'] }) {
   const { t } = useTranslation();
   return <span className={`mini-badge mini-badge--${status}`}>{t(`mini.pubStatus.${status}`)}</span>;
-}
-
-// ─── codes ─────────────────────────────────────────────────────────────────
-
-function errorText(code: string, t: (key: string, vars?: Record<string, unknown>) => string, bootstrap?: MiniBootstrap): string {
-  const limits = bootstrap?.limits;
-  switch (code) {
-    case 'networkError': return t('mini.errorNetwork');
-    case 'tooManyRequests': return t('mini.errorRate');
-    case 'groupsRequired': return t('mini.errorGroups');
-    case 'tooManyLinks': return t('mini.errorTooManyLinks', { n: limits?.links ?? 5 });
-    case 'tooManyMaterials':
-    case 'tooManyGroups': return t('mini.errorTooManyMaterials', { n: limits?.materials ?? 8 });
-    case 'materialNotAllowed': return t('mini.errorMaterials');
-    case 'groupNotAllowed': return t('mini.errorGroups');
-    case 'draftLocked': return t('mini.errorLocked');
-    case 'emptyHomework': return t('mini.errorEmpty');
-    case 'notReady': return t('mini.errorNotReady');
-    case 'aiUnavailable': return t('mini.aiUnavailable');
-    case 'invalidInput':
-    case 'invalidLink': return t('mini.errorInvalidLink');
-    case 'serverError': return t('mini.errorGeneric');
-    case 'miniUnavailable': return t('mini.errorUnavailable');
-    case 'sessionExpired': return t('mini.errorExpired');
-    default: return t('mini.errorGeneric');
-  }
 }
