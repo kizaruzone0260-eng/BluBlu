@@ -60,11 +60,30 @@ test.describe.serial('гостевая ссылка на урок (2026-10-28, �
   test.afterAll(async () => { await api?.dispose(); });
 
   async function teacherView(browser: Browser): Promise<View> {
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const ctx = await browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await loginUi(page, stack.teacherEmail, stack.teacherPassword);
     await page.goto(`/lesson?classId=${classId}`);
     await expect(page.getByTestId('lesson-bar')).toBeVisible({ timeout: 25_000 });
+    /*
+     * Войти в комнату, а не остаться на проверке устройств: `lesson-bar` есть и до входа.
+     * Первый прогон этой ветки в CI (run 40849751562) упал ровно на этом: гость был одобрен
+     * и подключён, но учитель стоял на «Войти в урок», дорожек в комнате не было, и пустой
+     * `guest-videos` законно оставался скрытым. Тот же вход, что в zz-camera: проверка
+     * устройств, «Войти в урок», своя плитка с ненулевыми размерами.
+     */
+    if (media) {
+      await page.getByTestId('check-devices').click();
+      await expect(page.getByTestId('join-lesson')).toBeEnabled({ timeout: 20_000 });
+      await page.getByTestId('join-lesson').click();
+      await expect(async () => {
+        const dims = await page.evaluate(() => {
+          const v = document.querySelector('.videos [data-local="1"] video') as HTMLVideoElement | null;
+          return v ? [v.videoWidth, v.clientWidth, v.clientHeight] : [0, 0, 0];
+        });
+        expect(dims[0] > 0 && dims[1] > 0 && dims[2] > 0, 'учитель публикует свою камеру').toBeTruthy();
+      }).toPass({ timeout: 30_000 });
+    }
     return { ctx, page };
   }
 
@@ -131,7 +150,7 @@ test.describe.serial('гостевая ссылка на урок (2026-10-28, �
       const closed = g.getByTestId('guest-closed');
       if (media) {
         await expect(approved, 'одобренный гость получает комнату').toBeVisible({ timeout: 40_000 });
-        await expect(g.getByTestId('guest-videos')).toBeVisible();
+        await expect(g.getByTestId('guest-videos'), 'гость видит плитки комнаты').toBeVisible({ timeout: 20_000 });
       } else {
         await expect(approved.or(closed), 'одобрение доходит до гостя и без медиасервера').toBeVisible({ timeout: 40_000 });
       }

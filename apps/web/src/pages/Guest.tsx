@@ -72,11 +72,20 @@ export default function Guest() {
   const roomRef = useRef<Room | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const elsRef = useRef<Map<string, HTMLElement>>(new Map());
+  /*
+   * Дорожки, пришедшие до того, как сетка попала в DOM. LiveKit подписывает на уже
+   * опубликованные треки ВО ВРЕМЯ `room.connect()`, то есть когда фаза ещё `connecting`,
+   * а `guest-videos` не смонтирован; раньше такой `TrackSubscribed` терялся навсегда, и
+   * гость видел пустую сетку (первый прогон в CI с медиасервером, run 40849751562).
+   * Копим их здесь и вставляем, когда сетка появляется.
+   */
+  const pendingRef = useRef<Map<string, { el: HTMLMediaElement; label: string }>>(new Map());
   const resumedRef = useRef(false);
 
   useEffect(() => { document.title = t('guest.title'); }, [t]);
 
   const clearGrid = useCallback(() => {
+    pendingRef.current.clear();
     gridRef.current?.replaceChildren();
     elsRef.current.clear();
   }, []);
@@ -87,13 +96,12 @@ export default function Guest() {
   }, []);
 
   const removeMedia = (k: string) => {
+    pendingRef.current.delete(k);
     const el = elsRef.current.get(k);
     if (el) { el.remove(); elsRef.current.delete(k); }
   };
 
-  const putMedia = (k: string, el: HTMLMediaElement, label: string) => {
-    const grid = gridRef.current;
-    if (!grid) return;
+  const mountMedia = (k: string, el: HTMLMediaElement, label: string, grid: HTMLDivElement) => {
     removeMedia(k);
     const wrapper = document.createElement('div');
     wrapper.dataset.key = k;
@@ -107,6 +115,22 @@ export default function Guest() {
     grid.appendChild(wrapper);
     elsRef.current.set(k, wrapper);
   };
+
+  const putMedia = (k: string, el: HTMLMediaElement, label: string) => {
+    const grid = gridRef.current;
+    if (!grid) { pendingRef.current.set(k, { el, label }); return; }
+    mountMedia(k, el, label, grid);
+  };
+
+  // Сетка смонтирована — отдаём ей всё, что пришло во время подключения.
+  useEffect(() => {
+    if (phase !== 'viewing') return;
+    const grid = gridRef.current;
+    if (!grid) return;
+    for (const [k, { el, label }] of pendingRef.current) mountMedia(k, el, label, grid);
+    pendingRef.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   const connect = useCallback(async (guestToken: string) => {
     setPhase('connecting');
