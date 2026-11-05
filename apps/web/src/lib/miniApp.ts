@@ -1,17 +1,29 @@
 /**
  * Task F (2026-10-28): the Telegram Mini App client plumbing.
+ * Task G.2 (2026-11-04): тот же слой умеет теперь и браузерный вход — см. `ensureSdk`,
+ * `signInWithPassword` и `packages/shared/src/miniLaunch.ts`.
  *
  * Three separate things live here, and each has one reason:
- *  • the SDK loader — the official `telegram-web-app.js` is injected at runtime, because the
- *    strict CSP of every other page (`script-src 'self'`) must stay strict; only the `/mini`
- *    response widens it (see apps/api/src/app.ts, MINI_APP_CSP);
+ *  • the SDK loader — the official `telegram-web-app.js` is placed in `<head>` by the server for
+ *    the `/mini` document (only that response widens CSP; see MINI_APP_CSP in apps/api/src/app.ts).
+ *    The client only OBSERVES it with a bounded budget: the script's state is no longer a verdict,
+ *    and the app starts without it.
  *  • the session — a limited Mini App token kept in sessionStorage and sent as a Bearer header.
- *    No cookies: the regular web session must not be reachable from a Telegram webview, and a
- *    webview reload should keep the teacher's place for a working day, not forever;
+ *    No cookies on the Mini App calls: the token is minted either from verified initData or from
+ *    an already verified BluBlu web session, and a webview reload should keep the teacher's place
+ *    for a working day, not forever;
  *  • the DTOs — a mirror of `services/homework/mini.ts` with no group chat ids and no message
  *    ids, because the server never sends them to this surface.
  */
 
+import {
+  loginSchema,
+  readInitData,
+  SDK_FIRST_TIMEOUT_MS, SDK_MAX_ATTEMPTS, SDK_RETRY_TIMEOUT_MS,
+  TELEGRAM_SDK_URL,
+  telegramBridgePresent,
+  type SdkState,
+} from '@klass/shared';
 import { applyTheme, getThemeChoice, type ThemeChoice } from './theme';
 
 export type MiniDraftStatus =
@@ -173,15 +185,33 @@ export interface MiniApiResult<T> {
 }
 
 const TOKEN_KEY = 'klass_mini_token';
+/** Task G.2: сессия помнит, из какой она двери — tg или web. Это подсказка интерфейсу (что
+ *  показать при истечении: «перезапусти из Telegram» или «войди заново»), а не доказательство
+ *  прав: сервер смотрит в собственную подпись токена, а не сюда. */
+const SURFACE_KEY = 'klass_mini_surface';
+
+export type MiniSurface = 'tg' | 'web';
 
 export function readMiniToken(): string | null {
   try { return sessionStorage.getItem(TOKEN_KEY); } catch { return null; }
 }
 
-export function writeMiniToken(token: string | null): void {
+export function readMiniSurface(): MiniSurface | null {
   try {
-    if (token) sessionStorage.setItem(TOKEN_KEY, token);
-    else sessionStorage.removeItem(TOKEN_KEY);
+    const value = sessionStorage.getItem(SURFACE_KEY);
+    return value === 'tg' || value === 'web' ? value : null;
+  } catch { return null; }
+}
+
+export function writeMiniToken(token: string | null, surface: MiniSurface = 'tg'): void {
+  try {
+    if (token) {
+      sessionStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(SURFACE_KEY, surface);
+    } else {
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(SURFACE_KEY);
+    }
   } catch { /* private mode: the session simply will not survive a reload */ }
 }
 
@@ -339,45 +369,206 @@ declare global {
   interface Window { Telegram?: { WebApp?: TelegramWebApp } }
 }
 
-export interface SdkLoad {
+export interface SdkOutcome {
+  /** что случилось со скриптом — НЕ вердикт «приложение нельзя показывать» */
+  state: SdkState;
   wa: TelegramWebApp | null;
-  /** the script itself could not be fetched — a different failure from «opened outside Telegram» */
-  failed: boolean;
+  /** сколько заходов сделано; видно в тесте «не бесконечный ли retry» */
+  attempts: number;
 }
 
-let sdkPromise: Promise<SdkLoad> | null = null;
+let sdkPromise: Promise<SdkOutcome> | null = null;
+
+/** Тег SDK, который сервер поставил в `<head>` документа `/mini` (Task G.2). */
+function existingSdkTag(): HTMLScriptElement | null {
+  return document.querySelector<HTMLScriptElement>(`script[src^="${TELEGRAM_SDK_URL}"]`);
+}
+
+function webApp(): TelegramWebApp | null {
+  return window.Telegram?.WebApp ?? null;
+}
 
 /**
- * Load the official SDK once per page. Timeout is deliberate: a captive school wifi can leave a
- * script request hanging, and the page must then say so instead of showing an endless spinner.
+ * Один заход: дождаться тега из `<head>` (или вставить свой) с таймаутом.
+ * `blocked` — скрипт не запустился (CSP, ошибка сети): повторять бессмысленно, это детерминизм.
+ * `timeout` — ответа нет: это единственная ветка, где второй и третий заход что-то решают.
  */
-export function loadTelegramWebApp(timeoutMs = 6_000): Promise<SdkLoad> {
-  sdkPromise ??= new Promise<SdkLoad>((resolve) => {
-    const existing = window.Telegram?.WebApp;
-    if (existing) { resolve({ wa: existing, failed: false }); return; }
-    let done = false;
-    let timer = 0;
-    const finish = (result: SdkLoad) => {
-      if (done) return;
-      done = true;
+function oneSdkAttempt(timeoutMs: number, reuse: boolean): Promise<'ready' | 'blocked' | 'timeout'> {
+  return new Promise((resolve) => {
+    if (webApp()) { resolve('ready'); return; }
+    let settled = false;
+    let node = reuse ? existingSdkTag() : null;
+    const finish = (state: 'ready' | 'blocked' | 'timeout') => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timer);
-      resolve(result);
+      node?.removeEventListener('load', onLoad);
+      node?.removeEventListener('error', onError);
+      resolve(state);
     };
-    timer = window.setTimeout(() => finish({ wa: window.Telegram?.WebApp ?? null, failed: !window.Telegram?.WebApp }), timeoutMs);
-    const script = document.createElement('script');
-    script.src = 'https://telegram.org/js/telegram-web-app.js';
-    script.async = true;
-    script.onload = () => finish({ wa: window.Telegram?.WebApp ?? null, failed: false });
-    script.onerror = () => finish({ wa: null, failed: true });
-    document.head.appendChild(script);
+    const onLoad = () => finish(webApp() ? 'ready' : 'blocked');
+    const onError = () => finish('blocked');
+    const timer = window.setTimeout(() => finish('timeout'), timeoutMs);
+    if (!node) {
+      node = document.createElement('script');
+      node.src = TELEGRAM_SDK_URL;
+      node.async = true;
+      document.head.appendChild(node);
+    }
+    node.addEventListener('load', onLoad);
+    node.addEventListener('error', onError);
+    // тег из `<head>` мог успеть исполниться ДО этой подписки: проверяем ещё раз
+    if (webApp()) { finish('ready'); return; }
+    /*
+     * И наоборот: отложенный тег исполняется раньше нашего модуля, поэтому на уже догруженной
+     * странице события больше не будет никогда. Ждать тогда 4 секунды и показать «нет соединения»
+     * вместо честного «скрипт не запустился» — значит соврать о причине.
+     */
+    if (reuse && document.readyState === 'complete') finish('blocked');
   });
+}
+
+/**
+ * SDK: один промис на страницу, максимум `SDK_MAX_ATTEMPTS` заходов и ни одного бесконечного
+ * повтора. docstring Task G.2 в `packages/shared/src/miniLaunch.ts` объясняет, почему состояние
+ * скрипта больше не равно фатальному экрану.
+ */
+export function ensureSdk(): Promise<SdkOutcome> {
+  sdkPromise ??= (async (): Promise<SdkOutcome> => {
+    const current = webApp();
+    if (current) return { state: 'ready', wa: current, attempts: 0 };
+    let attempts = 0;
+    for (let i = 0; i < SDK_MAX_ATTEMPTS; i += 1) {
+      attempts += 1;
+      // первый заход ждёт тег из `<head>`, повторные вставляют свой: мёртвый узел не «очнётся»
+      const outcome = await oneSdkAttempt(
+        i === 0 ? SDK_FIRST_TIMEOUT_MS : SDK_RETRY_TIMEOUT_MS,
+        i === 0,
+      );
+      if (outcome === 'ready') return { state: 'ready', wa: webApp(), attempts };
+      // блокировка детерминирована: второй заход даст ровно тот же отказ
+      if (outcome === 'blocked') return { state: 'blocked', wa: null, attempts };
+    }
+    // сюда доходит только таймаут: сеть молчала трижды
+    return { state: 'timeout', wa: null, attempts };
+  })();
   return sdkPromise;
 }
 
-/** Retry after a failed SDK load or an expired session. */
+/** То же, что было, но честно: сбрасывается и промис, и мёртвые узлы, чтобы «Try again» был
+ *  реальным повтором, а не возвратом того же отказа. */
 export function resetMiniSdk(): void {
   sdkPromise = null;
+  for (const node of Array.from(document.querySelectorAll<HTMLScriptElement>(`script[src^="${TELEGRAM_SDK_URL}"]`))) {
+    if (node.dataset.miniRetry === '1') node.remove();
+    else node.dataset.miniRetry = '1';
+  }
 }
+
+/** Есть ли у клиента WebApp-мост (признаки, а не user-agent). */
+export function hasTelegramBridge(): boolean {
+  return telegramBridgePresent(window as unknown as Parameters<typeof telegramBridgePresent>[0]);
+}
+
+/** Адрес запуска: подписанный `initData` может быть во фрагменте (как делает официальный SDK)
+ *  или в query. readInitData из общего пакета — единственная реализация этого разбора. */
+export function initDataFromUrl(): string | null {
+  return readInitData({ hash: window.location.hash, search: window.location.search });
+}
+
+// ─── Browser mode: обычная авторизация BluBlu, тот же mini-токен ─────────────
+
+/**
+ * Вход для браузерной двери.
+ *
+ * Никакой второй системы: `/api/auth/login` — ровно тот же маршрут, что у веб-приложения, с тем
+ * же `loginSchema` (одинаковые правила и одинаковый ответ), а `/api/mini/web/auth` меняет
+ * проверенную веб-сессию на ограниченный токен Mini App. Сервер сам решает, кто вошёл; клиент не
+ * передаёт ни user id, ни роль, ни «surface».
+ *
+ * Пароль нигде не сохраняется — только access-токен в памяти страницы (он короткоживущий, а
+ * переживает перезагрузку refresh-cookie через `/api/auth/refresh`, то есть штатным механизмом).
+ * fetch здесь свой, а не `lib/api.ts`: страница `/mini` стоит вне приложения (без его глобальных
+ * слушателей авторизации и без его чанков), и тащить их в standalone-экран было бы второй
+ * реализацией уже на уровне клиента.
+ */
+export async function signInWithPassword(email: string, password: string): Promise<MiniApiResult<MiniAuthResponse>> {
+  const parsed = loginSchema.safeParse({ email, password });
+  if (!parsed.success) return { ok: false, status: 400, data: null, error: 'invalidInput' };
+  let accessToken = '';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email: parsed.data.email, password: parsed.data.password }),
+    });
+    const body = (await res.json().catch(() => null)) as { accessToken?: string; error?: string } | null;
+    if (!res.ok || !body?.accessToken) {
+      return { ok: false, status: res.status, data: null, error: body?.error ?? 'serverError' };
+    }
+    accessToken = body.accessToken;
+  } catch {
+    return { ok: false, status: 0, data: null, error: 'networkError' };
+  }
+  webAccessToken = accessToken;
+  try {
+    const res = await fetch('/api/mini/web/auth', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}` },
+      credentials: 'omit',
+    });
+    const data = (await res.json().catch(() => null)) as MiniAuthResponse | null;
+    if (!res.ok || !data?.token) {
+      return { ok: false, status: res.status, data: null, error: data ? 'serverError' : 'networkError' };
+    }
+    writeMiniToken(data.token, 'web');
+    return { ok: true, status: res.status, data, error: '' };
+  } catch {
+    return { ok: false, status: 0, data: null, error: 'networkError' };
+  }
+}
+
+/** Access-токен этой страницы (память, не хранилище). */
+let webAccessToken: string | null = null;
+
+/**
+ * Продлить браузерную сессию штатным способом: refresh-cookie → новый access → новый mini-токен.
+ * Отдельная функция потому, что перезагрузка страницы убивает память, а cookie жив: человек
+ * должен вернуться к работе, а не к форме входа посреди урока.
+ */
+export async function renewWebSession(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as { accessToken?: string } | null;
+    if (!body?.accessToken) return false;
+    webAccessToken = body.accessToken;
+    const mint = await fetch('/api/mini/web/auth', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${body.accessToken}` },
+      credentials: 'omit',
+    });
+    const data = (await mint.json().catch(() => null)) as MiniAuthResponse | null;
+    if (!mint.ok || !data?.token) return false;
+    writeMiniToken(data.token, 'web');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Выйти: токен Mini App убирается всегда, серверная сессия — если до неё удалось достучаться. */
+export async function signOutFromMini(): Promise<void> {
+  const token = webAccessToken;
+  writeMiniToken(null);
+  webAccessToken = null;
+  if (!token) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include', headers: { authorization: `Bearer ${token}` } });
+  } catch { /* локальный выход уже состоялся */ }
+}
+
 
 export const TELEGRAM_THEME_VARS = [
   '--tg-bg', '--tg-bg-2', '--tg-text', '--tg-hint', '--tg-link', '--tg-button', '--tg-button-text',

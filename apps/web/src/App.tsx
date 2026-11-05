@@ -52,8 +52,13 @@ export const useAuth = () => useContext(AuthCtx);
  * Telegram Mini App, часть F 2026-10-28). Держится списком, а не строкой в ветке:
  * `apps/api/test/unit/spa-routes.test.ts` складывает его с `<Route path=…>` и требует
  * равенства с серверным списком SPA-маршрутов.
+ *
+ * Task G.2 (2026-11-04): `/web` — веб-дверь того же Mini App (тот же экран, та же бизнес-логика,
+ * только вход обычный). Отдельный путь нужен ровно для одного: клиент, который не даёт
+ * WebApp-мост, обязан получать работу, а не сообщение о несовместимости, и документ этой двери
+ * намеренно не тянет чужой скрипт (см. isMiniAppPath в apps/api/src/app.ts).
  */
-const STANDALONE_PATHS = ['/guest', '/mini'];
+const STANDALONE_PATHS = ['/guest', '/mini', '/web'];
 
 function tryRestoreSession(): Promise<void> {
   // no access token in memory → attempt cookie refresh once at boot.
@@ -150,7 +155,9 @@ export default function App() {
       <ErrorBoundary>
         <TitleManager />
         <Suspense fallback={<div className="container muted">…</div>}>
-          {standalonePath === '/mini' ? <Mini /> : <Guest />}
+          {standalonePath === '/guest'
+            ? <Guest />
+            : <Mini entry={standalonePath === '/web' ? 'web' : 'mini'} />}
         </Suspense>
       </ErrorBoundary>
     );

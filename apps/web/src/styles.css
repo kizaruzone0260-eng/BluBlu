@@ -1417,6 +1417,25 @@ a.invite-tg:hover { border-color: var(--accent); }
   font-size: .86rem; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm);
   background: var(--warn-soft); color: var(--warn);
 }
+
+/*
+ * Task G.2 (2026-11-04): состояние запуска видно на экране.
+ *  • `.mini-mode` — строка «Browser mode / Telegram» под приветствием: у второй двери своя
+ *    сессия и свой выход, и человек обязан отличать одно от другого;
+ *  • `.mini-gate-actions` — ряд кнопок на экранах-дверях (войти / попробовать ещё / открыть
+ *    веб-версию). Раньше там была одна кнопка, и это был тупик.
+ */
+.mini-mode {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: .78rem; color: var(--mini-muted);
+}
+.mini-mode::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--accent);
+}
+.mini-signout { min-height: 32px; font-size: .78rem; margin: 0; }
+.mini-gate-actions { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.mini-gate-actions a { text-decoration: none; }
 .mini-warnings, .mini-questions {
   display: flex; flex-direction: column; gap: 4px;
   padding: var(--sp-3); border-radius: var(--r-md); font-size: .84rem;

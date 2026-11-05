@@ -10,33 +10,39 @@
  * and the exact groups before anything is sent. Publication is a separate, explicit tap; a
  * failed or unknown outcome is never retried automatically.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { resolveLaunch, telegramCapabilities, type LaunchDecision, type LaunchNotice } from '@klass/shared';
 import { applyLocale } from '../i18n';
 import { DateTimeField } from '../components/DateTimeField';
 import { getThemeChoice } from '../lib/theme';
 import {
-  applyMiniTheme, haptic, loadTelegramWebApp, miniApi, readMiniToken, resetMiniSdk,
-  writeMiniToken,
+  applyMiniTheme, ensureSdk, hasTelegramBridge, haptic, miniApi, readMiniSurface, readMiniToken,
+  renewWebSession, resetMiniSdk, signInWithPassword, signOutFromMini, writeMiniToken,
   type MiniAuthResponse, type MiniBootstrap, type MiniDraft, type MiniDraftSummary,
   type MiniFormatResponse, type MiniGroup, type MiniGroupHealth, type MiniHistory as MiniHistoryDto,
   type MiniMaterialHit, type MiniMaterialSnapshot,
-  type MiniPublication, type MiniPublishResponse, type MiniUploadResponse, type TelegramWebApp,
+  type MiniPublication, type MiniPublishResponse, type MiniSurface, type MiniUploadResponse,
+  type TelegramWebApp,
 } from '../lib/miniApp';
 import {
   GroupHealthBadge, MiniConnectCard, MiniFrame, MiniLegalGate, MiniSettingsMenu, MiniUploader,
   errorText,
 } from './mini/controls';
 
-type Phase = 'loading' | 'ready' | 'outside' | 'sdkFailed' | 'unlinked'
-  | 'teacherOnly' | 'password' | 'error';
+/**
+ * Task G.2 (2026-11-04): ни одна фаза не является тупиком. `signin` — это рабочий вход паролем,
+ * `unlinked`/`teacherOnly`/`password` объясняют, что сделать, и дают ту же дверь. Прежние
+ * `outside` («откройте из Telegram») и `sdkFailed` («Telegram did not load») удалены: они были не
+ * состоянием продукта, а перекладыванием ответственности на человека.
+ */
+type Phase = 'loading' | 'ready' | 'signin' | 'unlinked' | 'teacherOnly' | 'password' | 'error';
 
 type Boot =
-  | { kind: 'ready'; wa: TelegramWebApp | null; bootstrap: MiniBootstrap }
-  | { kind: 'outside' }
-  | { kind: 'sdkFailed' }
-  | { kind: 'unlinked' }
-  | { kind: 'teacherOnly' }
+  | { kind: 'ready'; wa: TelegramWebApp | null; bootstrap: MiniBootstrap; surface: MiniSurface }
+  | { kind: 'signin'; notice: LaunchNotice; detail: string; decision: LaunchDecision }
+  | { kind: 'unlinked'; notice: LaunchNotice; decision: LaunchDecision }
+  | { kind: 'teacherOnly'; notice: LaunchNotice; decision: LaunchDecision }
   | { kind: 'password' }
   | { kind: 'error'; code: string };
 
@@ -60,48 +66,96 @@ type View =
  */
 let bootPromise: Promise<Boot> | null = null;
 
-function bootMiniApp(): Promise<Boot> {
+/**
+ * Один прогон запуска. Порядок именно такой, потому что состояние скрипта — не вердикт:
+ *  1. `ensureSdk` — наблюдаем SDK с ограниченным бюджетом повторов;
+ *  2. `resolveLaunch` (общий пакет) — режим: telegram или browser. Решают подпись запуска и
+ *     наличие моста, а не «похож ли пользователь на мобильный»;
+ *  3. живущая сессия этой вкладки пробуется первой — перезагрузка (в Telegram ли, в браузере ли)
+ *     не должна минтить второй токен и не должна выбрасывать человека на форму входа;
+ *  4. Telegram mode — обмен подписанного initData; Browser mode — обычная форма входа.
+ *
+ * `entry === 'web'` запрещает Telegram-ветку вовсе: это явная веб-дверь, и использовать подпись
+ * чужого запуска на странице, которую человек открыл по ссылке, было бы сюрпризом.
+ */
+function bootMiniApp(entry: 'mini' | 'web'): Promise<Boot> {
   bootPromise ??= (async (): Promise<Boot> => {
-    const sdk = await loadTelegramWebApp();
-    if (sdk.failed && !sdk.wa) return { kind: 'sdkFailed' };
-    const wa = sdk.wa;
-    if (!wa || !wa.initData) return { kind: 'outside' };
-    try {
-      wa.ready();
-      wa.expand();
-      wa.disableVerticalSwipes?.();
-    } catch { /* older clients: the page still works */ }
+    const sdk = await ensureSdk();
+    const decision = resolveLaunch({
+      sdkState: sdk.state,
+      webApp: sdk.wa,
+      location: { hash: window.location.hash, search: window.location.search },
+      bridge: hasTelegramBridge(),
+      forceBrowser: entry === 'web',
+    });
+    const notice = decision.notice;
+    /*
+     * Важен не только «есть ли SDK», но и режим. В обычном браузере `telegram-web-app.js` тоже
+     * исполняется и объявляет `WebApp.MainButton` — просто показывать его негде: у браузера нет
+     * телеграм-панели. Страница, которая в этом случае спрятала бы свою собственную кнопку,
+     * лишила бы учителя главного действия. Поэтому объект Telegram передаётся дальше ТОЛЬКО
+     * в Telegram mode; в браузерном всё рисует HTML.
+     */
+    const wa = decision.mode === 'telegram' && sdk.state === 'ready' ? sdk.wa : null;
+    if (wa) {
+      try {
+        wa.ready();
+        wa.expand();
+        wa.disableVerticalSwipes?.();
+      } catch { /* older clients: the page still works */ }
+    }
     // Task G: «System» follows Telegram's themeParams; an explicit Light/Dark wins over it.
     applyMiniTheme(wa);
 
-    // A token from this tab is tried first: an ordinary reload inside Telegram must not mint a
-    // new session, and an unlinked account must lose it immediately (the server re-checks).
-    if (readMiniToken()) {
+    /** Живая сессия вкладки → готовый экран; null — сессию надо пересобирать с нуля. */
+    const withKeptSession = async (): Promise<Boot | null> => {
+      if (!readMiniToken()) return null;
       const kept = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
-      if (kept.ok && kept.data) return { kind: 'ready', wa, bootstrap: kept.data };
-      if (kept.error !== 'sessionExpired' && kept.error !== 'miniNotLinked'
-        && kept.error !== 'miniTeacherOnly' && kept.error !== 'passwordChangeRequired') {
-        return { kind: 'error', code: kept.error };
+      if (kept.ok && kept.data) {
+        return { kind: 'ready', wa, bootstrap: kept.data, surface: readMiniSurface() ?? 'tg' };
       }
+      const recoverable = kept.error === 'sessionExpired' || kept.error === 'miniNotLinked'
+        || kept.error === 'miniTeacherOnly' || kept.error === 'passwordChangeRequired';
+      if (!recoverable) return { kind: 'error', code: kept.error };
       writeMiniToken(null);
+      // Браузерная дверь: cookie жив → штатный refresh возвращает человека к работе, а не к входу.
+      // Никакого «автовхода» здесь нет: сервер сам решает, кому выдавать новую сессию.
+      if (decision.mode === 'browser' && await renewWebSession()) {
+        const again = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
+        if (again.ok && again.data) return { kind: 'ready', wa, bootstrap: again.data, surface: 'web' };
+        writeMiniToken(null);
+      }
+      return null;
+    };
+
+    const keptBoot = await withKeptSession();
+    if (keptBoot) return keptBoot;
+
+    if (decision.mode !== 'telegram' || !decision.initData) {
+      return { kind: 'signin', notice, detail: '', decision };
     }
 
     const auth = await miniApi<MiniAuthResponse>('/api/mini/auth', {
-      method: 'POST', body: { initData: wa.initData }, auth: false,
+      method: 'POST', body: { initData: decision.initData }, auth: false,
     });
     if (!auth.ok || !auth.data) {
-      if (auth.error === 'miniNotLinked') return { kind: 'unlinked' };
-      if (auth.error === 'miniTeacherOnly') return { kind: 'teacherOnly' };
+      if (auth.error === 'miniNotLinked') return { kind: 'unlinked', notice, decision };
+      if (auth.error === 'miniTeacherOnly') return { kind: 'teacherOnly', notice, decision };
       if (auth.error === 'passwordChangeRequired') return { kind: 'password' };
+      // неподписанный/просроченный запуск и ненастроенный бот — не тупик, а обычная дверь:
+      // человек входит паролем и не теряет ничего, кроме Telegram-автозапуска
+      if (auth.error === 'invalidInitData' || auth.error === 'miniUnavailable') {
+        return { kind: 'signin', notice, detail: auth.error, decision };
+      }
       return { kind: 'error', code: auth.error };
     }
-    writeMiniToken(auth.data.token);
+    writeMiniToken(auth.data.token, 'tg');
     const boot = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
     if (!boot.ok || !boot.data) {
       writeMiniToken(null);
       return { kind: 'error', code: boot.error };
     }
-    return { kind: 'ready', wa, bootstrap: boot.data };
+    return { kind: 'ready', wa, bootstrap: boot.data, surface: 'tg' };
   })().catch((): Boot => ({ kind: 'error', code: 'networkError' }));
   return bootPromise;
 }
@@ -132,8 +186,9 @@ function useTelegramBack(wa: TelegramWebApp | null, handler: () => void, visible
   const ref = useRef(handler);
   ref.current = handler;
   useEffect(() => {
-    const bb = wa?.BackButton;
-    if (!bb) return;
+    // feature detection, а не «есть ли объект»: клиент без BackButton остаётся со своей кнопкой
+    if (!telegramCapabilities(wa).backButton) return;
+    const bb = wa!.BackButton;
     const cb = () => ref.current();
     try {
       bb.onClick(cb);
@@ -156,8 +211,9 @@ function useTelegramMain(
   const progress = button?.progress ?? false;
   const visible = button !== null;
   useEffect(() => {
-    const mb = wa?.MainButton;
-    if (!mb) return;
+    // MainButton необязателен: без него экран остаётся с собственной кнопкой (см. `hasMainButton`)
+    if (!telegramCapabilities(wa).mainButton) return;
+    const mb = wa!.MainButton;
     if (!visible) { try { mb.hide(); } catch { /* ignore */ } return; }
     const cb = () => ref.current();
     try {
@@ -175,11 +231,14 @@ function useTelegramMain(
 
 // ─── root ────────────────────────────────────────────────────────────────────
 
-export default function Mini() {
+export default function Mini({ entry = 'mini' }: { entry?: 'mini' | 'web' }) {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('loading');
   const [bootstrap, setBootstrap] = useState<MiniBootstrap | null>(null);
   const [wa, setWa] = useState<TelegramWebApp | null>(null);
+  const [surface, setSurface] = useState<MiniSurface>('tg');
+  const [notice, setNotice] = useState<LaunchNotice>('none');
+  const [signinDetail, setSigninDetail] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [view, setView] = useState<View>({ kind: 'home' });
   const [homeBusy, setHomeBusy] = useState(false);
@@ -189,18 +248,24 @@ export default function Mini() {
     setPhase('loading');
     setErrorCode('');
     setHomeError('');
-    const boot = await bootMiniApp();
+    const boot = await bootMiniApp(entry);
     if (boot.kind === 'ready') {
       await applyLocale(boot.bootstrap.teacher.locale).catch(() => undefined);
       setBootstrap(boot.bootstrap);
       setWa(boot.wa);
+      setSurface(boot.surface);
+      setNotice('none');
       setView({ kind: 'home' });
       setPhase('ready');
       return;
     }
     if (boot.kind === 'error') setErrorCode(boot.code);
+    if (boot.kind === 'signin') {
+      setNotice(boot.notice);
+      setSigninDetail(boot.detail);
+    } else if ('notice' in boot) setNotice(boot.notice);
     setPhase(boot.kind);
-  }, []);
+  }, [entry]);
 
   useEffect(() => { void run(); }, [run]);
 
@@ -221,6 +286,36 @@ export default function Mini() {
     retryBoot();
     void run();
   }, [run]);
+
+  /**
+   * Вход обычными данными BluBlu (Browser mode). Возвращает код ошибки — формой, не экраном:
+   * экрану нужно сказать одно из шести разных «нет», а не просто «не вышло».
+   */
+  const signedIn = useCallback(async (email: string, password: string): Promise<string> => {
+    const r = await signInWithPassword(email, password);
+    if (!r.ok || !r.data) return r.error || 'serverError';
+    const boot = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
+    if (!boot.ok || !boot.data) {
+      writeMiniToken(null);
+      return boot.error || 'serverError';
+    }
+    await applyLocale(boot.data.teacher.locale).catch(() => undefined);
+    setBootstrap(boot.data);
+    setWa(null);            // вход паролем — это веб: Telegram-кнопки здесь не обещаем
+    setSurface('web');
+    setNotice('none');
+    setView({ kind: 'home' });
+    setPhase('ready');
+    return '';
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await signOutFromMini();
+    setBootstrap(null);
+    setView({ kind: 'home' });
+    setNotice('none');
+    setPhase('signin');
+  }, []);
 
   const refreshBootstrap = useCallback(async () => {
     const r = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
@@ -267,22 +362,15 @@ export default function Mini() {
 
   if (phase === 'loading') return <MiniFrame testid="mini-loading"><p className="muted">{t('mini.loading')}</p></MiniFrame>;
 
-  if (phase === 'outside') {
+  /*
+   * Task G.2: вместо `outside` и `sdkFailed` — рабочая дверь. Человек получает то, что может
+   * сделать: войти обычным паролем BluBlu, попробовать ещё раз или открыть веб-версию. То, что
+   * Telegram-интеграция недоступна, остаётся строкой состояния, а не приговором.
+   */
+  if (phase === 'signin') {
     return (
-      <MiniFrame testid="mini-outside">
-        <h1>{t('mini.outsideTitle')}</h1>
-        <p>{t('mini.outsideText')}</p>
-        <p className="muted">{t('mini.outsideHint')}</p>
-      </MiniFrame>
-    );
-  }
-
-  if (phase === 'sdkFailed') {
-    return (
-      <MiniFrame testid="mini-sdk-failed">
-        <h1>{t('mini.sdkTitle')}</h1>
-        <p>{t('mini.sdkText')}</p>
-        <button type="button" onClick={retry}>{t('mini.retry')}</button>
+      <MiniFrame testid="mini-signin">
+        <MiniSignIn notice={notice} detail={signinDetail} entry={entry} onRetry={retry} onSignIn={signedIn} />
       </MiniFrame>
     );
   }
@@ -293,7 +381,12 @@ export default function Mini() {
         <h1>{t('mini.unlinkedTitle')}</h1>
         <p>{t('mini.unlinkedText')}</p>
         <p className="muted">{t('mini.unlinkedSteps')}</p>
-        <button type="button" className="secondary" onClick={retry}>{t('mini.retry')}</button>
+        <div className="mini-gate-actions">
+          <button type="button" className="secondary" onClick={retry}>{t('mini.retry')}</button>
+          <button type="button" data-testid="mini-to-signin" onClick={() => setPhase('signin')}>
+            {t('mini.signInTitle')}
+          </button>
+        </div>
       </MiniFrame>
     );
   }
@@ -303,6 +396,12 @@ export default function Mini() {
       <MiniFrame testid="mini-teacher-only">
         <h1>{t('mini.teacherOnlyTitle')}</h1>
         <p>{t('mini.teacherOnlyText')}</p>
+        <div className="mini-gate-actions">
+          <button type="button" data-testid="mini-to-signin" onClick={() => setPhase('signin')}>
+            {t('mini.signInTitle')}
+          </button>
+          <a className="secondary" href="/web">{t('mini.openWeb')}</a>
+        </div>
       </MiniFrame>
     );
   }
@@ -319,9 +418,15 @@ export default function Mini() {
   if (phase === 'error' || !bootstrap) {
     return (
       <MiniFrame testid="mini-error">
-        <h1>{t('mini.errorTitle')}</h1>
+        <h1>{errorCode === 'networkError' ? t('mini.connectionTitle') : t('mini.errorTitle')}</h1>
         <p className="error">{bootErrorText(errorCode, t)}</p>
-        <button type="button" onClick={retry}>{t('mini.retry')}</button>
+        <div className="mini-gate-actions">
+          <button type="button" onClick={retry}>{t('mini.retry')}</button>
+          <button type="button" data-testid="mini-to-signin" onClick={() => setPhase('signin')}>
+            {t('mini.signInTitle')}
+          </button>
+          <a className="secondary" href="/web">{t('mini.openWeb')}</a>
+        </div>
       </MiniFrame>
     );
   }
@@ -392,10 +497,12 @@ export default function Mini() {
       bootstrap={bootstrap}
       busy={homeBusy}
       error={homeError}
+      surface={surface}
       onNew={() => void startNew()}
       onOpen={(id) => void openDraft(id)}
       onRefresh={() => void refreshBootstrap()}
       onSection={(kind) => { setHomeError(''); setView({ kind }); }}
+      onSignOut={() => void signOut()}
     />
   );
 }
@@ -409,19 +516,109 @@ function bootErrorText(code: string, t: (key: string) => string): string {
   return t('mini.errorGeneric');
 }
 
+/** Что сказать про отказ входа. Коды те же, что у обычного BluBlu, — второй системы нет. */
+function signInErrorText(code: string, t: (key: string) => string): string {
+  if (code === 'invalidCredentials') return t('mini.signInBad');
+  if (code === 'invalidInput') return t('mini.signInRequired');
+  if (code === 'networkError') return t('mini.errorNetwork');
+  if (code === 'tooManyRequests') return t('mini.errorRate');
+  if (code === 'miniTeacherOnly') return t('mini.teacherOnlyText');
+  if (code === 'passwordChangeRequired') return t('mini.passwordText');
+  return bootErrorText(code, t);
+}
+
+/**
+ * Task G.2: экран входа браузерной двери.
+ *
+ * Он существует вместо прежних `outside`/`sdkFailed`, и различие принципиальное: там было
+ * сообщение о том, чего не хватает приложению, здесь — то, что человек может сделать сам. Форма
+ * та же, что у веб-приложения (тот же `/api/auth/login`, те же правила `loginSchema`), поэтому
+ * права человека определяются сервером, а не режимом запуска: список групп, материалов и
+ * домашних заданий после входа — ровно его собственные.
+ */
+function MiniSignIn({
+  notice, detail, entry, onRetry, onSignIn,
+}: {
+  notice: LaunchNotice;
+  detail: string;
+  entry: 'mini' | 'web';
+  onRetry: () => void;
+  onSignIn: (email: string, password: string) => Promise<string>;
+}) {
+  const { t } = useTranslation();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = useCallback(async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const code = await onSignIn(email, password);
+    setBusy(false);
+    if (code) setError(signInErrorText(code, t));
+  }, [busy, email, password, onSignIn, t]);
+
+  return (
+    <form onSubmit={(e) => void submit(e)} data-testid="mini-signin-form" noValidate>
+      <h1>{t('mini.signInTitle')}</h1>
+      {/* Состояние интеграции — строкой, не экраном: оно объясняет, почему здесь пароль. */}
+      <p className="muted" data-testid="mini-mode-chip">{t('mini.modeBrowser')}</p>
+      {entry === 'web' && <p className="muted">{t('mini.webDoorHint')}</p>}
+      {notice === 'telegramUnavailable' && (
+        <p className="mini-notice" role="status" data-testid="mini-telegram-unavailable">
+          {t('mini.telegramUnavailable')}
+        </p>
+      )}
+      {detail === 'invalidInitData' && <p className="muted">{t('mini.errorInvalidLaunch')}</p>}
+      {detail === 'miniUnavailable' && <p className="muted">{t('mini.errorUnavailable')}</p>}
+
+      <label className="mini-field">
+        <span>{t('mini.signInEmail')}</span>
+        <input
+          type="email" name="email" value={email} autoComplete="username" inputMode="email"
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      </label>
+      <label className="mini-field">
+        <span>{t('mini.signInPassword')}</span>
+        <input
+          type="password" name="password" value={password} autoComplete="current-password"
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </label>
+
+      {error && <p className="error" role="alert" data-testid="mini-signin-error">{error}</p>}
+
+      <button type="submit" data-testid="mini-signin-submit" disabled={busy || !email || !password}>
+        {busy ? t('mini.signInBusy') : t('mini.signInSubmit')}
+      </button>
+      <div className="mini-gate-actions">
+        <button type="button" className="secondary" onClick={onRetry}>{t('mini.retry')}</button>
+        {entry === 'mini' && <a className="secondary" href="/web">{t('mini.openWeb')}</a>}
+      </div>
+      <p className="muted">{t('mini.signInWhere')}</p>
+    </form>
+  );
+}
+
 // ─── home ───────────────────────────────────────────────────────────────────
 
 function MiniHome({
-  wa, bootstrap, busy, error, onNew, onOpen, onRefresh, onSection,
+  wa, bootstrap, busy, error, surface, onNew, onOpen, onRefresh, onSection, onSignOut,
 }: {
   wa: TelegramWebApp | null;
   bootstrap: MiniBootstrap;
   busy: boolean;
   error: string;
+  surface: MiniSurface;
   onNew: () => void;
   onOpen: (id: string) => void;
   onRefresh: () => void;
   onSection: (kind: Section) => void;
+  onSignOut: () => void;
 }) {
   const { t } = useTranslation();
   const active = bootstrap.groups.filter((g) => g.status === 'active');
@@ -437,6 +634,20 @@ function MiniHome({
         <div>
           <h1>{t('mini.homeTitle')}</h1>
           <p className="muted">{t('mini.greeting', { name: bootstrap.teacher.name })}</p>
+          {/*
+           * Task G.2: режим видно. Это не украшение — человек обязан отличать «меня пускает
+           * Telegram» от «я сам вошёл паролем», потому что у второй двери своя сессия и свой
+           * выход. Отсюда же кнопка выхода: в браузерной двери без неё человек не смог бы
+           * освободить чужой ноутбук.
+           */}
+          <p className="mini-mode" data-testid="mini-mode">
+            {surface === 'web' ? t('mini.modeBrowser') : t('mini.modeTelegram')}
+            {surface === 'web' && (
+              <button type="button" className="ghost mini-signout" data-testid="mini-signout" onClick={onSignOut}>
+                {t('mini.signOut')}
+              </button>
+            )}
+          </p>
         </div>
         <div className="mini-head-actions">
           <MiniSettingsMenu wa={wa} open={settingsOpen}
@@ -829,7 +1040,7 @@ function MiniWizard({
   // the native primary action is hidden while it is open, so a tap cannot publish behind it.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const hasMainButton = Boolean(wa?.MainButton);
+  const hasMainButton = telegramCapabilities(wa).mainButton;
 
   const activeGroups = bootstrap.groups.filter((g) => g.status === 'active');
 
