@@ -14,7 +14,32 @@ import { siteUrl } from '../services/notify.js';
  * get it wrong, and every other bot link already trusts `siteUrl()`.
  */
 export function miniAppUrl(): string | null {
-  const base = siteUrl().replace(/\/+$/, '');
+  const base = publicBase();
   if (!/^https:\/\//i.test(base)) return null;
   return `${base}/mini`;
+}
+
+/**
+ * Task G.2 (2026-11-04): веб-дверь того же Mini App — `/web`.
+ *
+ * Она существует потому, что «уместна ли кнопка web_app» — свойство КЛИЕНТА, а не наш: Telegram
+ * Desktop и Android её открывают, WebA/WebK — обычно да, сторонние клиенты и встроенные браузеры
+ * моста не дают вовсе, и тогда нажатие на web_app не даёт человеку ничего. Обычный URL работает
+ * везде: там, где нет моста, `/web` рисует ту же страницу с обычным входом BluBlu.
+ *
+ * HTTPS не требуется: это ссылка в тексте сообщения, а не `web_app`-кнопка. Поэтому ответ
+ * возвращается всегда — иначе http-развёртывание (демо-туннель, школьный сервер) оставалось бы
+ * вообще без двери, что и было прежним поведением.
+ */
+export function browserEntryUrl(): string {
+  return `${publicBase()}/web`;
+}
+
+/** Есть ли смысл предлагать `web_app`-кнопку рядом со ссылкой. */
+export function canOfferWebAppButton(): boolean {
+  return miniAppUrl() !== null;
+}
+
+function publicBase(): string {
+  return siteUrl().replace(/\/+$/, '');
 }

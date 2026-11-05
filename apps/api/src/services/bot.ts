@@ -22,7 +22,7 @@ import {
 } from '../db/schema.js';
 import { listEventsInRange } from './events.js';
 import { consumeLinkToken, getPrefs, hashToken, siteUrl, unlinkUser, enqueueNotification } from './notify.js';
-import { miniAppUrl } from '../lib/miniAppUrl.js';
+import { miniAppUrl, browserEntryUrl } from '../lib/miniAppUrl.js';
 import {
   applyMenu, applyMenuForChat, esc, removeMenu, verifyCb, signCb,
   type BotApi, type ChatMenuButton, type InlineButton,
@@ -102,10 +102,29 @@ export const T: Record<string, Loc> = {
   // Task F/F.1: the Mini App is a second, screen-based surface of the SAME homework. The button
   // is shown only when the public site is https (see lib/miniAppUrl.ts); otherwise the honest text.
   miniButton: { ru: 'Открыть BluBlu', uz: 'BluBlu’ni ochish', en: 'Open BluBlu' },
+  /*
+   * Task G.2 (2026-11-04): вторая дверь — обычная ссылка. `web_app`-кнопка работает только там,
+   * где клиент даёт WebApp-мост; в стороннем клиенте или встроенном браузере нажатие на неё не
+   * даёт ничего, и человек остаётся с сообщением, которое «должно было открыть приложение».
+   * Ссылка `/web` открывает то же приложение через обычный вход BluBlu — поэтому она в боте
+   * всегда рядом с кнопкой, а не вместо неё.
+   */
+  webButton: { ru: 'Открыть в браузере', uz: 'Brauzerda ochish', en: 'Open in browser' },
+  webHint: {
+    ru: 'Кнопка «Открыть BluBlu» требует поддержки мини-приложений. Если ваш клиент её не даёт — вторая кнопка открывает то же приложение по обычной ссылке, вход обычными данными BluBlu.',
+    uz: '«BluBlu’ni ochish» tugmasi mini ilovalarni qo‘llab-quvvatlashni talab qiladi. Mijozingiz buni bermasa — ikkinchi tugma shu ilovani oddiy havola orqali ochadi, kirish oddiy BluBlu ma’lumotlari bilan.',
+    en: 'The “Open BluBlu” button needs Mini App support. If your client does not provide it, the second button opens the same app through a plain link — sign in with your usual BluBlu account.',
+  },
+  // Команда /web: человек явно попросил ссылку — её и даём, без второй кнопки вокруг.
+  webIntro: {
+    ru: 'Веб-версия BluBlu: тот же список групп, материалы, домашнее задание и публикация, что и в мини-приложении, но вход — обычным паролем BluBlu. Откройте ссылку кнопкой ниже или командой /web.',
+    uz: 'BluBlu veb-versiyasi: mini ilovadagi guruhlar ro‘yxati, materiallar, uy vazifasi va e’lonlash bilan bir xil, lekin kirish oddiy BluBlu paroli bilan. Quyidagi tugma yoki /web buyrug‘i bilan oching.',
+    en: 'The web version of BluBlu: the same groups, materials, homework and publishing as the Mini App, but signed in with your usual BluBlu password. Open it with the button below or with /web.',
+  },
   miniIntro: {
-    ru: 'Соберите домашнее задание в мини-приложении: группы, текст, библиотека и предпросмотр — на одном экране. Кнопка ниже и команда /mini открывают его в любой момент.',
-    uz: 'Uy vazifasini mini ilovada yig‘ing: guruhlar, matn, kutubxona va ko‘rish — bitta ekranda. Quyidagi tugma va /mini buyrug‘i uni istalgan paytda ochadi.',
-    en: 'Build homework in the Mini App: groups, text, the library and a preview on one screen. The button below and /mini open it at any time.',
+    ru: 'Соберите домашнее задание в мини-приложении: группы, текст, библиотека и предпросмотр — на одном экране. Кнопка ниже и команда /mini открывают его в любой момент, /web — то же самое в обычном браузере.',
+    uz: 'Uy vazifasini mini ilovada yig‘ing: guruhlar, matn, kutubxona va ko‘rish — bitta ekranda. Quyidagi tugma va /mini buyrug‘i uni istalgan paytda ochadi, /web — xuddi shuni oddiy brauzerda ochadi.',
+    en: 'Build homework in the Mini App: groups, text, the library and a preview on one screen. The button below and /mini open it at any time; /web opens the same thing in a plain browser.',
   },
   // Teacher-facing, and actionable: Telegram refuses a web_app button over http, so instead of
   // a button that does nothing the bot names the working alternative.
@@ -167,9 +186,9 @@ export const T: Record<string, Loc> = {
     en: 'Commands: /start — link, /schedule — class schedule by name, /contact — write to a teacher, /language — language, /help — this message.',
   },
   helpTeacher: {
-    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы класса, /library — библиотека материалов для Telegram, /announce — объявление классу, /homework — домашнее задание в Telegram, /mini — открыть BluBlu, /settings — уведомления, /language, /help.',
-    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — sinf materiallari, /library — Telegram uchun materiallar kutubxonasi, /announce — e’lon, /homework — Telegramga uy vazifasi, /mini — BluBlu’ni ochish, /settings — bildirishnomalar, /language, /help.',
-    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /library — the Telegram material library, /announce — post an announcement, /homework — homework to Telegram groups, /mini — open BluBlu, /settings — notifications, /language, /help.',
+    ru: 'Команды: /schedule — расписание (сегодня/завтра/неделя, по классам), /next — ближайшее событие, /classes — мои классы, /materials — материалы класса, /library — библиотека материалов для Telegram, /announce — объявление классу, /homework — домашнее задание в Telegram, /mini — открыть BluBlu, /web — BluBlu в браузере (если клиент не открывает мини-приложения), /settings — уведомления, /language, /help.',
+    uz: 'Buyruqlar: /schedule — jadval (bugun/erta/hafta, sinf bo‘yicha), /next — yaqin tadbir, /classes — sinflarim, /materials — sinf materiallari, /library — Telegram uchun materiallar kutubxonasi, /announce — e’lon, /homework — Telegramga uy vazifasi, /mini — BluBlu’ni ochish, /web — brauzerdagi BluBlu (mijozingiz mini ilovani ochmasa), /settings — bildirishnomalar, /language, /help.',
+    en: 'Commands: /schedule — today/tomorrow/week per class, /next — next event, /classes — my classes, /materials — class materials, /library — the Telegram material library, /announce — post an announcement, /homework — homework to Telegram groups, /mini — open BluBlu, /web — BluBlu in a browser (when your client will not open Mini Apps), /settings — notifications, /language, /help.',
   },
   helpStudent: {
     ru: 'Команды: /schedule — расписание моих классов, /next — ближайшее событие, /contact — написать учителю, /language, /stop — отвязать аккаунт, /help.',
@@ -529,6 +548,8 @@ export async function dispatchUpdate(deps: BotDeps, update: TgUpdate): Promise<v
     case '/announce': return announceHome(deps, chatId, id, arg);
     case '/homework': return homeworkCommand(deps, chatId, id, m);
     case '/mini': return miniHome(deps, chatId, id);
+    // Task G.2: та же дверь, но обычной ссылкой — для клиентов без WebApp-моста
+    case '/web': return webDoor(deps, chatId, id);
     case '/done': return homeworkDone(deps, chatId, id);
     case '/library': return libraryCommand(deps, chatId, id);
     default:
@@ -553,6 +574,21 @@ async function onStart(deps: BotDeps, chatId: string, id: Identity, arg: string)
     return;
   }
   await sendHello(deps, chatId, id);
+}
+
+/**
+ * Task G.2: кнопки двери Mini App — в одном месте, потому что их три места сообщения и спорить
+ * о порядке нечего. `web_app` — только когда сайт по HTTPS (иначе Telegram сам отказывает
+ * кнопке), обычная ссылка — всегда: она и есть ответ на «мой клиент не умеет мини-приложения».
+ * Пустой массив returned бывает ровно один случай — ни HTTPS, ни публичного адреса; зовущий
+ * обязан это учесть текстом, а не молча отправить сообщение без кнопок.
+ */
+function miniDoorButtons(lang: Lang): InlineButton[][] {
+  const rows: InlineButton[][] = [];
+  const app = miniAppUrl();
+  if (app) rows.push([{ text: t('miniButton', lang), webApp: app }]);
+  rows.push([{ text: t('webButton', lang), url: browserEntryUrl() }]);
+  return rows;
 }
 
 /**
@@ -637,19 +673,19 @@ async function sendHello(deps: BotDeps, chatId: string, id: Identity) {
     return;
   }
   const key = id.role === 'teacher' ? 'helloTeacher' : id.role === 'student' ? 'helloStudent' : 'helloBasic';
-  const url = id.role === 'teacher' ? miniAppUrl() : null;
+  const buttons = id.role === 'teacher' ? miniDoorButtons(id.lang) : [];
   await syncMiniMenu(deps, chatId, id);
-  if (!url) {
-    if (id.role === 'teacher') {
-      await deps.api.sendMessage(chatId, `${t(key, id.lang)}\n\n${t('miniNoHttps', id.lang)}`);
-      return;
-    }
-    await send(deps, chatId, key, {}, id.lang);
-    return;
-  }
-  await deps.api.sendMessage(chatId, t(key, id.lang), {
-    buttons: [[{ text: t('miniButton', id.lang), webApp: url }]],
-  });
+  if (id.role !== 'teacher') { await send(deps, chatId, key, {}, id.lang); return; }
+  /*
+   * Task G.2: HTTPS нет — и `web_app`-кнопки нет, но человек без двери не остаётся: ссылка
+   * `/web` работает и по http, и там, где клиент не умеет мини-приложения. Раньше в этом случае
+   * было только объяснение про /homework.
+   */
+  const noHttps = !miniAppUrl();
+  const body = noHttps
+    ? `${t(key, id.lang)}\n\n${t('miniNoHttps', id.lang)}`
+    : `${t(key, id.lang)}\n\n${t('webHint', id.lang)}`;
+  await deps.api.sendMessage(chatId, body, { buttons });
 }
 
 /** `/mini` — the same door as the greeting button, for a teacher who already started the bot. */
@@ -659,10 +695,27 @@ async function miniHome(deps: BotDeps, chatId: string, id: Identity) {
     await send(deps, chatId, id.role === 'student' ? 'denied' : 'needLink', {}, id.lang);
     return;
   }
-  const url = miniAppUrl();
-  if (!url) { await send(deps, chatId, 'miniNoHttps', {}, id.lang); return; }
-  await deps.api.sendMessage(chatId, t('miniIntro', id.lang), {
-    buttons: [[{ text: t('miniButton', id.lang), webApp: url }]],
+  const buttons = miniDoorButtons(id.lang);
+  const body = miniAppUrl()
+    ? `${t('miniIntro', id.lang)}\n\n${t('webHint', id.lang)}`
+    : `${t('miniIntro', id.lang)}\n\n${t('miniNoHttps', id.lang)}`;
+  await deps.api.sendMessage(chatId, body, { buttons });
+}
+
+/**
+ * `/web` (Task G.2) — дверь для клиента без WebApp-моста: то же приложение, но обычной ссылкой и
+ * обычным входом BluBlu. Команда существует ровно потому, что нельзя предполагать, что кнопка
+ * `web_app` откроется у всех: сторонний клиент, десктопный браузер, «открой в обычном браузере»
+ * — все они попадают сюда, и все они получают работу, а не сообщение о несовместимости.
+ */
+async function webDoor(deps: BotDeps, chatId: string, id: Identity) {
+  await syncMiniMenu(deps, chatId, id);
+  if (id.role !== 'teacher') {
+    await send(deps, chatId, id.role === 'student' ? 'denied' : 'needLink', {}, id.lang);
+    return;
+  }
+  await deps.api.sendMessage(chatId, t('webIntro', id.lang), {
+    buttons: [[{ text: t('webButton', id.lang), url: browserEntryUrl() }]],
   });
 }
 

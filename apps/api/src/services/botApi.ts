@@ -418,6 +418,10 @@ export const TEACHER_COMMANDS = [
   // Task F/F.1: the screen-based editor of the same homework, labelled as the door it is —
   // the command list is part of the teacher's menu, so it must say what tapping it opens.
   ['mini', { ru: 'Открыть BluBlu', uz: 'BluBlu’ni ochish', en: 'Open BluBlu' }],
+  // Task G.2 (2026-11-04): та же дверь обычной ссылкой. Клиент без WebApp-моста на «Open BluBlu»
+  // не открывает ничего, и у команды должно быть, чем это заменить, — а не совет «попробуйте
+  // другой Telegram».
+  ['web', { ru: 'BluBlu в браузере', uz: 'BluBlu brauzerda', en: 'BluBlu in browser' }],
   ['settings', { ru: 'Настройки уведомлений', uz: 'Bildirishnoma sozlamalari', en: 'Notification settings' }],
   ['language', { ru: 'Язык', uz: 'Til', en: 'Language' }],
   ['help', { ru: 'Помощь', uz: 'Yordam', en: 'Help' }],
