@@ -80,7 +80,17 @@ let bootPromise: Promise<Boot> | null = null;
  */
 function bootMiniApp(entry: 'mini' | 'web'): Promise<Boot> {
   bootPromise ??= (async (): Promise<Boot> => {
-    const sdk = await ensureSdk();
+    /*
+     * Явная веб-дверь не ждёт скрипт Telegram. Она по определению не запуск из клиента, а
+     * оболочка /web отдаётся строгой CSP, где telegram.org не разрешён (см. isMiniAppPath в
+     * apps/api/src/app.ts). Прежний ensureSdk() не тянул сеть: CSP обрывает тег до запроса, и
+     * отказ приходился на первую же попытку, — но оставлял на странице заведомо мёртвый узел и
+     * красную строку в консоли там, где человеку сообщать не о чем. Теперь договорённость
+     * «веб-дверь не нуждается в Telegram» стоит в коде, а не вытекает из политики безопасности.
+     */
+    const sdk = entry === 'web'
+      ? { state: 'absent' as const, wa: null, attempts: 0 }
+      : await ensureSdk();
     const decision = resolveLaunch({
       sdkState: sdk.state,
       webApp: sdk.wa,

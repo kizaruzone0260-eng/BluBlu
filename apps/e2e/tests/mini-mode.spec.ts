@@ -175,6 +175,13 @@ test.describe('Browser mode без Telegram вообще', () => {
     await expect(page.getByTestId('mini-signin')).toBeVisible();
     await expect(page.getByText(/plain web door/i)).toBeVisible();
     expect(sdkRequested, 'веб-дверь не должна просить telegram.org').toBe(false);
+    /*
+     * И не должна оставлять на странице заведомо блокируемый тег. Проверка держится на DOM, а
+     * не на политике сервера: с прежним кодом этот тест проходил холостяком — CSP обрывал
+     * запрос до сети, поэтому `sdkRequested` оставался false, а мёртвый узел на странице жил.
+     */
+    expect(await page.locator('script[src*="telegram-web-app"]').count(),
+      'на /web не должно быть тега Telegram').toBe(0);
   });
 });
 
