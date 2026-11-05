@@ -26,3 +26,5 @@ export * from './guestLinks.js';
 export * from './emailCode.js';
 export * from './emailTemplates.js';
 export * from './links.js';
+// Task G.2: режим запуска Mini App решается чистыми функциями — проверяются без браузера
+export * from './miniLaunch.js';
