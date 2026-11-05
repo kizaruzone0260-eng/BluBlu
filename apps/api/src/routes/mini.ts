@@ -1,11 +1,15 @@
 /**
  * Mini App HTTP surface (`/api/mini`).
  *
- * Public door: `POST /api/mini/auth` accepts the raw Telegram `initData`, verifies it and
- * returns a limited session token. Every other route requires `Authorization: Bearer …` with
- * that token; the session is re-checked against the live `telegram_links` row, so unlinking
- * revokes it immediately. No cookie is used, so the regular web session and CSRF model are
- * untouched, and nothing here can be reached by a browser tab outside Telegram.
+ * Two public doors, one session type. `POST /api/mini/auth` accepts the raw Telegram `initData`,
+ * verifies its signature and returns a limited token (Telegram mode). `POST /api/mini/web/auth`
+ * (Task G.2) mints the same limited token out of an ALREADY verified BluBlu web session
+ * (Browser mode) — the identity comes from the bearer access token through
+ * `app.authenticateTeacher`, never from the request body, which this route does not read.
+ * Every other route requires `Authorization: Bearer …` with that token; a `tg` token is
+ * re-checked against the live `telegram_links` row on each request, so unlinking revokes it.
+ * Nothing here accepts a user id, a role or a `surface` from the client, and the token minted at
+ * one door cannot be presented as if it came from the other.
  *
  * The route layer only validates shapes and maps service outcomes. Ownership, group rights,
  * material eligibility, AI fidelity and publication safety live in `services/homework/mini.ts`
@@ -33,7 +37,7 @@ import { startMiniGroupConnect, miniConnectState, miniGroupsHealth } from '../se
 import { uploadMiniMaterial } from '../services/homework/miniLibrary.js';
 import type { HomeworkAi } from '../services/homework/types.js';
 import { acceptLegal, legalStatus } from '../services/legal.js';
-import { exchangeInitData, resolveMiniSession } from '../services/miniAuth.js';
+import { exchangeInitData, exchangeWebSession, resolveMiniSession } from '../services/miniAuth.js';
 import { createBot } from '../services/telegramBot.js';
 import { getBotApi } from './telegram.js';
 
@@ -169,6 +173,33 @@ export async function miniRoutes(app: FastifyInstance, opts: MiniRouteOptions): 
       expiresAt: miniSessionExpiresAt(),
       teacher: result.teacher,
       bot: { username: env.TELEGRAM_BOT_NAME || null },
+    });
+  });
+
+  /*
+   * Task G.2 (2026-11-04): Browser mode. Второй двери того же Mini App не нужен подписанный
+   * запуск — у человека уже есть обычная BluBlu-сессия, выданная паролем.
+   *
+   * Кто здесь человек — решает `app.authenticateTeacher`: он читает `Authorization: Bearer`
+   * (обычный access-токен, подписанный JWT_SECRET), сверяет аккаунт с живой строкой `users`,
+   * требует роль `teacher` и держит в силе гейт временного пароля. Тело запроса не читается
+   * вообще: ни user id, ни «surface», ни Telegram id клиент назвать не может — `surface: 'web'`
+   * ставит сервер, и токен этой двери не утверждает, что вход был из Telegram.
+   *
+   * Дальше — те же `/api/mini/*` и та же бизнес-логика: свои группы, свои материалы, свои
+   * черновики. Ключи сверки не пересекаются: обычный access-токен не принимается маршрутами Mini
+   * App (те читают только mini-токен), а mini-токен не принимается обычным API (у него другой
+   * ключ подписи и `aud: blublu-mini`).
+   */
+  app.post('/api/mini/web/auth', { preHandler: app.authenticateTeacher }, async (req, reply) => {
+    const result = await exchangeWebSession(db, req.user!.id);
+    if (!result.ok) return reply.code(result.status).send(errorBody(req.id, result.error));
+    return reply.send({
+      token: result.token,
+      expiresAt: miniSessionExpiresAt(),
+      teacher: result.teacher,
+      bot: { username: env.TELEGRAM_BOT_NAME || null },
+      surface: 'web',
     });
   });
 

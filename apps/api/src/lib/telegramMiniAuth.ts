@@ -150,25 +150,50 @@ export function verifyTelegramInitData(
 
 // ─── limited Mini App session ────────────────────────────────────────────────
 
+/**
+ * Task G.2: у сессии Mini App два способа появиться на свет, и они НЕ взаимозаменяемы.
+ *  • `tg`  — обмен подписанного `initData` (Telegram mode); в токене живёт Telegram id, и каждый
+ *    запрос сверяется с живой строкой `telegram_links` (отвязка аккаунта гасит сессию);
+ *  • `web` — обмен обычной BluBlu-сессии преподавателя (Browser mode); Telegram id в токене
+ *    отсутствует в принципе, поэтому такой токен не пройдёт там, где нужен живой Telegram-link,
+ *    и наоборот — токен поверхности `tg` нельзя получить без проверки подписи.
+ * Оба подписываются тем же производным ключом и тем же `aud`, оба с `scope: 'mini'`, и ни один
+ * не принимается обычным API (тот верифицирует JWT_SECRET и не знает про `aud: blublu-mini`).
+ */
+export type MiniSurface = 'tg' | 'web';
+
 export interface MiniTokenClaims {
   sub: string;
   role: 'teacher';
   locale: string;
-  /** Telegram user id from the signed payload; the live link must still name this id. */
-  tg: number;
+  /**
+   * Telegram user id из подписанного payload — только для `surface: 'tg'`. Живая ссылка обязана
+   * называть ровно этот id; никогда из заголовка или тела запроса.
+   */
+  tg?: number;
+  surface: MiniSurface;
 }
 
 function miniKey(): Uint8Array {
   return createHmac('sha256', env.JWT_SECRET).update('blublu-mini-app-v1').digest();
 }
 
-export async function signMiniToken(claims: MiniTokenClaims): Promise<string> {
-  return new SignJWT({
+export async function signMiniToken(
+  claims: MiniTokenClaims & { surface?: MiniSurface },
+): Promise<string> {
+  const surface = claims.surface ?? 'tg';
+  if (surface === 'tg' && typeof claims.tg !== 'number') {
+    // исключение из логики, а не из данных: `tg`-сессия без Telegram id невозможна по построению
+    throw new Error('mini token of surface tg requires a telegram user id');
+  }
+  const payload: Record<string, unknown> = {
     role: claims.role,
     locale: claims.locale,
-    tg: claims.tg,
     scope: 'mini',
-  })
+    surface,
+  };
+  if (surface === 'tg') payload.tg = claims.tg;
+  return new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
     .setAudience('blublu-mini')
@@ -182,12 +207,25 @@ export async function verifyMiniToken(token: string): Promise<MiniTokenClaims | 
     const { payload } = await jwtVerify(token, miniKey(), { audience: 'blublu-mini' });
     if (payload.scope !== 'mini') return null;
     if (typeof payload.sub !== 'string' || payload.role !== 'teacher') return null;
-    if (typeof payload.tg !== 'number' || !Number.isSafeInteger(payload.tg) || payload.tg <= 0) return null;
+    const surface = payload.surface === 'web' ? 'web' : payload.surface === 'tg' ? 'tg' : null;
+    if (!surface) return null;
+    if (surface === 'tg') {
+      if (typeof payload.tg !== 'number' || !Number.isSafeInteger(payload.tg) || payload.tg <= 0) return null;
+      return {
+        sub: payload.sub,
+        role: 'teacher',
+        locale: typeof payload.locale === 'string' ? payload.locale : 'en',
+        tg: payload.tg,
+        surface,
+      };
+    }
+    // `web`-сессия не имеет права притворяться Telegram-сессией: чужой `tg` внутри — повод отказать
+    if (payload.tg !== undefined) return null;
     return {
       sub: payload.sub,
       role: 'teacher',
       locale: typeof payload.locale === 'string' ? payload.locale : 'en',
-      tg: payload.tg,
+      surface,
     };
   } catch {
     return null;

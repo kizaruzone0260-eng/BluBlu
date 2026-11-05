@@ -10,7 +10,7 @@ import fastifyStatic from '@fastify/static';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DB } from './db/index.js';
-import { currentBuildId, injectBuildMeta } from './lib/build.js';
+import { currentBuildId, injectBuildMeta, injectTelegramSdk } from './lib/build.js';
 import { env, livekitPublicWsUrl } from './env.js';
 import { redactSecrets, safeErrorMessage } from './lib/redact.js';
 import { isSpaRoute, looksLikeStaticFile } from './lib/spaRoutes.js';
@@ -370,7 +370,9 @@ export async function buildApp(
       || url === '/api/invitations/register'
       || url === '/api/ws/ticket'
       // Task F: the Mini App launch exchange answers with a bearer session token — same reason.
+      // Task G.2: the browser-door exchange answers with the very same kind of token.
       || url === '/api/mini/auth'
+      || url === '/api/mini/web/auth'
       || /^\/api\/[^/]+\/[^/]+\/(chat\/ticket|link-token|telegram-link|ical-token)$/.test(url)
       || /^\/api\/(classes|lessons)\/[^/]+\/(chat\/ticket|link-token)$/.test(url)
       || url === '/api/rtc/token'
@@ -416,7 +418,12 @@ export async function buildApp(
       // Task F (2026-10-28): обмен initData на сессию Mini App — тоже публичный вход, и с одного
       // школьного/мобильного адреса (CGNAT) его могут проходить десятки учителей. Потолок общий;
       // отдельный per-user лимит на публикацию живёт в самих маршрутах.
-      || url === '/api/mini/auth') {
+      // Task G.2 (2026-11-04): /api/mini/web/auth — вторая дверь той же сессии. Она уже требует
+      // проверенный вход, но потолок общий с первой намеренно: целый кабинет с одного адреса
+      // открывает Mini App в браузере, и «перезагрузил страницу — получил 429» не должен быть
+      // причиной, по которой человек возвращается в Telegram-кнопку.
+      || url === '/api/mini/auth'
+      || url === '/api/mini/web/auth') {
       routeOptions.config = {
         ...routeOptions.config,
         rateLimit: {
@@ -472,12 +479,23 @@ export async function buildApp(
     const root = path.resolve(env.WEB_DIST);
     await app.register(fastifyStatic, { root, wildcard: false, index: false });
     let shellHtml: string | null = null;
+    let miniShellHtml: string | null = null;
     const shell = () => {
       shellHtml ??= injectBuildMeta(
         readFileSync(path.join(root, 'index.html'), 'utf8'),
         currentBuildId(),
       );
       return shellHtml;
+    };
+    /*
+     * Task G.2: документ `/mini` — единственный, куда ставится официальный SDK. Отдельная
+     * мемоизация, а не параметр у `shell()`, потому что ошибка была бы ровно одна и та же и
+     * здесь, и там: перепутать два HTML местами значит вернуть либо strict-CSP страницу с
+     * заблокированным скриптом, либо SDK на обычной странице.
+     */
+    const miniShell = () => {
+      miniShellHtml ??= injectTelegramSdk(shell());
+      return miniShellHtml;
     };
     app.get('/', (_req, reply) => reply.type('text/html').send(shell()));
     /*
@@ -494,8 +512,10 @@ export async function buildApp(
         return reply.code(404).send({ error: 'notFound' });
       }
       if (looksLikeStaticFile(pathname)) return reply.code(404).send({ error: 'notFound' });
-      if (isSpaRoute(pathname)) return reply.type('text/html').send(shell());
-      return reply.code(404).type('text/html').send(shell());
+      // тот же признак, что и для CSP в onSend: страница и её политика выбираются за один шаг
+      const entry = isMiniAppPath(pathname) ? miniShell : shell;
+      if (isSpaRoute(pathname)) return reply.type('text/html').send(entry());
+      return reply.code(404).type('text/html').send(entry());
     });
   } else {
     app.setNotFoundHandler((req, reply) => {

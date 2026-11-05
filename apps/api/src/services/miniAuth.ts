@@ -5,6 +5,12 @@
  * A Telegram user who never linked BluBlu gets a precise, non-enumerating answer: the Mini App
  * tells her to open the bot and link the account. Only a teacher may enter — a linked student
  * is refused here and every route repeats that check against the live row.
+ *
+ * Task G.2 adds the second door to the SAME session type: `exchangeWebSession` turns an already
+ * verified BluBlu web session into a `web`-surface Mini App token. There is still exactly one
+ * identity source per door and no third account system: the teacher row is read from `users`,
+ * rights are re-checked on every request, and `surface` is a claim the server signed — a client
+ * cannot choose it.
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import type { DB } from '../db/index.js';
@@ -12,7 +18,7 @@ import { telegramLinks, users } from '../db/schema.js';
 import { env } from '../env.js';
 import {
   signMiniToken, verifyMiniToken, verifyTelegramInitData,
-  type InitDataError, type MiniTokenClaims,
+  type InitDataError, type MiniSurface, type MiniTokenClaims,
 } from '../lib/telegramMiniAuth.js';
 import { audit } from './audit.js';
 
@@ -76,8 +82,53 @@ export async function exchangeInitData(db: DB, rawInitData: string): Promise<Min
     role: 'teacher',
     locale: account.locale,
     tg: verified.data.user.id,
+    surface: 'tg',
   });
   audit(db, account.id, 'mini_login', { surface: 'mini' });
+  return {
+    ok: true,
+    token,
+    teacher: { id: account.id, name: account.name, locale: account.locale, tz: account.tz },
+  };
+}
+
+/**
+ * Task G.2: Browser mode — сессия Mini App из ОБЫЧной BluBlu-сессии.
+ *
+ * Идентичность берётся единственно откуда ей взяться: из проверенного access-токена, который
+ * маршрут получил через `app.authenticateTeacher` (там же — «аккаунт жив, роль teacher,
+ * временный пароль сменён»). Никакого user id из тела, из заголовка или из `initDataUnsafe`:
+ * тело запроса у этого маршрута вообще нет.
+ *
+ * Дальше — тот же ограниченный токен Mini App, но поверхности `web`: он не утверждает, что
+ * человек пришёл из Telegram, и потому не проверяется по `telegram_links`. Права от этого не
+ * меняются: `services/homework/mini.ts` решает доступ по `session.userId` ровно так же, и
+ * группа/материал/черновик видятся только свои.
+ */
+export async function exchangeWebSession(db: DB, userId: string): Promise<MiniAuthResult> {
+  const [account] = await db.select({
+    id: users.id,
+    role: users.role,
+    name: users.name,
+    locale: users.locale,
+    tz: users.tz,
+    deletedAt: users.deletedAt,
+    mustChangePassword: users.mustChangePassword,
+  }).from(users)
+    .where(and(eq(users.id, userId), isNull(users.deletedAt)))
+    .limit(1);
+  // 401, а не 403: для человека это «сессия кончилась, войди заново», а не «тебе отказано».
+  if (!account) return failure(401, 'sessionExpired');
+  if (account.role !== 'teacher') return failure(403, 'miniTeacherOnly');
+  if (account.mustChangePassword) return failure(403, 'passwordChangeRequired');
+
+  const token = await signMiniToken({
+    sub: account.id,
+    role: 'teacher',
+    locale: account.locale,
+    surface: 'web',
+  });
+  audit(db, account.id, 'mini_login', { surface: 'web' });
   return {
     ok: true,
     token,
@@ -89,7 +140,9 @@ export interface MiniSession {
   userId: string;
   role: 'teacher';
   locale: string;
-  telegramUserId: number;
+  /** Telegram id для `tg`-сессии; null — когда вход обычный веб (Task G.2). */
+  telegramUserId: number | null;
+  surface: MiniSurface;
   name: string;
   tz: string;
 }
@@ -115,28 +168,46 @@ export async function resolveMiniSession(
     tz: users.tz,
     deletedAt: users.deletedAt,
     mustChangePassword: users.mustChangePassword,
-    chatId: telegramLinks.chatId,
-    blockedAt: telegramLinks.blockedAt,
   }).from(users)
-    .innerJoin(telegramLinks, eq(telegramLinks.userId, users.id))
     .where(and(eq(users.id, claims.sub), isNull(users.deletedAt)))
     .limit(1);
 
   if (!account) return { ok: false, status: 401, error: 'sessionExpired' };
-  if (account.blockedAt || account.chatId !== String(claims.tg)) {
-    return { ok: false, status: 401, error: 'miniNotLinked' };
-  }
   if (account.role !== 'teacher') return { ok: false, status: 403, error: 'miniTeacherOnly' };
   if (account.mustChangePassword) {
     return { ok: false, status: 403, error: 'passwordChangeRequired' };
   }
+
+  /*
+   * `tg`-сессия: живая ссылка обязана называть ровно тот Telegram id, что подписан в токене.
+   * Ответы сохранены ровно такие, какие были до Task G.2 (это внешний контракт клиента):
+   *  • ссылки нет вовсе — `sessionExpired` (связь, на которой держался вход, исчезла);
+   *  • ссылка есть, но забанена или называет другой id — `miniNotLinked`.
+   * `web`-сессия: ссылки нет по построению, и проверка аккаунта выше — вся, что для неё нужна.
+   */
+  let telegramUserId: number | null = null;
+  if (claims.surface === 'tg') {
+    const [link] = await db.select({
+      chatId: telegramLinks.chatId,
+      blockedAt: telegramLinks.blockedAt,
+    }).from(telegramLinks)
+      .where(eq(telegramLinks.userId, account.id))
+      .limit(1);
+    if (!link) return { ok: false, status: 401, error: 'sessionExpired' };
+    if (link.blockedAt || link.chatId !== String(claims.tg)) {
+      return { ok: false, status: 401, error: 'miniNotLinked' };
+    }
+    telegramUserId = claims.tg as number;
+  }
+
   return {
     ok: true,
     session: {
       userId: account.id,
       role: 'teacher',
       locale: account.locale,
-      telegramUserId: claims.tg,
+      telegramUserId,
+      surface: claims.surface,
       name: account.name,
       tz: account.tz,
     },

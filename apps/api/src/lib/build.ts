@@ -1,3 +1,5 @@
+import { TELEGRAM_SDK_URL } from '@klass/shared';
+
 /**
  * Build stamp (task 1): the short commit hash shown ONLY in the interface
  * (Profile + Login footers). Render injects RENDER_GIT_COMMIT at runtime, so
@@ -16,4 +18,29 @@ export function injectBuildMeta(html: string, build: string): string {
     /(<meta\s+name="app-build"\s+content=")[^"]*(")/i,
     `$1${build}$2`,
   );
+}
+
+/**
+ * Task G.2 (2026-11-04): официальный SDK Telegram обязан быть в `<head>` ДО скриптов приложения —
+ * так написано в документации Telegram, и так убирается гонка, которая была раньше: модуль
+ * приложения исполнялся первым, сам вставлял `<script>` в head и только потом читал запуск.
+ *
+ * Инъекция здесь, а не в `apps/web/index.html`, по двум причинам, и обе рабочие:
+ *  • тег нужен ровно одному документу (`/mini`). Добавить его в shell означало бы CSP-нарушение
+ *    на каждой странице: `script-src 'self'` остальных страниц справедливо блокирует telegram.org,
+ *    и человек получил бы ошибку в консоли там, где никакого Mini App нет;
+ *  • `defer` держит порядок исполнения (классический `defer` исполняется до отложенного модуля,
+ *    в порядке появления в документе) и не блокирует первую отрисовку на 119 КБ чужого скрипта —
+ *    на мобильной сети это было бы платой за то, что человек всё равно увидит сразу.
+ *
+ * URL один на весь репозиторий — `TELEGRAM_SDK_URL` из общего пакета; его же читает юнит-тест.
+ */
+export function injectTelegramSdk(html: string, url: string = TELEGRAM_SDK_URL): string {
+  if (html.includes(url)) return html; // уже в shell (dev-сборка): второй копией был бы двойной старт
+  const tag = `<script defer src="${url}"></script>`;
+  const moduleAt = html.search(/<script[^>]+type="module"/i);
+  if (moduleAt >= 0) return `${html.slice(0, moduleAt)}${tag}\n    ${html.slice(moduleAt)}`;
+  const headClose = html.lastIndexOf('</head>');
+  if (headClose >= 0) return `${html.slice(0, headClose)}${tag}\n  ${html.slice(headClose)}`;
+  return `${tag}${html}`;
 }

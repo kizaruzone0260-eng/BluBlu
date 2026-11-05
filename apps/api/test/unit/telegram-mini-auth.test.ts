@@ -183,7 +183,38 @@ describe('Mini App session token', () => {
       role: 'teacher',
       locale: 'uz',
       tg: USER.id,
+      surface: 'tg',
     });
+  });
+
+  /*
+   * Task G.2: две двери у одного токена. Поверхность выбирает СЕРВЕР, и подделать её нельзя:
+   * подпись лежит на нашем ключе, а `web`-токен не содержит Telegram id — значит он не пройдёт
+   * там, где требуется живая Telegram-связка. И наоборот: токен, который утверждает `tg` без id,
+   * невалиден по построению.
+   */
+  it('keeps the two doors apart (Task G.2)', async () => {
+    const web = await signMiniToken({
+      sub: '11111111-1111-4111-8111-111111111111', role: 'teacher', locale: 'ru', surface: 'web',
+    });
+    const claims = await verifyMiniToken(web);
+    expect(claims).toMatchObject({ surface: 'web', locale: 'ru' });
+    expect(claims?.tg).toBeUndefined();
+
+    await expect(signMiniToken({
+      sub: '11111111-1111-4111-8111-111111111111', role: 'teacher', locale: 'ru', surface: 'tg',
+    })).rejects.toThrow('surface tg requires a telegram user id');
+  });
+
+  it('refuses a web token that carries a Telegram id', async () => {
+    // подписать такой payload можно только вручную: проверка обязана отказать
+    const key = createHmac('sha256', env.JWT_SECRET).update('blublu-mini-app-v1').digest();
+    const forged = await new SignJWT({
+      role: 'teacher', locale: 'ru', scope: 'mini', surface: 'web', tg: 4242,
+    }).setProtectedHeader({ alg: 'HS256' })
+      .setSubject('11111111-1111-4111-8111-111111111111')
+      .setAudience('blublu-mini').setIssuedAt().setExpirationTime('1h').sign(key);
+    expect(await verifyMiniToken(forged)).toBeNull();
   });
 
   it('is not a regular access token and does not accept one', async () => {

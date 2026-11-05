@@ -32,6 +32,11 @@ export const SPA_ROUTE_TEMPLATES = [
   // Task F (2026-10-28): Telegram Mini App entry. It is a standalone page (no app chrome), but it
   // is still a real SPA route: a reload inside Telegram must return the shell with 200.
   '/mini',
+  // Task G.2 (2026-11-04): веб-дверь того же Mini App — для клиента, который умеет открыть
+  // обычную HTTPS-ссылку, но не даёт WebApp-мост, и для ссылки в сообщении бота. Отдельный путь
+  // нужен ровно затем, чтобы документ не зависел от telegram.org: никаких чужих скриптов в head и
+  // прежняя строгая политика (см. isMiniAppPath в app.ts — `/web` под неё не попадает).
+  '/web',
   '/spike',
   '/privacy',
   '/terms',
