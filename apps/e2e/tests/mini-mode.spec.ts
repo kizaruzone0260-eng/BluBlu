@@ -197,7 +197,14 @@ test.describe('Browser mode против настоящего API', () => {
     await page.getByTestId('mini-signin-submit').click();
 
     await expect(page.getByTestId('mini-home')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId('mini-mode')).toContainText(/Browser mode/i);
+    /*
+     * Режим проверяется по атрибуту, а не по надписи. Прежняя проверка текста на «Browser mode»
+     * зелёной прошла только потому, что локально у аккаунта английский: на прогоне 41995185975
+     * тот же тест прочитал «Браузерный режимВыйти» — язык страницы берётся из учётной записи
+     * учителя, а её локаль меняют другие спеки этого же стека. Атрибут ставит сервер, и язык на
+     * него не влияет.
+     */
+    await expect(page.getByTestId('mini-mode')).toHaveAttribute('data-mode', 'web');
     await expect(page.getByTestId('mini-signout')).toBeVisible();
     // surface записан сервером, а не клиентом: сессия помнит, что она веб
     expect(await page.evaluate(() => sessionStorage.getItem('klass_mini_surface'))).toBe('web');

@@ -650,7 +650,7 @@ function MiniHome({
            * выход. Отсюда же кнопка выхода: в браузерной двери без неё человек не смог бы
            * освободить чужой ноутбук.
            */}
-          <p className="mini-mode" data-testid="mini-mode">
+          <p className="mini-mode" data-testid="mini-mode" data-mode={surface}>
             {surface === 'web' ? t('mini.modeBrowser') : t('mini.modeTelegram')}
             {surface === 'web' && (
               <button type="button" className="ghost mini-signout" data-testid="mini-signout" onClick={onSignOut}>
