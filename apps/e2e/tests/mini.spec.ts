@@ -65,7 +65,14 @@ test.describe('Mini App outside Telegram', () => {
    */
   test.use({ serviceWorkers: 'block' });
 
-  test('opens outside Telegram with an honest instruction and no sideways scroll', async ({ page }) => {
+  /*
+   * Task G.2 (2026-11-04): эти три экрана больше не тупики. Раньше «открыто вне Telegram» и
+   * «SDK не загрузился» были финальными ответами, и именно из-за них Mini App выглядел сломанным
+   * в клиенте, который умеет только открыть ссылку. Теперь оба состояния — это рабочая дверь с
+   * обычным входом BluBlu; проверяется то же, что и раньше: CSP документа, отсутствие запросов
+   * к /api/mini без сессии, горизонтальный скролл и размер цели нажатия.
+   */
+  test('opens outside Telegram as the web door, with no sideways scroll', async ({ page }) => {
     const errors = collectPageErrors(page);
     const calls: string[] = [];
     page.on('request', (r) => {
@@ -85,34 +92,36 @@ test.describe('Mini App outside Telegram', () => {
     expect(csp).toContain('https://telegram.org');
     expect(response?.headers()['x-frame-options']).toBeUndefined();
 
-    const outside = page.getByTestId('mini-outside');
-    await expect(outside).toBeVisible();
-    await expect(outside).toContainText('Open the Mini App inside Telegram');
-    await expect(outside).toContainText('@classblu_bot');
-
-    // вне Telegram сессии быть не должно: никаких запросов к /api/mini
+    const signin = page.getByTestId('mini-signin');
+    await expect(signin).toBeVisible();
+    await expect(signin).toContainText('Sign in to BluBlu');
+    await expect(signin).toContainText('Browser mode');
+    // Telegram-автозаявки нет и быть не может: страница не отправляет ничего, пока человек не вошёл
     expect(calls).toEqual([]);
     await noHorizontalScroll(page, 'outside Telegram');
     expect(errors).toEqual([]);
   });
 
-  test('says the Telegram SDK did not load instead of spinning forever', async ({ page }) => {
+  test('an unreachable SDK opens the web door instead of announcing a failure', async ({ page }) => {
     const errors = collectPageErrors(page);
     // сеть до telegram.org недоступна — сценарий школьного wi-fi, из-за которого у загрузчика есть таймаут
     await page.route('https://telegram.org/**', (route) => route.abort());
     await page.goto('/mini');
 
-    const failed = page.getByTestId('mini-sdk-failed');
-    await expect(failed).toBeVisible();
-    await expect(failed).toContainText('Telegram did not load');
+    await expect(page.getByTestId('mini-outside')).toHaveCount(0);
+    await expect(page.getByTestId('mini-sdk-failed')).toHaveCount(0);
+    const signin = page.getByTestId('mini-signin');
+    await expect(signin).toBeVisible();
+    // моста нет (это обычный браузер) — значит извиняться не за что, и экран просто предлагает вход
+    await expect(page.getByTestId('mini-telegram-unavailable')).toHaveCount(0);
 
     // у выхода есть действие, и оно не меньше пальца
-    const retry = failed.getByRole('button');
-    await expect(retry).toBeVisible();
-    const height = (await retry.boundingBox())?.height ?? 0;
+    const submit = page.getByTestId('mini-signin-submit');
+    await expect(submit).toBeVisible();
+    const height = (await submit.boundingBox())?.height ?? 0;
     expect(height).toBeGreaterThanOrEqual(44);
 
-    await noHorizontalScroll(page, 'SDK failed');
+    await noHorizontalScroll(page, 'SDK blocked');
     expect(errors).toEqual([]);
   });
 
@@ -132,10 +141,13 @@ test.describe('Mini App outside Telegram', () => {
     expect(authResponse.status()).toBe(503);
     await expect(authResponse.json()).resolves.toMatchObject({ error: 'miniUnavailable' });
 
-    const error = page.getByTestId('mini-error');
-    await expect(error).toBeVisible();
-    await expect(error).toContainText('temporarily unavailable');
-    await expect(error.getByRole('button')).toBeVisible();
+    /*
+     * Task G.2: ненастроенный бот — это не «ошибка, попробуй позже» на пустом экране, а то же
+     * предложение войти паролем с честной строкой о причине. Фейковой сессии по-прежнему нет.
+     */
+    const signin = page.getByTestId('mini-signin');
+    await expect(signin).toBeVisible();
+    await expect(signin).toContainText('temporarily unavailable');
 
     /*
      * Тема применена из themeParams ещё до ответа сервера: внутри Telegram клиент обязан

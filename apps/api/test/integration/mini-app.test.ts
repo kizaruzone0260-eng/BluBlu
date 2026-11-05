@@ -33,7 +33,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { TEST_DATABASE_URL, preparedDb, makeTeacher, acceptPolicy, type TestDB } from './util.js';
+import { TEST_DATABASE_URL, preparedDb, makeTeacher, makeStudent, acceptPolicy, type TestDB } from './util.js';
 import { buildApp } from '../../src/app.js';
 import { env } from '../../src/env.js';
 import { CapturingApi } from '../../src/services/botApi.js';
@@ -126,11 +126,14 @@ suite('Telegram Mini App', () => {
     id: string;
     chatId: number;
     token: string;
+    /** Task G.2: обычная веб-учётка той же фикстуры — вторая дверь тестится теми же правами. */
+    email: string;
+    password: string;
     groups: { id: string; title: string; chatId: number }[];
   }
 
   async function newTeacher(opts: {
-    locale?: string; groups?: string[]; mustChangePassword?: boolean;
+    locale?: string; groups?: string[]; mustChangePassword?: boolean; link?: boolean;
   } = {}): Promise<Fixture> {
     seq++;
     const chatId = 8_100_000 + seq;
@@ -141,15 +144,20 @@ suite('Telegram Mini App', () => {
     if (opts.mustChangePassword) {
       await t.db.update(users).set({ mustChangePassword: true }).where(eq(users.id, teacher.id));
     }
-    await t.db.insert(telegramLinks).values({ userId: teacher.id, chatId: String(chatId) });
+    if (opts.link !== false) {
+      await t.db.insert(telegramLinks).values({ userId: teacher.id, chatId: String(chatId) });
+    }
     const groups: Fixture['groups'] = [];
     for (const [i, title] of (opts.groups ?? []).entries()) {
       const groupChat = -(9_100_000 + seq * 10 + i);
       const g = await addGroup(t.db, teacher.id, String(groupChat), title);
       groups.push({ id: g.id, title, chatId: groupChat });
     }
-    const token = opts.mustChangePassword ? '' : await login(chatId);
-    return { id: teacher.id, chatId, token, groups };
+    const wantMiniToken = !opts.mustChangePassword && opts.link !== false;
+    const token = wantMiniToken ? await login(chatId) : '';
+    return {
+      id: teacher.id, chatId, token, email: teacher.email, password: teacher.password, groups,
+    };
   }
 
   async function addMaterial(ownerId: string, groupIds: string[], opts: {
@@ -260,8 +268,13 @@ suite('Telegram Mini App', () => {
     env.TELEGRAM_BOT_TOKEN = BOT_TOKEN;
     env.TELEGRAM_BOT_NAME = 'classblu_bot';
     env.PUBLIC_URL = 'https://mini.test';
+    // копия настоящего Vite-shell: `<head>`, отложенный модуль, div#root — иначе проверка
+    // «SDK стоит ДО скрипта приложения» тестируется на тексте, которого в проде нет
     distDir = mkdtempSync(path.join(tmpdir(), 'mini-dist-'));
-    writeFileSync(path.join(distDir, 'index.html'), '<!doctype html><title>t</title><p>shell</p>');
+    writeFileSync(path.join(distDir, 'index.html'),
+      '<!doctype html><html lang="en"><head><meta charset="UTF-8"><title>t</title>'
+      + '<script type="module" crossorigin src="/assets/index-abc.js"></script>'
+      + '</head><body><div id="root"></div></body></html>');
     env.WEB_DIST = distDir;
     api = new CapturingApi();
     ai = new FakeAi();
@@ -1098,7 +1111,14 @@ suite('Telegram Mini App', () => {
         expect(hello2?.text).toContain('Меню учителя активно');
         expect(hello2?.text).toContain('не подключено');
         expect(hello2?.text).toContain('/homework');
-        expect(hello2?.opts?.buttons).toBeUndefined();
+        /*
+         * Task G.2: «нет HTTPS» больше не значит «нет двери`. Обычная ссылка работает и по http,
+         * поэтому рядом с честным объяснением человек получает URL-кнопку на /web — а не только
+         * совет returning to /homework.
+         */
+        const helloButtons = (hello2?.opts?.buttons ?? []).flat();
+        expect(helloButtons.some((b) => b.webApp)).toBe(false);
+        expect(helloButtons.map((b) => b.url).filter(Boolean)).toEqual([expect.stringContaining('/web')]);
         expect(api.calls.filter((c) => c.kind === 'menubtn').at(-1)?.menu).toEqual({ type: 'default' });
 
         api.calls.length = 0;
@@ -1106,11 +1126,43 @@ suite('Telegram Mini App', () => {
         const call = lastCall(f.chatId);
         expect(call?.text).toContain('по HTTPS');
         expect(call?.text).toContain('/homework');
-        expect(call?.opts?.buttons).toBeUndefined();
+        const miniButtons = (call?.opts?.buttons ?? []).flat();
+        expect(miniButtons.some((b) => b.webApp)).toBe(false);
+        expect(miniButtons.map((b) => b.url).filter(Boolean)).toEqual([expect.stringContaining('/web')]);
         expect(api.calls.filter((c) => c.kind === 'menubtn').at(-1)?.menu).toEqual({ type: 'default' });
       } finally {
         env.PUBLIC_URL = 'https://mini.test';
       }
+    });
+
+    /*
+     * Task G.2: `/web` — дверь для клиента, который не открывает Mini Apps. Кнопка `web_app`
+     * остаётся для тех, кто её умеет; ссылка обязана быть и там, и там, иначе сообщение бота
+     * выглядит как «приложение есть, но не для тебя».
+     */
+    it('offers both doors on an https site and a plain link on /web', async () => {
+      const f = await newTeacher({ groups: ['Группа А'] });
+      const deps = botDeps();
+
+      await handleUpdate(deps, msg(f.chatId, '/mini'));
+      const both = (lastCall(f.chatId)?.opts?.buttons ?? []).flat();
+      expect(both.some((b) => b.webApp === 'https://mini.test/mini')).toBe(true);
+      expect(both.some((b) => b.url === 'https://mini.test/web')).toBe(true);
+
+      await handleUpdate(deps, msg(f.chatId, '/web'));
+      const webCall = lastCall(f.chatId);
+      expect(webCall?.text).toContain('BluBlu');
+      const webButtons = (webCall?.opts?.buttons ?? []).flat();
+      expect(webButtons).toHaveLength(1);
+      expect(webButtons[0]).toMatchObject({ url: 'https://mini.test/web' });
+      // ни одна из дверей не трогает чужие данные и ничего не отправляет в группы
+      expect(callsTo(f.groups[0]!.chatId)).toHaveLength(0);
+    });
+
+    it('lists /web in the teacher command menu', () => {
+      const names = TEACHER_COMMANDS.map(([c]) => c);
+      expect(names).toContain('mini');
+      expect(names).toContain('web');
     });
   });
 
@@ -1150,5 +1202,151 @@ suite('Telegram Mini App', () => {
       expect(String(r.headers['content-security-policy'])).toContain('telegram.org');
       expect(r.headers['x-frame-options']).toBeUndefined();
     }
+  });
+
+  /*
+   * Task G.2 (2026-11-04): SDK обязан приходить в `<head>` ДО скрипта приложения. Раньше его
+   * вставлял сам клиент после монтирования React — отсюда гонка, и отсюда же «Telegram did not
+   * load», когда скрипт не успевал или не мог вставиться. Порядок здесь — не косметика:
+   * отложенный классический скрипт исполняется раньше отложенного модуля, поэтому `window.Telegram`
+   * существует до первого кода приложения.
+   */
+  it('puts the Telegram SDK in <head> before the app bundle, and only on /mini', async () => {
+    const mini = await app.inject({ method: 'GET', url: '/mini' });
+    const html = mini.body;
+    const head = html.slice(0, html.indexOf('</head>'));
+    expect(head).toContain('https://telegram.org/js/telegram-web-app.js');
+    const sdkAt = head.indexOf('telegram-web-app.js');
+    const moduleAt = html.search(/<script[^>]+type="module"/);
+    expect(moduleAt, 'собранный shell обязан иметь модульный скрипт').toBeGreaterThan(-1);
+    expect(sdkAt).toBeLessThan(moduleAt);
+    // и ровно один раз: дубликат означал бы два запуска моста на одной странице
+    expect(html.split('telegram-web-app.js').length - 1).toBe(1);
+
+    for (const url of ['/', '/login', '/guest', '/web']) {
+      const r = await app.inject({ method: 'GET', url });
+      expect(r.body, url).not.toContain('telegram-web-app.js');
+    }
+
+    // Веб-дверь — настоящий маршрут, и политика у неё прежняя, строгая: чужой скрипт ей не нужен.
+    const web = await app.inject({ method: 'GET', url: '/web' });
+    expect(web.statusCode).toBe(200);
+    expect(String(web.headers['content-security-policy'])).not.toContain('telegram.org');
+    expect(String(web.headers['content-security-policy'])).toContain("script-src 'self'");
+  });
+
+  /*
+   * Task G.2 (2026-11-04): Browser mode на сервере.
+   *
+   * Проверяется ровно одно обещание: вторая дверь НЕ является обходом. Идентичность берётся из
+   * проверенной веб-сессии, роль и «сменён ли пароль» решает сервер, surface ставит сервер, и
+   * права после входа — те же самые, что у Telegram-двери (свои группы, свои черновики).
+   */
+  describe('Browser mode: обычная сессия BluBlu → тот же ограниченный токен', () => {
+    async function webAccessToken(email: string, password: string): Promise<string> {
+      const r = await app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password } });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { accessToken: string }).accessToken;
+    }
+
+    async function mintWebSession(accessToken: string, payload?: unknown) {
+      return authed(accessToken, 'POST', '/api/mini/web/auth', payload);
+    }
+
+    it('9/10. mints a mini session from a verified web session — without any Telegram link', async () => {
+      const f = await newTeacher({ groups: ['Группа А'], link: false });
+      const at = await webAccessToken(f.email, f.password);
+      const r = await mintWebSession(at);
+      expect(r.statusCode, r.body).toBe(200);
+      const body = r.json() as { token: string; surface?: string; teacher: { id: string } };
+      expect(body.teacher.id).toBe(f.id);
+      expect(body.token).toBeTruthy();
+
+      // Telegram-ссылки нет — и она не нужна: права читаются по account id
+      const boot = await authed(body.token, 'GET', '/api/mini/bootstrap');
+      expect(boot.statusCode, boot.body).toBe(200);
+      const dto = boot.json() as MiniBootstrap;
+      expect(dto.teacher.name).toBeTruthy();
+      expect(dto.groups.map((g) => g.title)).toEqual(['Группа А']);
+    });
+
+    it('11. refuses without a session, for a student, and for a forced password change', async () => {
+      const anon = await app.inject({ method: 'POST', url: '/api/mini/web/auth' });
+      expect(anon.statusCode).toBe(401);
+
+      const student = await makeStudent(t.sql, { classId: 'no-class', member: false, email: `mini-s-${Date.now()}@x.io` });
+      const sAt = await webAccessToken(student.email, 'Passw0rd123');
+      const s = await mintWebSession(sAt);
+      expect(s.statusCode).toBe(403);
+      expect((s.json() as { error: string }).error).toBe('forbidden');
+
+      const f = await newTeacher({ mustChangePassword: true });
+      const pwToken = await webAccessToken(f.email, f.password);
+      const pw = await mintWebSession(pwToken);
+      expect(pw.statusCode).toBe(403);
+      expect((pw.json() as { error: string }).error).toBe('passwordChangeRequired');
+    });
+
+    it('ignores anything the client claims about who it is', async () => {
+      const f = await newTeacher();
+      const other = await newTeacher({ groups: ['Чужая группа'] });
+      const at = await webAccessToken(f.email, f.password);
+      // тело не читается маршрутом: ни id, ни роль, ни surface оттуда не берутся
+      const r = await mintWebSession(at, { userId: other.id, role: 'teacher', surface: 'tg', tg: 1 });
+      expect(r.statusCode, r.body).toBe(200);
+      const boot = await authed((r.json() as { token: string }).token, 'GET', '/api/mini/bootstrap');
+      expect((boot.json() as MiniBootstrap).teacher.name).toBeTruthy();
+      expect((boot.json() as MiniBootstrap).groups.map((g) => g.title)).toEqual([]);
+      // и чужая группа осталась чужой
+      const draft = await authed((r.json() as { token: string }).token, 'POST', '/api/mini/drafts');
+      const id = (draft.json() as { draft: MiniDraftDto }).draft.id;
+      const put = await authed((r.json() as { token: string }).token, 'PUT', `/api/mini/drafts/${id}/groups`, {
+        groupIds: [other.groups[0]!.id],
+      });
+      // сервер отвечает «эта группа не твоя», а не «неверный ввод»: права решает сервер
+      expect(put.statusCode, put.body).toBe(403);
+      expect((put.json() as { error: string }).error).toBe('groupNotAllowed');
+    });
+
+    it('does not let the two doors impersonate each other', async () => {
+      const f = await newTeacher({ groups: ['Группа А'] });
+      const at = await webAccessToken(f.email, f.password);
+      // обычный access-токен не является mini-сессией
+      const asMini = await authed(at, 'GET', '/api/mini/bootstrap');
+      expect(asMini.statusCode).toBe(401);
+
+      const web = (await (await mintWebSession(at)).json() as { token: string }).token;
+      // а mini-токен не является обычным access-токеном
+      const asWeb = await authed(web, 'GET', '/api/me');
+      expect(asWeb.statusCode).toBe(401);
+
+      // отвязка Telegram гасит tg-сессию и не трогает веб-сессию: разные утверждения о входе
+      await t.db.delete(telegramLinks).where(eq(telegramLinks.userId, f.id));
+      const afterUnlink = await authed(f.token, 'GET', '/api/mini/bootstrap');
+      expect(afterUnlink.statusCode).toBe(401);
+      expect((afterUnlink.json() as { error: string }).error).toBe('sessionExpired');
+      const stillWeb = await authed(web, 'GET', '/api/mini/bootstrap');
+      expect(stillWeb.statusCode, stillWeb.body).toBe(200);
+    });
+
+    it('12. the same business logic runs: a browser session creates a draft and formats it', async () => {
+      const f = await newTeacher({ groups: ['Группа А'] });
+      const at = await webAccessToken(f.email, f.password);
+      const web = (await (await mintWebSession(at)).json() as { token: string }).token;
+      const draft = await newDraft(web);
+      await setGroups(web, draft.id, [f.groups[0]!.id]);
+      const patched = await patchDraft(web, draft.id, { title: 'Дроби', instruction: 'стр. 42' });
+      expect(patched.statusCode, patched.body).toBe(200);
+      const formatted = await format(web, draft.id, 'manual');
+      expect(formatted.statusCode, formatted.body).toBe(200);
+      const list = await authed(web, 'GET', '/api/mini/history');
+      expect((list.json() as { drafts: unknown[] }).drafts.length).toBe(1);
+      // и второй учитель этого черновика не видит
+      const other = await newTeacher();
+      const otherAt = await webAccessToken(other.email, other.password);
+      const otherToken = (await (await mintWebSession(otherAt)).json() as { token: string }).token;
+      const peek = await authed(otherToken, 'GET', `/api/mini/drafts/${draft.id}`);
+      expect([403, 404]).toContain(peek.statusCode);
+    });
   });
 });
