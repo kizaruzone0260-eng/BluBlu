@@ -173,17 +173,16 @@ export async function resolveMiniSession(
     .limit(1);
 
   if (!account) return { ok: false, status: 401, error: 'sessionExpired' };
-  if (account.role !== 'teacher') return { ok: false, status: 403, error: 'miniTeacherOnly' };
-  if (account.mustChangePassword) {
-    return { ok: false, status: 403, error: 'passwordChangeRequired' };
-  }
 
   /*
-   * `tg`-сессия: живая ссылка обязана называть ровно тот Telegram id, что подписан в токене.
-   * Ответы сохранены ровно такие, какие были до Task G.2 (это внешний контракт клиента):
+   * `tg`-сессия: живая ссылка обязана называть ровно тот Telegram id, что подписан в токене, и
+   * проверяется она ДО ролей и пароля — ровно так, как было до Task G.2. Порядок здесь и есть
+   * внешний контракт: забаненная ссылка у аккаунта, которому предписано сменить пароль, должна
+   * отвечать `miniNotLinked`, а не `passwordChangeRequired` (проверка названа тестом).
+   * Ответы прежние:
    *  • ссылки нет вовсе — `sessionExpired` (связь, на которой держался вход, исчезла);
    *  • ссылка есть, но забанена или называет другой id — `miniNotLinked`.
-   * `web`-сессия: ссылки нет по построению, и проверка аккаунта выше — вся, что для неё нужна.
+   * `web`-сессия: ссылки нет по построению, и проверка аккаунта ниже — вся, что для неё нужна.
    */
   let telegramUserId: number | null = null;
   if (claims.surface === 'tg') {
@@ -198,6 +197,11 @@ export async function resolveMiniSession(
       return { ok: false, status: 401, error: 'miniNotLinked' };
     }
     telegramUserId = claims.tg as number;
+  }
+
+  if (account.role !== 'teacher') return { ok: false, status: 403, error: 'miniTeacherOnly' };
+  if (account.mustChangePassword) {
+    return { ok: false, status: 403, error: 'passwordChangeRequired' };
   }
 
   return {

@@ -452,6 +452,23 @@ suite('Telegram Mini App', () => {
     expect((r.json() as { error: string }).error).toBe('sessionExpired');
   });
 
+  /*
+   * Порядок проверок в `resolveMiniSession` — это внешний контракт, а не деталь реализации.
+   * До Task G.2 ссылка Telegram смотрелась первой, поэтому забаненная ссылка у аккаунта,
+   * которому предписано сменить пароль, отвечала `miniNotLinked`. Коммит G.2 на мгновение поставил
+   * пароль впереди и тот же случай начал отвечать `passwordChangeRequired` — человек попал бы на
+   * экран смены пароля, которого для него не существует. Проверка названа, чтобы порядок снова не
+   * поехал.
+   */
+  it('a banned Telegram link outranks the forced-password flag', async () => {
+    const f = await newTeacher({ groups: ['Группа А'] });
+    await t.db.update(telegramLinks).set({ blockedAt: new Date() }).where(eq(telegramLinks.userId, f.id));
+    await t.db.update(users).set({ mustChangePassword: true }).where(eq(users.id, f.id));
+    const r = await authed(f.token, 'GET', '/api/mini/bootstrap');
+    expect(r.statusCode).toBe(401);
+    expect((r.json() as { error: string }).error).toBe('miniNotLinked');
+  });
+
   // ─── 2. the teacher home ─────────────────────────────────────────────────
 
   it('shows only the teacher’s own ACTIVE groups with real counts and statuses', async () => {
