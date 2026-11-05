@@ -230,6 +230,17 @@ async function scrollLock(page: Page) {
   }));
 }
 
+/**
+ * Замок прокрутки ставится и снимается пассивным эффектом React, а он отрабатывает чуть позже,
+ * чем панель меняется в DOM: снятие — кадр после unmount. Поэтому значение ЖДУТ с ограниченным
+ * таймаутом, а не снимают один раз. Одиночный замер под нагрузкой ловил ровно этот кадр: в CI
+ * проверка стояла сразу после `toHaveCount(0)` и читала ещё не отпущенный замок (замерено на
+ * прогонах 40888797296 и 41995185975 — тот же тест, что зелёный локально).
+ */
+async function expectScrollLock(page: Page, expected: { html: string; body: string }) {
+  await expect.poll(() => scrollLock(page), { timeout: 3_000 }).toEqual(expected);
+}
+
 /** One tap on the real Telegram MainButton. */
 async function tapMain(page: Page): Promise<void> {
   await page.evaluate(() => (window as unknown as { __miniMain?: () => void }).__miniMain?.());
@@ -296,13 +307,13 @@ test.describe('Mini App settings drawer — phone', () => {
     const opened = await pageMetrics(page);
     expect(Math.abs(opened.ctaY - before.ctaY)).toBeLessThanOrEqual(1);
     expect(opened.scrollHeight).toBe(before.scrollHeight);
-    expect(await scrollLock(page)).toEqual({ html: 'hidden', body: 'hidden' });
+    await expectScrollLock(page, { html: 'hidden', body: 'hidden' });
 
     // 3. Повторное нажатие той же кнопки (она над затемнением) закрывает панель.
     await button.click();
     await expect(page.getByTestId('mini-settings')).toHaveCount(0);
     await expect(button).toHaveAttribute('aria-expanded', 'false');
-    expect(await scrollLock(page)).toEqual({ html: '', body: '' });
+    await expectScrollLock(page, { html: '', body: '' });
     expect((await pageMetrics(page)).scrollHeight).toBe(before.scrollHeight);
 
     // 4. Клик по затемнению закрывает.
@@ -479,7 +490,7 @@ test.describe('Mini App settings drawer — desktop', () => {
     await expect(page.getByTestId('mini-settings')).toHaveCount(0);
     await expect(button).toHaveAttribute('aria-expanded', 'false');
     await expect(button).toBeFocused();
-    expect(await scrollLock(page)).toEqual({ html: '', body: '' });
+    await expectScrollLock(page, { html: '', body: '' });
     expect(errors).toEqual([]);
   });
 });
