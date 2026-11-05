@@ -30,6 +30,18 @@ import type { FastifyInstance } from 'fastify';
 const suite = TEST_DATABASE_URL ? describe : describe.skip;
 const PAGE_ORIGIN = 'https://blublu.example';
 
+/*
+ * Дата фикстуры считается от «сегодня», а не пишется в камень. Причина не косметическая:
+ * ICS-подписка отвечает окном «now → now + 400 дней» (src/routes/events.ts), поэтому
+ * жёсткая ноябрьская строка превращала весь файл в красный в тот момент, когда реальная
+ * дата проходила её. Замерено на ветке: зелёный прогон 2026-10-29, красный 2026-11-05 при
+ * неизменном продукте — то есть падал тест, а не приложение.
+ */
+const dateAhead = (days: number) => {
+  const d = new Date(Date.now() + days * 86400_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 suite('§7 rights audit', () => {
   let t: TestDB;
   let app: FastifyInstance;
@@ -99,7 +111,7 @@ suite('§7 rights audit', () => {
     noteA = note.json().id;
     const ev = await app.inject({
       method: 'POST', url: `/api/classes/${classA}/events`, headers: { authorization: `Bearer ${tok.teacherA}` },
-      payload: { kind: 'lesson', title: 'Victim lesson', description: '', startLocal: '2026-11-02T19:00', durationMin: 50, tz: 'Asia/Tashkent' },
+      payload: { kind: 'lesson', title: 'Victim lesson', description: '', startLocal: `${dateAhead(3)}T19:00`, durationMin: 50, tz: 'Asia/Tashkent' },
     });
     eventA = ev.json().id;
     const ses = await app.inject({ method: 'POST', url: '/api/lessons/start', headers: { authorization: `Bearer ${tok.teacherA}` }, payload: { classId: classA, eventId: eventA } });
@@ -320,13 +332,13 @@ suite('§7 rights audit', () => {
 
   // ── events / ICS ────────────────────────────────────────────────────────────
   it('B sees no A events; B cannot patch/delete A event; event of A visible to A-student only', async () => {
-    const evB = await app.inject({ method: 'GET', url: '/api/events?from=2026-11-01T00:00:00Z&to=2026-11-30T00:00:00Z', headers: a('teacherB') });
+    const evB = await app.inject({ method: 'GET', url: `/api/events?from=${dateAhead(0)}T00:00:00Z&to=${dateAhead(10)}T00:00:00Z`, headers: a('teacherB') });
     expect((evB.json() as unknown[]).length).toBe(0);
     const p = await app.inject({ method: 'PATCH', url: `/api/events/${eventA}`, headers: a('teacherB'), payload: { scope: 'all', changes: { kind: 'other', title: 'x', description: '', startLocal: '2026-11-02T19:00', durationMin: 50, tz: 'UTC' } } });
     expect(p.statusCode).toBe(404);
     const d = await app.inject({ method: 'DELETE', url: `/api/events/${eventA}?scope=all`, headers: a('teacherB') });
     expect(d.statusCode).toBe(404);
-    const evA = await app.inject({ method: 'GET', url: '/api/events?from=2026-11-01T00:00:00Z&to=2026-11-30T00:00:00Z', headers: a('studentA') });
+    const evA = await app.inject({ method: 'GET', url: `/api/events?from=${dateAhead(0)}T00:00:00Z&to=${dateAhead(10)}T00:00:00Z`, headers: a('studentA') });
     expect((evA.json() as { eventId: string }[]).some((o) => o.eventId === eventA)).toBe(true);
     // B-student filtering by A classId → empty, no existence leak in message
     const filt = await app.inject({ method: 'GET', url: `/api/events?classId=${classA}`, headers: a('studentB') });
