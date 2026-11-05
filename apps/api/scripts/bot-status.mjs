@@ -131,8 +131,14 @@ if (hook) {
 const LANGS = ['ru', 'uz', 'en'];
 const names = (cmds) => (cmds ?? []).map((c) => `/${c.command}`).join(' ');
 async function menu(label, scope, lang) {
+  // An empty scope is not a scope: Telegram answers 400 «can't parse BotCommandScope» to `{}`,
+  // and the default scope is exactly «no scope field». Sending nothing is the only way to read
+  // it, which is why the field is omitted rather than passed blank.
+  const body = {};
+  if (scope && Object.keys(scope).length > 0) body.scope = scope;
+  if (lang) body.language_code = lang;
   try {
-    const cmds = await call('getMyCommands', lang ? { scope, language_code: lang } : { scope });
+    const cmds = await call('getMyCommands', body);
     out(`  ${label.padEnd(26)} ${String(cmds.length).padStart(2)}: ${names(cmds)}`);
     return cmds;
   } catch (e) { check(`getMyCommands ${label}`, false, String(e.message)); return null; }

@@ -55,6 +55,16 @@ beforeAll(async () => {
       }
       if (method === 'getMyCommands') {
         const scope = body.scope as { type?: string; chat_id?: number } | undefined;
+        // Telegram is strict here and the stand-in must be too: a `scope` object without `type`
+        // is refused outright — live, this exact call answered
+        // 400 «can't parse BotCommandScope: Can't find field "type"». The default scope is read
+        // by sending NO scope field at all, so an empty object here is a bug, not a question.
+        if (body.scope !== undefined && !scope?.type) {
+          return res.end(JSON.stringify({
+            ok: false, error_code: 400,
+            description: `can't parse BotCommandScope: Can't find field "type"`,
+          }));
+        }
         const lang = String(body.language_code ?? '');
         const key = scope?.type === 'chat' ? `chat:${lang}` : scope?.type === 'all_private_chats' ? `private:${lang}` : 'default';
         const list = state.commands[key] ?? [];
@@ -122,6 +132,11 @@ describe('bot:status output (audit item 4)', () => {
       'getMe', 'getWebhookInfo', 'getMyCommands', 'getMyCommands', 'getMyCommands', 'getMyCommands',
     ]);
     expect(calls.every((c) => !('secret_token' in c.body))).toBe(true);
+    // The default scope is asked by sending NO scope field. An empty object would be a 400 from
+    // the real API (the stand-in now behaves the same), and the tool would print FAIL and exit 1
+    // instead of the commands — which is precisely how a live check can silently lie.
+    expect(calls.filter((c) => c.method === 'getMyCommands' && !('scope' in c.body))).toHaveLength(1);
+    expect(out).toMatch(/default scope\s+2: \/start \/help/);
     // …and the output: the token, the webhook secret and the api.telegram.org URL shape are absent
     expect(out).not.toContain(TOKEN);
     expect(out).not.toContain(HOOK_SECRET);
