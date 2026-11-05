@@ -518,9 +518,14 @@ export async function signInWithPassword(email: string, password: string): Promi
       headers: { authorization: `Bearer ${accessToken}` },
       credentials: 'omit',
     });
-    const data = (await res.json().catch(() => null)) as MiniAuthResponse | null;
+    const data = (await res.json().catch(() => null)) as (MiniAuthResponse & { error?: string }) | null;
     if (!res.ok || !data?.token) {
-      return { ok: false, status: res.status, data: null, error: data ? 'serverError' : 'networkError' };
+      // Код сервера — не украшение текста: «passwordChangeRequired» и «miniTeacherOnly» имеют
+      // собственные экраны, и сводить их к «serverError» значило бы оставить человека на форме.
+      return {
+        ok: false, status: res.status, data: null,
+        error: data?.error ?? (res.status ? 'serverError' : 'networkError'),
+      };
     }
     writeMiniToken(data.token, 'web');
     return { ok: true, status: res.status, data, error: '' };

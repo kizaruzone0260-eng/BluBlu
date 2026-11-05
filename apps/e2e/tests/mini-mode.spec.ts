@@ -183,6 +183,32 @@ test.describe('Browser mode без Telegram вообще', () => {
     expect(await page.locator('script[src*="telegram-web-app"]').count(),
       'на /web не должно быть тега Telegram').toBe(0);
   });
+
+  /*
+   * §5: отказ веб-двери — это не строка под формой, а маршрут. Сервер называет код
+   * (`passwordChangeRequired`, `miniTeacherOnly`), и страница обязана провести человека к тому
+   * экрану, который у кода уже есть в Telegram-ветке. Прежний код клиента гасил любой 403 в
+   * `serverError`, и учитель с предписанной сменой пароля оставался на форме входа.
+   */
+  test('a refused web mint routes to the screen the server named', async ({ page }) => {
+    const cases = [['passwordChangeRequired', 'mini-password'], ['miniTeacherOnly', 'mini-teacher-only']] as const;
+    for (const [code, screen] of cases) {
+      await page.route('**/api/auth/login', (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ accessToken: 'fictitious-access-token' }),
+      }));
+      await page.route('**/api/mini/web/auth', (route) => route.fulfill({
+        status: 403, contentType: 'application/json', body: JSON.stringify({ error: code }),
+      }));
+      await page.goto('/web');
+      await page.locator('input[name="email"]').fill('owner@e2e.io');
+      await page.locator('input[name="password"]').fill('Passw0rd123');
+      await page.getByTestId('mini-signin-submit').click();
+      await expect(page.getByTestId(screen), `${code} должен вести на ${screen}`)
+        .toBeVisible({ timeout: 15_000 });
+      await page.unrouteAll({ behavior: 'ignoreErrors' });
+    }
+  });
 });
 
 test.describe('Browser mode против настоящего API', () => {

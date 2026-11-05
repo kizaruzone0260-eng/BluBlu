@@ -65,6 +65,13 @@ type View =
  * for one launch. A retry resets this cache explicitly.
  */
 let bootPromise: Promise<Boot> | null = null;
+/**
+ * Кэш бутика держится на ключе: `/mini` и `/web` решают запуск по-разному, и переиспользовать
+ * бут одной двери для другой было бы безопасно ровно до первой клиентской навигации между ними
+ * (сегодня это полный перезапуск по `<a href>`, но проверять договорённость тем, что кто-то
+ * не изменит ссылку, — не договорённость).
+ */
+let bootPromiseEntry: 'mini' | 'web' | null = null;
 
 /**
  * Один прогон запуска. Порядок именно такой, потому что состояние скрипта — не вердикт:
@@ -79,6 +86,10 @@ let bootPromise: Promise<Boot> | null = null;
  * чужого запуска на странице, которую человек открыл по ссылке, было бы сюрпризом.
  */
 function bootMiniApp(entry: 'mini' | 'web'): Promise<Boot> {
+  if (bootPromiseEntry !== entry) {
+    bootPromiseEntry = entry;
+    bootPromise = null;
+  }
   bootPromise ??= (async (): Promise<Boot> => {
     /*
      * Явная веб-дверь не ждёт скрипт Telegram. Она по определению не запуск из клиента, а
@@ -172,6 +183,7 @@ function bootMiniApp(entry: 'mini' | 'web'): Promise<Boot> {
 
 function retryBoot(): void {
   bootPromise = null;
+  bootPromiseEntry = null;
   resetMiniSdk();
 }
 
@@ -303,7 +315,13 @@ export default function Mini({ entry = 'mini' }: { entry?: 'mini' | 'web' }) {
    */
   const signedIn = useCallback(async (email: string, password: string): Promise<string> => {
     const r = await signInWithPassword(email, password);
-    if (!r.ok || !r.data) return r.error || 'serverError';
+    if (!r.ok || !r.data) {
+      // Код от сервера решает, куда человек попадёт. «Смени пароль» и «только учитель» — это
+      // отдельные экраны с своим действием, а не строка ошибки под формой.
+      if (r.error === 'passwordChangeRequired') { setPhase('password'); return ''; }
+      if (r.error === 'miniTeacherOnly') { setPhase('teacherOnly'); return ''; }
+      return r.error || 'serverError';
+    }
     const boot = await miniApi<MiniBootstrap>('/api/mini/bootstrap');
     if (!boot.ok || !boot.data) {
       writeMiniToken(null);
